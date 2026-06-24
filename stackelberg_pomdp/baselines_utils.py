@@ -26,7 +26,7 @@ class CustomPolicy(MultiInputActorCriticPolicy):
     def __init__(self, *args, **kwargs):
 
         cutoff_entry = kwargs.pop("cutoff_entry", 0)
-        decay_rate = kwargs.pop("decay_rate", 0)
+        kwargs.pop("decay_rate", None)  # unused, kept for config compat
 
         super(CustomPolicy, self).__init__(
             *args,
@@ -36,15 +36,21 @@ class CustomPolicy(MultiInputActorCriticPolicy):
 
         self.fix_actions = False
         self.obs_action_map = {}
-        self.epsilon = 1
-        self.final_epsilon = 0.05
-        self.decay_rate = decay_rate
 
     def _build_mlp_extractor(self) -> None:
         """
         Create the policy and value networks.
         Part of the layers can be shared.
         """
+        # Validate that critic-only entries are at the end of the observation space (once at init)
+        seen_critic = False
+        for key in self.observation_space.spaces.keys():
+            is_critic = key.split(":")[0] == "critic"
+            if seen_critic and not is_critic:
+                raise IOError("Critic-only entries need to be at the end of the observation!")
+            if not seen_critic and is_critic:
+                seen_critic = True
+
         self.mlp_extractor = CustomMLPExtractor(
             self.features_dim,
             net_arch=self.net_arch,
@@ -54,12 +60,15 @@ class CustomPolicy(MultiInputActorCriticPolicy):
 
     def clear_obs_action_map(self):
         self.obs_action_map = {}
-        # Decay epsilon
-        self.epsilon = max(self.epsilon * self.decay_rate, self.final_epsilon)
 
 
     def fix_policy_actions(self):
         self.fix_actions = True
+
+    def predict_values(self, obs: th.Tensor) -> th.Tensor:
+        features = self.extract_features(obs)
+        _, latent_vf = self.mlp_extractor(features)
+        return self.value_net(latent_vf)
 
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -69,29 +78,18 @@ class CustomPolicy(MultiInputActorCriticPolicy):
         :param deterministic: Whether to sample or use deterministic actions
         :return: action, value and log probability of the action
         """
-        #First, we check observation has all critic entries at the end
-        flag=False
-        for key in obs.keys():
-            if (flag==True and key.split(":")[0] != "critic"):
-                raise IOError(
-                    "Critic-only entries need to be at the end of the observation!"
-                )
-            if (flag==False and key.split(":")[0] == "critic"):
-                flag=True
-
         features = self.extract_features(obs)
         latent_pi, latent_vf = self.mlp_extractor(features)
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
         distribution = self._get_action_dist_from_latent(latent_pi)
-        if self.fix_actions and str(obs['base_environment']) in self.obs_action_map.keys():
-            actions = self.obs_action_map[str(obs['base_environment'])]
+        val = obs['base_environment'].reshape(-1).tolist()
+        obs_key = tuple(val)
+        if self.fix_actions and obs_key in self.obs_action_map:
+            actions = self.obs_action_map[obs_key]
         else:
-            if np.random.rand() < self.epsilon:
-                actions = th.as_tensor(self.action_space.sample()).unsqueeze(0).to(self.device)
-            else:
-                actions = distribution.get_actions(deterministic=deterministic)
-            if self.fix_actions: self.obs_action_map[str(obs['base_environment'])] = actions
+            actions = distribution.get_actions(deterministic=deterministic)
+            if self.fix_actions: self.obs_action_map[obs_key] = actions
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
 
@@ -105,10 +103,9 @@ class CustomPolicy(MultiInputActorCriticPolicy):
 
 
         processed_observation, vectorized_env = self.obs_to_tensor(observation)
-        obs_key = processed_observation['base_environment'].float()
-        obs_key = str(obs_key)
+        obs_key = tuple(processed_observation['base_environment'].reshape(-1).tolist())
 
-        if self.fix_actions and obs_key in self.obs_action_map.keys():
+        if self.fix_actions and obs_key in self.obs_action_map:
             actions = self.obs_action_map[obs_key]
             # Convert to numpy
             actions = actions.cpu().numpy()
@@ -193,6 +190,7 @@ class CustomMLPExtractor(nn.Module):
         # Save dim, used to create the distributions
         self.latent_dim_pi = last_layer_dim_pi
         self.latent_dim_vf = last_layer_dim_vf
+        self._split_idx = feature_dim - self.cutoff_entry
 
         # Create networks
         # If the list of layers is empty, the network will just act as an Identity module
@@ -206,25 +204,23 @@ class CustomMLPExtractor(nn.Module):
             If all layers are shared, then ``latent_policy == latent_value``
         """
 
-        # First, we isolate features that are only fed into the value network
-        shared_features, value_only_features = th.split(features, [int(features.shape[1])-self.cutoff_entry, self.cutoff_entry], 1)
+        # Isolate features that are only fed into the value network (slicing = zero-copy view)
+        shared_features = features[:, :self._split_idx]
+        value_only_features = features[:, self._split_idx:]
 
         shared_latent = self.shared_net(shared_features)
 
-        # Then, we add those feature to value network only
-        shared_latent_value = th.cat([shared_latent, value_only_features], axis=1)
+        # Add those features to value network only
+        shared_latent_value = th.cat([shared_latent, value_only_features], dim=1)
 
         return self.policy_net(shared_latent), self.value_net(shared_latent_value)
 
     def forward_actor(self, features: th.Tensor) -> th.Tensor:
-        features, value_only_features = th.split(features, [int(features.shape[1])-self.cutoff_entry, self.cutoff_entry], 1)
-        return self.policy_net(self.shared_net(features))
+        return self.policy_net(self.shared_net(features[:, :self._split_idx]))
 
     def forward_critic(self, features: th.Tensor) -> th.Tensor:
-        features, value_only_features = th.split(features, [int(features.shape[1])-self.cutoff_entry, self.cutoff_entry], 1)
-        features = self.shared_net(features)
-        features = th.cat([features, value_only_features], axis=1)
-        return self.value_net(features)
+        shared_latent = self.shared_net(features[:, :self._split_idx])
+        return self.value_net(th.cat([shared_latent, features[:, self._split_idx:]], dim=1))
 
 
 class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):

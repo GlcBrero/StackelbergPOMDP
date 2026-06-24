@@ -3,6 +3,14 @@
 This repository hosts the source code associated with the paper "Stackelberg POMDP: A Reinforcement Learning Approach for Economic Design." 
 The arXiv version of the paper can be accessed at: https://arxiv.org/abs/2210.03852
 
+## Companion codebase
+
+This repository implements the Stackelberg POMDP framework with **tabular follower oracles and a centralized critic**, using Stable-Baselines3. It covers the platform-market (Bertrand pricing) and indirect mechanism-design experiments, and absorbs the earlier `ai_collusion` codebase in full.
+
+For the matrix-game and Atari bilateral-trade experiments — which use **neural-network followers trained via external alternating optimization** in Ray RLlib — see the companion repository [StackeRLberg](https://github.com/mgerstgrasser/StackeRLberg).
+
+The split reflects an architectural trade-off: centralized critics are natural for tabular follower state but not for high-dimensional pixel observations.
+
 ### Installation
 
 First, install the necessary packages by running the following command:

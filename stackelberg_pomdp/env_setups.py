@@ -2,11 +2,65 @@ from stackelberg_pomdp.gym_envs.envs.custom_envs import *
 from games import *
 import warnings
 
+def get_bertrand_env(config_dict):
+
+    log = config_dict["logger"]
+    seed = config_dict["seed"]
+
+    env = BertrandCompetitionEnv(
+        num_agents=config_dict.get('num_pricing_agents', 2),
+        c_i=config_dict.get('marginal_cost', 1),
+        platform_intervention=config_dict.get('platform_intervention', 'learn_threshold'),
+        m=config_dict.get('price_grid_length', 15),
+        price_min=config_dict.get('price_min', 1.05),
+        price_max=config_dict.get('price_max', 1.7),
+        seed=seed,
+        logger=log,
+    )
+
+    followers_alg = config_dict.get('followers_algorithm', 'Qlearning')
+    if followers_alg == 'RoundRobin':
+        env = RoundRobinFollowersWrapper(env)
+    else:
+        env = QLearningFollowersWrapper(
+            env,
+            alpha=config_dict.get('follower_alpha', 0.15),
+            beta=config_dict.get('follower_beta', 4e-5),
+            warm_start_q=config_dict.get('warm_start_q', False),
+            q_tables_path=config_dict.get('q_tables_path'),
+        )
+
+    if config_dict.get('platform_observation_space', 'no_observation') == 'price_profile':
+        env = ReactiveLeaderWrapper(env, leader_k=config_dict.get('leader_k', 1),
+                                    sort_obs=config_dict.get('sort_obs', False))
+
+    env = StackPOMDPWrapper(
+        env,
+        tot_num_eq_episodes=config_dict.get('tot_num_eq_episodes', 50000),
+        tot_num_reward_episodes=config_dict.get('tot_num_reward_episodes', 30),
+        critic_obs=config_dict.get('critic_obs', 'full'),
+        response_phase_prob=config_dict.get('response_phase_prob', 1),
+    )
+
+    env = StationaryCycleRewardWrapper(env)
+
+    intervention_lambda = config_dict.get('intervention_lambda', 0.0)
+    if intervention_lambda > 0:
+        env = OpennessEvaluationWrapper(
+            env,
+            intervention_lambda=intervention_lambda,
+            m=config_dict.get('price_grid_length', 4),
+        )
+
+    env = LoggingWrapper(env, logger=config_dict.get('logger'))
+
+    return env
+
 def wrap_env(env, config_dict):
     if config_dict["followers_algorithm"] == "MW":
-        env = RLSupervisorMWFollowersWrapper(env)
+        env = MWFollowersWrapper(env)
     elif config_dict["followers_algorithm"] == "Qlearning":
-        env = RLSupervisorQFollowersWrapper(env)
+        env = QLearningFollowersWrapper(env)
 
     env = StackPOMDPWrapper(
         env,

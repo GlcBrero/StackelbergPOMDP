@@ -5,18 +5,17 @@ from stable_baselines3.common.logger import HumanOutputFormat
 import sys
 
 def get_all_wrappers(env):
-    """Returns all the wrappers of an environment up until it hits the Game class (not including the Game class).
+    """Returns all the wrappers of an environment, traversing down to the base env.
 
     Args:
-        env(MultiAgentAtariEnvWrapper): the environment for which the wrappers needs to be retrieved
+        env: the environment for which the wrappers needs to be retrieved
     """
-    from stackelberg_pomdp.gym_envs.envs.custom_envs import RLSupervisorQFollowersWrapper, RLSupervisorMWFollowersWrapper
     from stable_baselines3.common.vec_env.dummy_vec_env import DummyVecEnv
 
     currentenv = env
     list_of_wrappers = [currentenv]
-    while not ((type(currentenv) == RLSupervisorQFollowersWrapper) or (type(currentenv) == RLSupervisorMWFollowersWrapper)):
-        if type(currentenv) == DummyVecEnv:
+    while hasattr(currentenv, 'env') or isinstance(currentenv, DummyVecEnv):
+        if isinstance(currentenv, DummyVecEnv):
             currentenv = currentenv.envs[0]
         else:
             currentenv = currentenv.env

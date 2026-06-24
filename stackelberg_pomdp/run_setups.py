@@ -2,14 +2,18 @@
 import os
 
 # Third-party library imports
-import wandb
+try:
+    import wandb
+    from wandb.integration.sb3 import WandbCallback
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
 from stable_baselines3.common.callbacks import CallbackList
-from wandb.integration.sb3 import WandbCallback
 
 # Local application/library specific imports
-from callbacks import GiveModelToEnvCallback, FixPolicyActionsCallback, CustomCheckpointCallback, CustomEvalCallback
+from callbacks import GiveModelToEnvCallback, FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback
 from policy_enumeration import policy_enumeration
-from env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_matrix_design_env
+from env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_matrix_design_env, get_bertrand_env
 from rl_trainer_setup import get_custom_training_algorithm
 from stable_baselines3.common import logger
 
@@ -26,14 +30,22 @@ def train_run(config_dict):
                f"{config_dict['critic_obs']}." \
                f"{config_dict['fix_episode_actions']}." \
                f"{config_dict['followers_algorithm']}." \
-               f"{int(config_dict['response_phase_prob'] * 100)}"
+               f"{int(config_dict['response_phase_prob'] * 100)}." \
+               f"{config_dict.get('platform_observation_space', 'default')}." \
+               f"{'cp' if config_dict.get('cost_perturbation', False) else 'nocp'}." \
+               f"lam{config_dict.get('intervention_lambda', 0.0)}." \
+               f"{'ws' if config_dict.get('warm_start_q', False) else 'nows'}." \
+               f"p{config_dict.get('price_min', 1.05)}-{config_dict.get('price_max', 1.7)}." \
+               f"lk{config_dict.get('leader_k', 1)}." \
+               f"{config_dict.get('platform_intervention', 'learn_threshold')}." \
+               f"{'sorted' if config_dict.get('sort_obs', False) else 'unsorted'}"
 
     log_folder = os.path.join(os.path.abspath(os.path.dirname(__file__)), "logs", exp_name)
-    log = logger.configure(folder=log_folder, format_strings=["csv", "stdout", "tensorboard"])
+    log = logger.configure(folder=log_folder, format_strings=["csv", "stdout"])
     config_dict["logger"] = log
 
     # Then, we set up weights and biases, which we use to monitor training
-    if config_dict['use_wandb']:
+    if config_dict['use_wandb'] and HAS_WANDB:
         wandb.tensorboard.patch(root_logdir=log_folder, pytorch=True)
         wandb.init(project="StackPOMDP")
         wandb.config.setdefaults(config_dict)
@@ -43,7 +55,8 @@ def train_run(config_dict):
         "normal_form": get_standard_matrix_env,
         "matrix_design": get_matrix_design_env,
         "simple_allocation": get_simple_allocation_env,
-        "mspm": get_mspm_env
+        "mspm": get_mspm_env,
+        "bertrand": get_bertrand_env,
     }
 
     experiment_type = config_dict["experiment_type"].split(":")[0]
@@ -51,7 +64,7 @@ def train_run(config_dict):
         env = experiment_type_to_env_function[experiment_type](config_dict)
     else:
         raise ValueError(
-            "Error: Experiment type not supported. Supported values are: 'normal_form', 'matrix_design', 'simple_allocation', 'mspm'")
+            "Error: Experiment type not supported. Supported values are: 'normal_form', 'matrix_design', 'simple_allocation', 'mspm', 'bertrand'")
 
     if config_dict['learning_method'].split(":")[0] == 'RL':
         # Common callbacks for both 'Standard' and 'StopOnThreshold'
@@ -63,20 +76,23 @@ def train_run(config_dict):
 
         callback_list = [callbacks['giveModelToEnv'], callbacks['checkpoint']]
 
-        if config_dict['use_wandb']:
+        if config_dict['use_wandb'] and HAS_WANDB:
             callback_list.append(WandbCallback())
 
-        if config_dict['fix_episode_actions'] == "True":
+        if config_dict['fix_episode_actions']:
             callback_list.append(callbacks['fixPolicyActions'])
 
         if config_dict['learning_method'].split(":")[1] == 'Standard':
-            eval_env = experiment_type_to_env_function[experiment_type](config_dict)
+            eval_log = logger.configure(folder=log_folder + "/eval", format_strings=["csv"])
+            eval_config = dict(config_dict, logger=eval_log)
+            eval_env = experiment_type_to_env_function[experiment_type](eval_config)
             eval_env.is_eval = True
-            callbacks['customEval'] = CustomEvalCallback(eval_env, eval_freq=int(config_dict['max_steps'] / 1000))
-            callback_list.append(callbacks['customEval'])
+            eval_freq = max(1000, config_dict['max_steps'] // 100)
+            callbacks['bgEval'] = BackgroundEvalCallback(eval_env, eval_freq=eval_freq)
+            callback_list.append(callbacks['bgEval'])
 
         # We are now ready to train our policy
-        mod = get_custom_training_algorithm(config_dict, env, tensorboard_folder=os.path.join(log_folder))
+        mod = get_custom_training_algorithm(config_dict, env, tensorboard_folder=None)
         mod.learn(
             total_timesteps=config_dict['max_steps'],
             callback=CallbackList(callback_list),
@@ -89,4 +105,5 @@ def train_run(config_dict):
         number_of_policies = int(config_dict["learning_method"].split(":")[1])
         policy_enumeration(env, number_of_policies, log)
 
-    wandb.finish()
+    if HAS_WANDB and config_dict['use_wandb']:
+        wandb.finish()
