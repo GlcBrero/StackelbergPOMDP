@@ -265,6 +265,7 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
         self.policy.set_training_mode(False)
 
         n_steps = 0
+        completed_episodes = 0
         rollout_buffer.reset()
         # Sample new weights for the state dependent exploration
         if self.use_sde:
@@ -290,6 +291,7 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+            completed_episodes += int(np.sum(dones))
 
             # Count every executed environment step against max_steps, including
             # hidden-query response steps that are omitted from the PPO buffer.
@@ -333,6 +335,27 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+
+        self.last_rollout_completed_episodes = completed_episodes
+        required_completions = getattr(
+            self,
+            "min_completed_episodes_per_rollout",
+            0,
+        )
+        if completed_episodes < required_completions:
+            raise RuntimeError(
+                "PPO rollout did not contain the required completed episodes: "
+                f"observed={completed_episodes}, required={required_completions}, "
+                f"stored_steps={n_steps}."
+            )
+        if not getattr(self, "_reported_rollout_coverage", False):
+            print(
+                f"[rollout_coverage] stored_steps={n_steps} "
+                f"completed_episodes={completed_episodes} "
+                f"required>={required_completions}",
+                flush=True,
+            )
+            self._reported_rollout_coverage = True
 
         callback.on_rollout_end()
 

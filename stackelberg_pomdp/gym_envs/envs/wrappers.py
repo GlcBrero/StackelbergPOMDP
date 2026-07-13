@@ -37,8 +37,8 @@ class FollowerWrapper(gym.Wrapper):
     def reward_phase_length(self, default_length):
         return self.env.unwrapped.reward_phase_length(default_length)
 
-    def subepisode_horizon(self):
-        return self.env.unwrapped.subepisode_horizon()
+    def max_subepisode_transitions(self):
+        return self.env.unwrapped.max_subepisode_transitions()
 
     def critic_observation_spaces(self):
         return OrderedDict()
@@ -635,15 +635,17 @@ class StackPOMDPWrapper(gym.Wrapper):
     def reward_phase_length(self):
         return self.follower_wrapper.reward_phase_length(self.tot_num_reward_episodes)
 
-    def rollout_buffer_episode_length(self):
-        subepisode_horizon = self.follower_wrapper.subepisode_horizon()
+    def max_episode_transitions(self):
+        max_subepisode_transitions = (
+            self.follower_wrapper.max_subepisode_transitions()
+        )
         if self.response_variant == "hidden_queries":
-            return int(self.reward_phase_length()) * subepisode_horizon
+            return int(self.reward_phase_length()) * max_subepisode_transitions
         generated_games = (
             int(self.tot_num_response_episodes)
             + int(self.reward_phase_length())
         )
-        return generated_games * subepisode_horizon
+        return generated_games * max_subepisode_transitions
 
     def _response_phase_threshold(self):
         return self.tot_num_response_episodes

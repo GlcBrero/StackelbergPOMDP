@@ -131,6 +131,8 @@ def _experiment_name(config_dict):
             f"messages{num_messages}",
             "exactexpectedscale",
             "fullmwstate",
+            "earlytermination",
+            "maxhorizonrollout",
         ])
     elif experiment_family == "normal_form":
         _, game_name, randomized = config_dict["experiment_type"].split(":")
@@ -239,9 +241,14 @@ def train_run(config_dict):
             deterministic=config_dict.get('spm_eval_deterministic', True),
             action_samples=config_dict.get('spm_eval_action_samples', 1),
         ))
-        episode_length = env.unwrapped.rollout_buffer_episode_length()
-        n_steps = episode_length * config_dict.get('ppo_episodes_per_batch', 16)
-        batch_size = config_dict.get('ppo_batch_size') or episode_length
+        max_episode_transitions = env.unwrapped.max_episode_transitions()
+        n_steps = (
+            max_episode_transitions
+            * config_dict.get('ppo_episodes_per_batch', 16)
+        )
+        batch_size = (
+            config_dict.get('ppo_batch_size') or max_episode_transitions
+        )
         mod = PPO(
             policy="MlpPolicy",
             env=env,

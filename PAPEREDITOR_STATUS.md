@@ -1,9 +1,9 @@
 # Papereditor Status
 
 - Timestamp: 2026-07-13 (America/New_York)
-- Phase: MSPM PI debugging — default-PPO response-100 validation active.
-- Completed: verified exact profile weights and rewards, fixed the two-transition subepisode horizon and full critic state, confirmed 300 response games are 75 MW updates, and confirmed the hardcoded optimal MSPM returns exactly 0. The same hardcoded mechanism also returned 0 in 200/200 seeds with 100 response games (25 MW updates). Deterministic checkpoint inspection showed that all three failed diagnostics learned an uninformative-message mechanism worth exactly -0.08: two always sell to A0, while the large-rollout policy price-screens A0 and loses only on the low-low profile.
-- Active run: tmux `mspm_pi_response100_defaults_10m_0713`; 10M steps, response 100, exact reward 4, gamma 1, learning rate `3e-4`, one 208-transition StackPOMDP episode per rollout, batch 64, 10 epochs, entropy 0. Training W&B: `678tcqce`; deterministic leader-mode/follower-argmax W&B: `piarg100`.
-- Current result: the first 10-episode deterministic evaluation at 50,108 steps returned reward 0 in all episodes. Continue monitoring whether argmax reward remains at 0 rather than returning to the -0.08 no-information basin.
+- Phase: MSPM PI debugging — clean early-termination validation active.
+- Completed: restored the economic SPM termination rule (end when inventory is exhausted or all buyers are visited); retained exact four-profile expected rewards and the full Markov critic state; verified response 100 produces 25 MW updates; and confirmed the hardcoded optimal MSPM returns exactly 0 in 200/200 seeds under early termination. Those outer episodes used 128--161 transitions, confirming the horizon is variable.
+- Rollout safety: PPO uses the conservative maximum outer-episode length, `(100 + 4) * 2 = 208`, without padding the environment. Every 208-step rollout must contain at least one completed reward phase; the custom collector counts completions and raises if this invariant fails. The first live rollout stored 208 steps and completed one outer episode.
+- Active run: tmux `mspm_pi_clean_response100_10m_0713`; 10M steps, response 100, exact reward 4, gamma 1, learning rate `3e-4`, batch 64, 10 epochs, entropy 0. Training W&B: `5xhgdpgt`; deterministic leader-mode/follower-argmax W&B: `piargcln`.
 - Current blocker: none.
-- Evidence: `simulation_logs/pi_training_plot/mspm_pi_2messages_seed1_10m_exact_reward_response100_ppo_defaults_gamma1.log`.
+- Evidence: `simulation_logs/pi_training_plot/mspm_pi_2messages_seed1_10m_response100_defaultppo_gamma1_earlytermination.log`.

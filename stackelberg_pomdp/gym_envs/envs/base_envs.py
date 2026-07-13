@@ -127,8 +127,8 @@ class BaseEnv(gym.Env):
         """
         return default_length
 
-    def subepisode_horizon(self):
-        """Number of leader transitions in one generated response/reward game."""
+    def max_subepisode_transitions(self):
+        """Maximum leader transitions in one generated response/reward game."""
         return 1
 
     def start_reward_phase(self):
@@ -418,12 +418,12 @@ class BaseSPM(BaseEnv):
             info,
         )
 
-    def rollout_buffer_episode_length(self):
-        return self.subepisode_horizon()
+    def max_episode_transitions(self):
+        return self.max_subepisode_transitions()
 
-    def subepisode_horizon(self):
-        # Every buyer is visited exactly once. Keeping this horizon fixed is
-        # required for StackPOMDP PPO rollouts to end on episode boundaries.
+    def max_subepisode_transitions(self):
+        # A sequential mechanism can visit each buyer at most once. It may end
+        # earlier when inventory is exhausted.
         return len(self.followers_list)
 
     def log_info(self, info):

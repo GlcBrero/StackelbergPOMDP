@@ -15,7 +15,7 @@ from stackelberg_pomdp.rl_trainer_setup import (
 
 
 class MSPMPIRegressionTests(unittest.TestCase):
-    def test_default_ppo_uses_one_complete_stackpomdp_episode(self):
+    def test_default_ppo_uses_conservative_max_episode_rollout(self):
         args = build_parser().parse_args([
             "--setting", "PI",
             "--num_types", "2",
@@ -29,7 +29,7 @@ class MSPMPIRegressionTests(unittest.TestCase):
         env = get_mspm_env(config)
         model = get_custom_training_algorithm(config, env)
 
-        self.assertEqual(env.rollout_buffer_episode_length(), 208)
+        self.assertEqual(env.max_episode_transitions(), 208)
         self.assertEqual(model.n_steps, 208)
         self.assertEqual(model.batch_size, 64)
         self.assertEqual(model.n_epochs, 10)
@@ -80,7 +80,7 @@ class MSPMPIRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(exact_phase_sum, expected_reward)
         self.assertAlmostEqual(expected_reward, -0.08)
 
-    def test_fixed_two_transition_subepisodes_and_aligned_outer_episode(self):
+    def test_early_sale_ends_subepisode_and_max_horizon_is_conservative(self):
         config = {
             "logger": None,
             "seed": 1,
@@ -94,7 +94,7 @@ class MSPMPIRegressionTests(unittest.TestCase):
             "pomdp_mode": "stackelberg",
         }
         env = get_mspm_env(config)
-        self.assertEqual(env.rollout_buffer_episode_length(), 16)
+        self.assertEqual(env.max_episode_transitions(), 16)
 
         expected_full_critic_keys = {
             "critic:is_reward_step",
@@ -122,8 +122,21 @@ class MSPMPIRegressionTests(unittest.TestCase):
                     info.get("response_updates"),
                 )
 
-        self.assertEqual(transitions, env.rollout_buffer_episode_length())
-        self.assertEqual(response_boundary, (8, 1))
+        # A0 always has positive value and buys immediately at price zero, so
+        # all eight generated games end after one transition. The conservative
+        # maximum remains sixteen transitions (eight games times two buyers).
+        self.assertEqual(transitions, 8)
+        self.assertEqual(response_boundary, (4, 1))
+
+        max_horizon_env = get_mspm_env(dict(config, seed=2))
+        max_horizon_env.reset()
+        done = False
+        transitions = 0
+        reject_action = np.asarray([1.0, 0.0, 1.0], dtype=np.float32)
+        while not done:
+            _, _, done, _ = max_horizon_env.step(reject_action)
+            transitions += 1
+        self.assertEqual(transitions, 16)
 
     def test_predict_path_caches_and_clears_episode_actions(self):
         config = {

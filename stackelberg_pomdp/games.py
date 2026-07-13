@@ -373,11 +373,13 @@ class SequentialPostedPriceGame(BaseStackelbergGame):
         return purchase
 
     def mechanism_done(self, mechanism_state):
-        # Once inventory is exhausted the economic outcome is already fixed,
-        # but ending then makes the horizon depend on the policy. Visiting any
-        # remaining buyers with no inventory is outcome-neutral and gives PPO
-        # the fixed horizon required for episode-aligned rollout buffers.
-        return sum(mechanism_state["agents_remaining"].values()) <= 0
+        # The posted-price mechanism ends as soon as inventory is exhausted or
+        # every buyer has been visited. Do not add economically meaningless
+        # visits merely to make the RL horizon fixed.
+        return (
+            np.sum(mechanism_state["items_remaining"]) <= 0
+            or sum(mechanism_state["agents_remaining"].values()) <= 0
+        )
 
     def allocation_result(self, valuations, allocated_value):
         efficient_value = self.efficient_welfare(valuations)
