@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import time
@@ -45,6 +46,7 @@ class FixPolicyActionsCallback(BaseCallback):
 
     def _init_callback(self):
         self.model.policy.fix_policy_actions()
+        print("[policy_cache] enabled=true reset_on_episode_done=true", flush=True)
 
 
 class TrainingProgressCallback(BaseCallback):
@@ -99,6 +101,7 @@ class TrainingRewardCallback(BaseCallback):
         self.reward_generated_steps = 0
         self.efficiency_sum = 0.0
         self.efficiency_weight_sum = 0.0
+        self.exact_reward_phase = False
         self.last_bcce_gap = None
         self.best_bcce_clean_reward_phase_sum = None
         self.best_bcce_allocative_efficiency = None
@@ -122,6 +125,8 @@ class TrainingRewardCallback(BaseCallback):
             self.reward_phase_sum += float(rewards[0])
             if info.get("reward_generated", False):
                 self.reward_generated_steps += 1
+                if "exact_profile_weight" in info:
+                    self.exact_reward_phase = True
                 if "weighted_efficiency" in info:
                     self.efficiency_sum += float(info["weighted_efficiency"])
                     self.efficiency_weight_sum += float(info.get("exact_profile_weight", 1.0))
@@ -133,9 +138,13 @@ class TrainingRewardCallback(BaseCallback):
             self.episode_count += 1
             if self.episode_count % self.print_freq == 0:
                 reward_phase_avg = (
-                    self.reward_phase_sum / self.reward_generated_steps
-                    if self.reward_generated_steps
-                    else 0.0
+                    self.reward_phase_sum
+                    if self.exact_reward_phase
+                    else (
+                        self.reward_phase_sum / self.reward_generated_steps
+                        if self.reward_generated_steps
+                        else 0.0
+                    )
                 )
                 allocative_efficiency = (
                     self.efficiency_sum / self.efficiency_weight_sum
@@ -211,6 +220,7 @@ class TrainingRewardCallback(BaseCallback):
             self.reward_generated_steps = 0
             self.efficiency_sum = 0.0
             self.efficiency_weight_sum = 0.0
+            self.exact_reward_phase = False
 
         return True
 
@@ -249,6 +259,114 @@ class TrainingRewardCallback(BaseCallback):
             },
             step=self.num_timesteps,
         )
+
+
+class RewardEpisodeTraceCallback(BaseCallback):
+    """Print the first complete reward episode matching each requested target."""
+
+    def __init__(self, targets, tolerance=1e-6):
+        super().__init__()
+        self.targets = tuple(float(target) for target in targets)
+        self.tolerance = float(tolerance)
+        self.pending_targets = set(self.targets)
+        self.reward_rows = []
+        self.reward_sum = 0.0
+        self.reward_games = 0
+        self.exact_reward_phase = False
+        self.episode_start_step = 0
+
+    def _init_callback(self) -> None:
+        self.stack_env = None
+        for env in get_all_wrappers(self.training_env):
+            if type(env) == StackPOMDPWrapper:
+                self.stack_env = env
+                break
+
+    @staticmethod
+    def _jsonable(value):
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, dict):
+            return {
+                str(key): RewardEpisodeTraceCallback._jsonable(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [RewardEpisodeTraceCallback._jsonable(item) for item in value]
+        return value
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        rewards = self.locals.get("rewards", [])
+        dones = self.locals.get("dones", [])
+        if not infos:
+            return True
+
+        info = infos[0]
+        if info.get("is_reward_phase", False):
+            self.reward_sum += float(rewards[0])
+            if info.get("reward_generated", False):
+                self.reward_games += 1
+                if "exact_profile_weight" in info:
+                    self.exact_reward_phase = True
+                self.reward_rows.append({
+                    "type_profile": info.get("type_profile"),
+                    "profile_weight": info.get("exact_profile_weight"),
+                    "follower_messages": info.get("followers_actions"),
+                    "leader_action_at_completion": info.get("leader_action"),
+                    "mechanism_outcome": info.get("mechanism_outcome"),
+                    "raw_reward": info.get("unweighted_reward", info.get("surplus")),
+                    "scaled_reward": float(rewards[0]),
+                })
+
+        if bool(dones[0]):
+            reward_avg = (
+                self.reward_sum
+                if self.exact_reward_phase
+                else (self.reward_sum / self.reward_games if self.reward_games else 0.0)
+            )
+            match = next(
+                (
+                    target
+                    for target in sorted(self.pending_targets)
+                    if abs(reward_avg - target) <= self.tolerance
+                ),
+                None,
+            )
+            if match is not None:
+                payload = {
+                    "target": match,
+                    "steps": self.num_timesteps,
+                    "episode_transitions": self.num_timesteps - self.episode_start_step,
+                    "reward_phase_avg": reward_avg,
+                    "cached_actor_observations": len(
+                        getattr(self.model.policy, "obs_action_map", {})
+                    ),
+                    "response_updates": getattr(self.stack_env, "last_response_updates", None),
+                    "response_type_profile_counts": getattr(
+                        self.stack_env,
+                        "last_response_type_profile_counts",
+                        None,
+                    ),
+                    "final_weights": getattr(self.stack_env, "last_response_weights", None),
+                    "reward_profiles": self.reward_rows,
+                }
+                print(
+                    "[reward_trace] "
+                    + json.dumps(self._jsonable(payload), sort_keys=True),
+                    flush=True,
+                )
+                self.pending_targets.remove(match)
+
+            self.reward_rows = []
+            self.reward_sum = 0.0
+            self.reward_games = 0
+            self.exact_reward_phase = False
+            self.episode_start_step = self.num_timesteps
+
+        return True
 
 
 class ExactSPMEvaluationCallback(BaseCallback):
@@ -503,18 +621,25 @@ class BackgroundEvalCallback(BaseCallback):
                 obs = self.eval_env.reset()
                 done = False
                 reward_phase_total = 0.0
+                exact_reward_phase = False
                 episode_length = 0
                 while not done:
                     action, _ = self._eval_policy.predict(obs, deterministic=True)
                     obs, reward, done, info = self.eval_env.step(action)
                     if info.get("is_reward_phase", False):
                         reward_phase_total += reward
+                        if "exact_profile_weight" in info:
+                            exact_reward_phase = True
                     episode_length += 1
-                reward_phase_totals.append(reward_phase_total)
+                reward_phase_totals.append(
+                    reward_phase_total
+                    if exact_reward_phase
+                    else reward_phase_total / self.reward_steps
+                )
                 episode_lengths.append(episode_length)
 
             mean_reward_phase_avg = (
-                sum(reward_phase_totals) / len(reward_phase_totals) / self.reward_steps
+                sum(reward_phase_totals) / len(reward_phase_totals)
             )
             print(
                 f"[eval] steps={self.num_timesteps} "

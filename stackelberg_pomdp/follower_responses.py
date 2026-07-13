@@ -41,6 +41,8 @@ class MultiplicativeWeightsResponse:
         if self.reset_weights_each_episode:
             self.weights = self._initial_weights()
         self.deviation_utilities = self._empty_deviation_utilities()
+        self.completed_iterations = 0
+        self.iteration_type_profile_counts = {}
         self._reset_iteration()
 
     def response_actions(self, observations):
@@ -70,7 +72,12 @@ class MultiplicativeWeightsResponse:
         if not self.iteration_complete:
             return False
 
+        type_profile = tuple(observations[follower] for follower in self.followers_list)
+        self.iteration_type_profile_counts[type_profile] = (
+            self.iteration_type_profile_counts.get(type_profile, 0) + 1
+        )
         self._update_weights(observations)
+        self.completed_iterations += 1
         self.deviation_utilities = self._empty_deviation_utilities()
         return True
 

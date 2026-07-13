@@ -127,6 +127,10 @@ class BaseEnv(gym.Env):
         """
         return default_length
 
+    def subepisode_horizon(self):
+        """Number of leader transitions in one generated response/reward game."""
+        return 1
+
     def start_reward_phase(self):
         """Initialize any environment-specific exact reward-phase schedule."""
         return
@@ -415,6 +419,11 @@ class BaseSPM(BaseEnv):
         )
 
     def rollout_buffer_episode_length(self):
+        return self.subepisode_horizon()
+
+    def subepisode_horizon(self):
+        # Every buyer is visited exactly once. Keeping this horizon fixed is
+        # required for StackPOMDP PPO rollouts to end on episode boundaries.
         return len(self.followers_list)
 
     def log_info(self, info):
@@ -504,13 +513,19 @@ class BaseMessageSPM(BaseSPM):
             profile = self.current_reward_phase_profile()
             if profile is not None:
                 weight = profile["weight"]
-                scale = len(self.reward_phase_profiles)
                 result["info"]["unweighted_reward"] = result["reward"]
                 result["info"]["exact_profile_weight"] = weight
                 result["info"]["weighted_efficiency"] = result["info"]["efficiency"] * weight
-                result["reward"] = result["reward"] * weight * scale
+                # Exact profiles contribute directly to the expected return.
+                # Do not multiply by the number of profiles: doing so preserves
+                # a reporting average but changes PPO's reward/entropy scale.
+                result["reward"] = result["reward"] * weight
                 result["info"]["reward"] = result["reward"]
                 result["info"]["surplus"] = result["reward"]
+            result["info"]["type_profile"] = dict(self.types)
+            result["info"]["mechanism_outcome"] = copy.deepcopy(
+                self.mechanism_episode.outcome
+            )
 
         return observation, result["reward"], result["done"], result["info"]
 

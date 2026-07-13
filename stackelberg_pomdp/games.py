@@ -160,6 +160,7 @@ class SPMEpisode:
     outcome: dict = field(default_factory=lambda: {
         "order": [],
         "price_vectors": [],
+        "leader_actions": [],
         "mechanism_outcome": {},
     })
     utilities: dict = field(default_factory=dict)
@@ -215,6 +216,9 @@ class SequentialPostedPriceGame(BaseStackelbergGame):
     def step_episode(self, episode, actions_dict):
         leader_action = self.parse_leader_action(actions_dict[self.leader])
         self.record_follower_actions(episode, actions_dict)
+        episode.outcome["leader_actions"].append(
+            np.asarray(actions_dict[self.leader]).tolist()
+        )
 
         agent_idx, agent = self.select_agent(
             leader_action["agent_scores"],
@@ -369,10 +373,11 @@ class SequentialPostedPriceGame(BaseStackelbergGame):
         return purchase
 
     def mechanism_done(self, mechanism_state):
-        return (
-            sum(mechanism_state["agents_remaining"].values()) <= 0
-            or np.sum(mechanism_state["items_remaining"]) <= 0
-        )
+        # Once inventory is exhausted the economic outcome is already fixed,
+        # but ending then makes the horizon depend on the policy. Visiting any
+        # remaining buyers with no inventory is outcome-neutral and gives PPO
+        # the fixed horizon required for episode-aligned rollout buffers.
+        return sum(mechanism_state["agents_remaining"].values()) <= 0
 
     def allocation_result(self, valuations, allocated_value):
         efficient_value = self.efficient_welfare(valuations)

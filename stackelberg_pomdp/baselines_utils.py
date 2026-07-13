@@ -131,6 +131,14 @@ class CustomPolicy(MultiInputActorCriticPolicy):
                 actions = actions[0]
         else:
             actions, state = super(CustomPolicy, self).predict(observation, deterministic = deterministic)
+            if self.fix_actions:
+                cached_actions = np.asarray(actions)
+                if not vectorized_env:
+                    cached_actions = np.expand_dims(cached_actions, axis=0)
+                self.obs_action_map[obs_key] = th.as_tensor(
+                    cached_actions,
+                    device=self.device,
+                )
         return actions, state
 
 

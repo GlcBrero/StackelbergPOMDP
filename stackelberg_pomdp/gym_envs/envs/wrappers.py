@@ -37,6 +37,9 @@ class FollowerWrapper(gym.Wrapper):
     def reward_phase_length(self, default_length):
         return self.env.unwrapped.reward_phase_length(default_length)
 
+    def subepisode_horizon(self):
+        return self.env.unwrapped.subepisode_horizon()
+
     def critic_observation_spaces(self):
         return OrderedDict()
 
@@ -175,13 +178,59 @@ class MWFollowersWrapper(FollowerWrapper):
 
     def critic_observation_spaces(self):
         num_weights = sum(len(weight.flatten()) for weight in self.weights)
+        num_deviation_utilities = sum(
+            self.followers_action_space[follower].n
+            for follower in self.followers_list
+        )
+        max_actions = max(
+            self.followers_action_space[follower].n
+            for follower in self.followers_list
+        )
         return OrderedDict({
             "critic:weights": Box(low=-1.0, high=1.0, shape=(num_weights,)),
+            "critic:mw_types": MultiDiscrete([
+                self.followers_observation_space[follower].n
+                for follower in self.followers_list
+            ]),
+            "critic:mw_reference_actions": MultiDiscrete([
+                self.followers_action_space[follower].n
+                for follower in self.followers_list
+            ]),
+            "critic:mw_deviation_position": MultiDiscrete([
+                len(self.followers_list),
+                max_actions,
+            ]),
+            "critic:mw_deviation_utilities": Box(
+                low=-1e6,
+                high=1e6,
+                shape=(num_deviation_utilities,),
+                dtype=np.float32,
+            ),
+            "critic:mw_iteration_complete": Discrete(2),
         })
 
     def critic_observation(self):
+        response = self.response
         return OrderedDict({
             "critic:weights": self.weights_to_norm_vec(),
+            "critic:mw_types": np.asarray([
+                self.followers_obs[follower]
+                for follower in self.followers_list
+            ], dtype=np.int64),
+            "critic:mw_reference_actions": np.asarray([
+                response.reference_actions.get(follower, 0)
+                for follower in self.followers_list
+            ], dtype=np.int64),
+            "critic:mw_deviation_position": np.asarray([
+                response.deviation_follower_idx,
+                response.deviation_action_idx,
+            ], dtype=np.int64),
+            "critic:mw_deviation_utilities": np.asarray([
+                utility
+                for follower_utilities in response.deviation_utilities
+                for utility in follower_utilities
+            ], dtype=np.float32),
+            "critic:mw_iteration_complete": int(response.iteration_complete),
         })
 
     def response_strategy(self):
@@ -545,6 +594,9 @@ class StackPOMDPWrapper(gym.Wrapper):
         self.last_response_strategy = None
         self.last_response_bcce_gap = None
         self.last_response_stop_reason = None
+        self.last_response_updates = None
+        self.last_response_weights = None
+        self.last_response_type_profile_counts = None
 
         self.tot_num_steps = 0
         self.follower_wrapper = self._find_follower_wrapper()
@@ -584,9 +636,14 @@ class StackPOMDPWrapper(gym.Wrapper):
         return self.follower_wrapper.reward_phase_length(self.tot_num_reward_episodes)
 
     def rollout_buffer_episode_length(self):
+        subepisode_horizon = self.follower_wrapper.subepisode_horizon()
         if self.response_variant == "hidden_queries":
-            return self.reward_phase_length()
-        return int(self.tot_num_response_episodes) + int(self.reward_phase_length())
+            return int(self.reward_phase_length()) * subepisode_horizon
+        generated_games = (
+            int(self.tot_num_response_episodes)
+            + int(self.reward_phase_length())
+        )
+        return generated_games * subepisode_horizon
 
     def _response_phase_threshold(self):
         return self.tot_num_response_episodes
@@ -654,6 +711,17 @@ class StackPOMDPWrapper(gym.Wrapper):
         response_phase_done = self._response_phase_done()
         if response_phase_done:
             self.last_response_strategy = list(self._response_strategy_for_diagnostic())
+            response = getattr(self.follower_wrapper, "response", None)
+            self.last_response_updates = getattr(response, "completed_iterations", None)
+            self.last_response_type_profile_counts = dict(
+                getattr(response, "iteration_type_profile_counts", {})
+            )
+            weights = getattr(self.follower_wrapper, "weights", None)
+            self.last_response_weights = (
+                [np.array(weight, copy=True) for weight in weights]
+                if weights is not None
+                else None
+            )
             self.last_response_bcce_gap = self._compute_response_bcce_gap()
             self.last_response_stop_reason = "fixed_response_phase"
             if self.last_response_bcce_gap is not None:
@@ -661,6 +729,7 @@ class StackPOMDPWrapper(gym.Wrapper):
                 info["response_bcce_records"] = len(self.last_response_strategy)
             self._enter_reward_mode()
             obs = self._current_leader_observation()
+            info["response_updates"] = self.last_response_updates
 
         reward = self._response_reward(response_reward)
         info["exclude_from_buffer"] = self._hide_response_transition_from_buffer()

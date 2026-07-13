@@ -17,12 +17,12 @@ from stable_baselines3.common.monitor import Monitor
 
 # Local application/library specific imports
 try:
-    from .callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback
+    from .callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from .env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
     from .gym_envs.envs.wrappers import MWFollowersWrapper
     from .rl_trainer_setup import get_custom_training_algorithm
 except ImportError:
-    from callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback
+    from callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
     from gym_envs.envs.wrappers import MWFollowersWrapper
     from rl_trainer_setup import get_custom_training_algorithm
@@ -89,6 +89,10 @@ def _experiment_name(config_dict):
         f"steps{config_dict['max_steps']}",
         config_dict["algorithm"],
         f"seed{config_dict['seed']}",
+        f"lr{_format_value(config_dict.get('learning_rate', 7e-4))}",
+        f"ppobatch{config_dict.get('ppo_batch_size') or 'episode'}",
+        f"ppoepochs{config_dict.get('ppo_n_epochs', 4)}",
+        f"pporollout{config_dict.get('ppo_episodes_per_batch', 16)}ep",
         f"reward{config_dict['tot_num_reward_episodes']}",
         f"response{config_dict.get('effective_tot_num_response_episodes', _effective_tot_num_response_episodes(config_dict))}",
         f"critic{config_dict['critic_obs']}",
@@ -125,6 +129,8 @@ def _experiment_name(config_dict):
             setting,
             f"types{num_types}",
             f"messages{num_messages}",
+            "exactexpectedscale",
+            "fullmwstate",
         ])
     elif experiment_family == "normal_form":
         _, game_name, randomized = config_dict["experiment_type"].split(":")
@@ -198,6 +204,17 @@ def train_run(config_dict):
             print_freq=response_diagnostic_freq,
         ))
 
+    reward_trace_targets = [
+        value.strip()
+        for value in config_dict.get('reward_trace_targets', '').split(',')
+        if value.strip()
+    ]
+    if reward_trace_targets:
+        callback_list.append(RewardEpisodeTraceCallback(
+            reward_trace_targets,
+            tolerance=config_dict.get('reward_trace_tol', 1e-6),
+        ))
+
     if config_dict.get('response_bcce_threshold') is not None:
         callback_list.append(ResponsePhasePolicyCallback())
 
@@ -261,6 +278,7 @@ def train_run(config_dict):
         callback_list.append(BackgroundEvalCallback(
             eval_env,
             eval_freq=eval_freq,
+            n_eval_episodes=int(config_dict.get('eval_episodes', 1)),
             reward_steps=eval_config['tot_num_reward_episodes'],
         ))
 

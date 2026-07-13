@@ -67,13 +67,20 @@ def get_custom_training_algorithm(config_dict, env, tensorboard_folder=None):
         ppo_episodes_per_batch = config_dict.get('ppo_episodes_per_batch', 16)
         ppo_n_epochs = config_dict.get('ppo_n_epochs', 4)
         ppo_n_steps = n_steps * ppo_episodes_per_batch
+        ppo_batch_size = config_dict.get('ppo_batch_size') or n_steps
         m = CustomPPO(env=env, policy=CustomPolicy, gamma=1, learning_rate=learning_rate, seed=seed, n_steps=ppo_n_steps,
-                ent_coef=ent_coef, batch_size=n_steps, n_epochs=ppo_n_epochs,
+                ent_coef=ent_coef, batch_size=ppo_batch_size, n_epochs=ppo_n_epochs,
                 policy_kwargs={
                     "cutoff_entry": cutoff_entry,
                     "actor_obs_keys": actor_obs_keys,
                 },
                 tensorboard_log=tensorboard_folder)
+        print(
+            f"[ppo_geometry] episode_transitions={n_steps} "
+            f"episodes_per_rollout={ppo_episodes_per_batch} "
+            f"n_steps={ppo_n_steps} batch_size={ppo_batch_size}",
+            flush=True,
+        )
 
     elif algorithm == "A2C":
         m = CustomA2C(env=env, policy=CustomPolicy, gamma=1, learning_rate=learning_rate, seed=seed, n_steps=n_steps,

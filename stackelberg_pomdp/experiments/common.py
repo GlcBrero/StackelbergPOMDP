@@ -41,8 +41,16 @@ def add_common_training_args(parser, default_algorithm="PPO", default_max_steps=
     parser.add_argument("--progress_freq", type=int, default=10000)
     parser.add_argument("--reward_print_freq", type=int, default=1)
     parser.add_argument("--eval_freq", type=int, default=10000)
+    parser.add_argument("--eval_episodes", type=int, default=1)
     parser.add_argument("--eval_reward_episodes", type=int, default=100)
     parser.add_argument("--response_diagnostic_freq", type=int, default=0)
+    parser.add_argument(
+        "--reward_trace_targets",
+        type=str,
+        default="",
+        help="Comma-separated reward-phase averages to trace once each (for example: 0,-0.08).",
+    )
+    parser.add_argument("--reward_trace_tol", type=float, default=1e-6)
     parser.add_argument("--response_bcce_threshold", type=float, default=None)
     parser.add_argument("--response_bcce_min_records", type=int, default=1)
     parser.add_argument("--response_bcce_check_freq", type=int, default=1)
