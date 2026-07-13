@@ -1,0 +1,31 @@
+name: stackelberg-pomdp
+channels:
+  - defaults
+dependencies:
+  - python=3.9
+  - pip=23.3
+  - setuptools=65
+  - wheel=0.37.1
+  - pip:
+      - numpy==1.23.0
+      - cloudpickle==1.6.0
+      - gym==0.21.0
+      - torch==2.0.0
+      - stable-baselines3==1.8.0
+      - importlib-metadata==4.13.0
+      - pandas==2.2.2
+      - matplotlib==3.7.1
+      - tensorboard==2.12.1
+      - tensorboard-data-server==0.7.0
+      - tensorboard-plugin-wit==1.8.1
+      - wandb==0.15.12
+      - absl-py==1.4.0
+      - grpcio==1.51.3
+      - google-auth==2.17.2
+      - google-auth-oauthlib==1.0.0
+      - markdown==3.4.3
+      - protobuf==3.20.3
+      - requests==2.28.2
+      - werkzeug==2.2.3
+variables:
+  PYTHONNOUSERSITE: "1"

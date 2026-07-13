@@ -1,8 +1,6 @@
 import numpy as np
-from copy import deepcopy
 from itertools import product
-from stable_baselines3.common.logger import HumanOutputFormat
-import sys
+import gym
 
 def get_all_wrappers(env):
     """Returns all the wrappers of an environment, traversing down to the base env.
@@ -52,68 +50,193 @@ def run_episode(env, policy):
         total_reward += reward
     return total_reward
 
-def check_for_profitable_deviations(env, leader_policy, followers_strategy):
-        def compute_expected_payoff(policy, strategy_object, follower, observation):
-            # We are assuming uniform distributions over types
 
-            other_followers = [f for f in env.followers_list if f != follower]
-            other_followers_spaces = [env.followers_observation_space[f] for f in other_followers]
-
-            original_payoff = 0.0
-            num_configurations = 1
-            for space in other_followers_spaces:
-                num_configurations *= len(space)
-
-            for observations in product(*other_followers_spaces):
-                # Build observation and action dictionaries
-                observations_dict = {f: obs for f, obs in zip(other_followers, observations)}
-                actions_dict = {f: strategy_object[f][obs] for f, obs in zip(other_followers, observations)}
-
-                # Add the current follower's observation and action
-                observations_dict[follower] = observation
-                actions_dict[follower] = strategy_object[follower][observation]
-
-                # Run episode with this configuration
-                info_episode = env.run_episode(policy, observations_dict, actions_dict)
-                config_payoff = info_episode['utilities'][follower]
-                original_payoff += config_payoff # Accumulate payoff for the follower
-
-            return original_payoff / num_configurations
+def space_values(space):
+    """Enumerate values in finite Gym spaces used by follower observations/actions."""
+    if isinstance(space, gym.spaces.Discrete):
+        return range(space.n)
+    if isinstance(space, gym.spaces.MultiDiscrete):
+        return product(*[range(n) for n in space.nvec])
+    raise TypeError(f"Cannot enumerate non-finite space {space!r}.")
 
 
-        max_deviation = 0
-        for follower in env.followers_list:
-            current_strategy = followers_strategy[follower]
-            for observation in env.followers_observation_space[follower]:
+def _empirical_strategy_info(env, leader_policy, followers, types, bids, payoff_cache):
+    key = (
+        tuple((follower, types[follower]) for follower in followers),
+        tuple((follower, bids[follower]) for follower in followers),
+    )
+    if key not in payoff_cache:
+        payoff_cache[key] = env.run_episode(leader_policy, dict(types), dict(bids))
+    return payoff_cache[key]
 
-                original_payoff = compute_expected_payoff(leader_policy, followers_strategy, follower, observation)
 
-                for action in env.followers_action_space[follower]:
-                    if action != current_strategy[observation]:  # Skip current action
+def _empirical_strategy_payoff(env, leader_policy, followers, types, bids, payoff_cache):
+    return _empirical_strategy_info(
+        env,
+        leader_policy,
+        followers,
+        types,
+        bids,
+        payoff_cache,
+    )["utilities"]
 
-                        # Create a temporary modified strategy
-                        modified_strategy = deepcopy(followers_strategy)
-                        modified_strategy[follower][observation] = action
-                        alt_payoff = compute_expected_payoff(leader_policy, modified_strategy, follower, observation)
-                        if alt_payoff > original_payoff:
-                            deviation = alt_payoff - original_payoff
-                            if deviation > max_deviation:
-                                max_deviation = deviation
 
-        return max_deviation  # Return max deviation
+def _type_profile_probability(env, types):
+    game = env.unwrapped.game if hasattr(env, "unwrapped") else env.game
+    if hasattr(game, "type_profile_probability"):
+        return game.type_profile_probability(types)
+    probability = 1.0
+    for follower in env.followers_list:
+        probability *= 1.0 / env.followers_observation_space[follower].n
+    return probability
 
-def compute_welfare_loss(env, leader_policy, followers_strategy):
-    welfare_loss = 0
-    total_configurations = 1
 
-    for observations in product(*[env.followers_observation_space[f] for f in env.followers_list]):
-        observations_dict = {f: obs for f, obs in zip(env.followers_list, observations)}
-        actions_dict = {f: followers_strategy[f][obs] for f, obs in zip(env.followers_list, observations)}
-        info_episode = env.run_episode(leader_policy, observations_dict, actions_dict)
-        welfare_loss += info_episode['utilities'][env.game.leader]
-        total_configurations += 1
+def _conditional_other_type_probability(env, other_followers, other_observations):
+    if not other_followers:
+        return 1.0
+    game = env.unwrapped.game if hasattr(env, "unwrapped") else env.game
+    probability = 1.0
+    for follower, observation in zip(other_followers, other_observations):
+        if hasattr(game, "type_probability"):
+            probability *= game.type_probability(follower, observation)
+        else:
+            probability *= 1.0 / env.followers_observation_space[follower].n
+    return probability
 
-    return welfare_loss / total_configurations
+
+def check_empirical_bcce_gap(env, leader_policy, empirical_strategy):
+    """Maximum interim coarse-deviation gain for an empirical MW strategy.
+
+    The empirical strategy is a uniform distribution over mixed-strategy
+    snapshots. A follower type may deviate ex ante to a fixed action, before
+    seeing the sampled action recommendation.
+    """
+    followers = env.followers_list
+    payoff_cache = {}
+    max_gap = 0.0
+
+    for follower in followers:
+        other_followers = [f for f in followers if f != follower]
+        other_type_profiles = list(product(*[
+            list(space_values(env.followers_observation_space[f]))
+            for f in other_followers
+        ]))
+
+        for observation in space_values(env.followers_observation_space[follower]):
+            current_payoff = 0.0
+            deviation_payoffs = {
+                action: 0.0
+                for action in space_values(env.followers_action_space[follower])
+            }
+
+            strategy_weight = 1.0 / len(empirical_strategy)
+            for strategy_snapshot in empirical_strategy:
+                for other_observations in other_type_profiles:
+                    other_type_probability = _conditional_other_type_probability(
+                        env,
+                        other_followers,
+                        other_observations,
+                    )
+                    observations_dict = {
+                        f: obs for f, obs in zip(other_followers, other_observations)
+                    }
+                    observations_dict[follower] = observation
+
+                    other_action_profiles = product(*[
+                        list(space_values(env.followers_action_space[f]))
+                        for f in other_followers
+                    ])
+                    for other_actions in other_action_profiles:
+                        other_action_prob = 1.0
+                        actions_dict = {}
+                        for f, action in zip(other_followers, other_actions):
+                            actions_dict[f] = action
+                            other_action_prob *= strategy_snapshot[f][observations_dict[f]][action]
+
+                        for own_action in space_values(env.followers_action_space[follower]):
+                            actions_dict[follower] = own_action
+                            own_action_prob = strategy_snapshot[follower][observation][own_action]
+                            utilities = _empirical_strategy_payoff(
+                                env,
+                                leader_policy,
+                                followers,
+                                observations_dict,
+                                actions_dict,
+                                payoff_cache,
+                            )
+                            current_payoff += (
+                                utilities[follower]
+                                * other_action_prob
+                                * own_action_prob
+                                * other_type_probability
+                                * strategy_weight
+                            )
+
+                        for deviation_action in space_values(env.followers_action_space[follower]):
+                            actions_dict[follower] = deviation_action
+                            utilities = _empirical_strategy_payoff(
+                                env,
+                                leader_policy,
+                                followers,
+                                observations_dict,
+                                actions_dict,
+                                payoff_cache,
+                            )
+                            deviation_payoffs[deviation_action] += (
+                                utilities[follower]
+                                * other_action_prob
+                                * other_type_probability
+                                * strategy_weight
+                            )
+
+            best_deviation_payoff = max(deviation_payoffs.values())
+            max_gap = max(max_gap, best_deviation_payoff - current_payoff)
+
+    return max(0.0, max_gap)
+
+
+def compute_empirical_welfare(env, leader_policy, empirical_strategy):
+    """Expected leader reward under an empirical MW mixed strategy."""
+    followers = env.followers_list
+    payoff_cache = {}
+    welfare = 0.0
+    observation_values = [
+        list(space_values(env.followers_observation_space[f]))
+        for f in followers
+    ]
+    strategy_weight = 1.0 / len(empirical_strategy)
+
+    for strategy_snapshot in empirical_strategy:
+        for observations in product(*observation_values):
+            observations_dict = {f: obs for f, obs in zip(followers, observations)}
+            type_probability = _type_profile_probability(env, observations_dict)
+            action_values = [
+                list(space_values(env.followers_action_space[f]))
+                for f in followers
+            ]
+            for actions in product(*action_values):
+                action_prob = 1.0
+                actions_dict = {}
+                for f, action in zip(followers, actions):
+                    actions_dict[f] = action
+                    action_prob *= strategy_snapshot[f][observations_dict[f]][action]
+
+                utilities = _empirical_strategy_payoff(
+                    env,
+                    leader_policy,
+                    followers,
+                    observations_dict,
+                    actions_dict,
+                    payoff_cache,
+                )
+                welfare += (
+                    utilities[env.game.leader]
+                    * action_prob
+                    * type_probability
+                    * strategy_weight
+                )
+
+    return welfare
 
 
 class TemporaryMethod:

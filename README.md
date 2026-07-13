@@ -13,11 +13,21 @@ The split reflects an architectural trade-off: centralized critics are natural f
 
 ### Installation
 
-First, install the necessary packages by running the following command:
+Create the conda environment:
 
 ```
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate stackelberg-pomdp
 ```
+
+Run commands from the repository root:
+
+```
+python replication/run.py --list
+```
+
+The environment sets `PYTHONNOUSERSITE=1` so Python does not accidentally import
+packages from `~/.local`.
 
 ### Normal Form Games
 
@@ -25,11 +35,11 @@ You can run normal form games in two modes: deterministic and randomized.
 In the deterministic mode, the leader must choose a single, specific matrix row. Conversely, in the randomized mode, they may employ a probabilistic strategy, allowing them to play any row with certain probabilities.
 - To run the Escape game in deterministic mode, use the following command:
 ```
-python stackelberg_pomdp/main_args.py --experiment_type normal_form:game_1:False
+python -m stackelberg_pomdp.experiments.normal_form --game_name game_1 --randomized false
 ```
 - For randomized mode, use the following command:
 ```
-python stackelberg_pomdp/main_args.py --experiment_type normal_form:game_1:True
+python -m stackelberg_pomdp.experiments.normal_form --game_name game_1 --randomized true
 ```
 The Maintain game can be run in the same way by replacing `game_1` with `game_2`.
 
@@ -37,24 +47,25 @@ The Maintain game can be run in the same way by replacing `game_1` with `game_2`
 
 To run matrix design games, use the following command:
 ```
-python stackelberg_pomdp/main_args.py --experiment_type matrix_design
+python -m stackelberg_pomdp.experiments.matrix_design
 ```
 You can specify the observation type for the critic by replacing `critic_obs` with `full` 
-for MAPPO or `none` for PPO. You can also specify the response phase probability by 
-replacing `response_phase_prob` with `0` for Basic POMDP or `1` for Stackelberg POMDP.
+for MAPPO or `none` for PPO. You can also specify the POMDP construction by
+setting `pomdp_mode` to `stackelberg`, `hidden_queries`, or
+`reward_during_response`.
+Use `--tot_num_response_episodes` to set the follower-response horizon.
 
 ### Simple Allocation Mechanisms
 
 To run simple allocation mechanisms with a message space size of `i`, use the following command:
 ```
-python stackelberg_pomdp/main_args.py --experiment_type simple_allocation:i --tot_num_reward_episodes 30
+python -m stackelberg_pomdp.experiments.simple_allocation --num_messages i
 ```
 
 ### Sequential Price Mechanisms
 
 To run a sequential price mechanism with `t` types and `i` messages, use the following command:
 ```
-python stackelberg_pomdp/main_args.py --learning_method RL:StopOnThreshold --experiment_type mspm:MSGSpace:t:i --tot_num_eq_episodes 1000 --tot_num_reward_episodes 100
+python -m stackelberg_pomdp.experiments.mspm --setting MSGSpace --num_types t --num_messages i
 ```
-For a fixed training environment set by using `--seed SEED`, you can test different initialization weights by varying `--training_seed`.
-Each unique value provided to `--training_seed` will result in a different set of initial weights. Remember to replace SEED with your actual seed value. For example, if your seed value is 42, the command would be `--seed 42`.
+Use `--seed SEED` to control both environment randomness and learner initialization for replication runs.

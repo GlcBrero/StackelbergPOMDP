@@ -1,0 +1,303 @@
+{
+  "fig_simple_allocation_stackpomdp_mappo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation StackPOMDP + MAPPO curve used for SA-Ablation_new.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "full",
+      "pomdp_mode": "stackelberg",
+      "seed": "{seed}"
+    }
+  },
+  "fig_simple_allocation_hidden_queries_mappo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation hidden-queries + MAPPO theorem-violation curve.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "full",
+      "pomdp_mode": "hidden_queries",
+      "seed": "{seed}"
+    }
+  },
+  "fig_simple_allocation_reward_during_response_mappo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation reward-during-response + MAPPO theorem-violation curve.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "full",
+      "pomdp_mode": "reward_during_response",
+      "seed": "{seed}"
+    }
+  },
+  "fig_simple_allocation_stackpomdp_ppo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation StackPOMDP + PPO ablation curve.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "none",
+      "pomdp_mode": "stackelberg",
+      "seed": "{seed}"
+    }
+  },
+  "fig_simple_allocation_hidden_queries_ppo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation hidden-queries + PPO theorem-violation curve.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "none",
+      "pomdp_mode": "hidden_queries",
+      "seed": "{seed}"
+    }
+  },
+  "fig_simple_allocation_reward_during_response_ppo": {
+    "status": "owned_here",
+    "description": "Train the Simple Allocation reward-during-response + PPO theorem-violation curve.",
+    "figure_or_table": "SA-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 3,
+      "max_steps": 100000,
+      "critic_obs": "none",
+      "pomdp_mode": "reward_during_response",
+      "seed": "{seed}"
+    }
+  },
+  "table_mspm_3types_2messages": {
+    "status": "owned_here",
+    "description": "Run MSPM with 3 types and 2 messages.",
+    "figure_or_table": "table:spmResults",
+    "module": "stackelberg_pomdp.experiments.mspm",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 3,
+      "num_messages": 2,
+      "seed": "{seed}"
+    }
+  },
+  "table_spm_3types": {
+    "status": "owned_here",
+    "description": "Run the standard SPM PPO baseline with 3 types and no messages.",
+    "figure_or_table": "table:spmResults baseline",
+    "module": "stackelberg_pomdp.experiments.spm_baseline",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 3,
+      "seed": "{seed}"
+    }
+  },
+  "table_mspm_4types_2messages": {
+    "status": "owned_here",
+    "description": "Run MSPM with 4 types and 2 messages.",
+    "figure_or_table": "table:spmResults",
+    "module": "stackelberg_pomdp.experiments.mspm",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 4,
+      "num_messages": 2,
+      "seed": "{seed}"
+    }
+  },
+  "table_spm_4types": {
+    "status": "owned_here",
+    "description": "Run the standard SPM PPO baseline with 4 types and no messages.",
+    "figure_or_table": "table:spmResults baseline",
+    "module": "stackelberg_pomdp.experiments.spm_baseline",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 4,
+      "seed": "{seed}"
+    }
+  },
+  "table_mspm_5types_2messages": {
+    "status": "owned_here",
+    "description": "Run MSPM with 5 types and 2 messages.",
+    "figure_or_table": "table:spmResults",
+    "module": "stackelberg_pomdp.experiments.mspm",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 5,
+      "num_messages": 2,
+      "seed": "{seed}"
+    }
+  },
+  "table_spm_5types": {
+    "status": "owned_here",
+    "description": "Run the standard SPM PPO baseline with 5 types and no messages.",
+    "figure_or_table": "table:spmResults baseline",
+    "module": "stackelberg_pomdp.experiments.spm_baseline",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 5,
+      "seed": "{seed}"
+    }
+  },
+  "table_mspm_5types_3messages": {
+    "status": "owned_here",
+    "description": "Run MSPM with 5 types and 3 messages.",
+    "figure_or_table": "table:spmResults",
+    "module": "stackelberg_pomdp.experiments.mspm",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 5,
+      "num_messages": 3,
+      "seed": "{seed}"
+    }
+  },
+  "fig_maintain_randomized": {
+    "status": "owned_here",
+    "description": "Run the Maintain normal-form randomized-strategy experiment.",
+    "figure_or_table": "simpleMatrixGame2_new",
+    "module": "stackelberg_pomdp.experiments.normal_form",
+    "args": {
+      "game_name": "game_2",
+      "randomized": true,
+      "seed": "{seed}"
+    }
+  },
+  "fig_matrix_design_ablation": {
+    "status": "owned_here",
+    "description": "Run the Matrix Design mechanism-design ablation.",
+    "figure_or_table": "MatrixDesign-Ablation_new",
+    "module": "stackelberg_pomdp.experiments.matrix_design",
+    "args": {
+      "tot_num_response_episodes": 4,
+      "seed": "{seed}"
+    }
+  },
+  "fig_price_collusion_m4_calibration": {
+    "status": "owned_here",
+    "description": "Calibrate Q-learning sellers on the paper m=4 grid [1.05, 1.7].",
+    "figure_or_table": "deviation_m4 calibration input",
+    "module": "replication.bertrand.calibrate_price_learners",
+    "args": {
+      "m": 4,
+      "alpha": 0.25,
+      "beta": "1e-4",
+      "n_sessions": 5,
+      "output_dir": "results/price_collusion_m4"
+    }
+  },
+  "fig_price_collusion_punishment_m4": {
+    "status": "owned_here",
+    "description": "Run the price-deviation punishment diagnostic from saved m=4 Q-tables.",
+    "figure_or_table": "deviation_m4",
+    "module": "replication.bertrand.punishment_diagnostic",
+    "args": {
+      "input_dir": "results/price_collusion_m4"
+    }
+  },
+  "fig_collusion_learning_state": {
+    "status": "owned_here",
+    "description": "Train the state-based StackPOMDP threshold intervention.",
+    "figure_or_table": "collusion_learning_25seeds",
+    "module": "stackelberg_pomdp.experiments.price_collusion",
+    "args": {
+      "platform_observation_space": "price_profile",
+      "price_grid_length": 4,
+      "price_min": 1.05,
+      "price_max": 1.7,
+      "seed": "{seed}"
+    }
+  },
+  "fig_collusion_learning_no_state": {
+    "status": "owned_here",
+    "description": "Train the no-state StackPOMDP threshold intervention.",
+    "figure_or_table": "collusion_learning_25seeds",
+    "module": "stackelberg_pomdp.experiments.price_collusion",
+    "args": {
+      "platform_observation_space": "no_observation",
+      "price_grid_length": 4,
+      "price_min": 1.05,
+      "price_max": 1.7,
+      "seed": "{seed}"
+    }
+  },
+  "baseline_mspm_evolutionary_3types_2messages": {
+    "status": "owned_here",
+    "description": "Run the non-StackPOMDP evolutionary mechanism-search baseline for MSPM with 3 types and 2 messages.",
+    "figure_or_table": "table:spmResults baseline",
+    "module": "stackelberg_pomdp.experiments.mspm_evolutionary_baseline",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 3,
+      "num_messages": 2,
+      "generations": 20,
+      "population_size": 24,
+      "elite_size": 6,
+      "response_records": 300,
+      "bcce_check_freq": 100,
+      "bcce_threshold": 0.05,
+      "output_dir": "results/mspm_evolutionary_baseline/3types_2messages_seed{seed}",
+      "seed": "{seed}"
+    }
+  },
+  "baseline_mspm_evolutionary_4types_2messages": {
+    "status": "owned_here",
+    "description": "Run the non-StackPOMDP evolutionary mechanism-search baseline for MSPM with 4 types and 2 messages.",
+    "figure_or_table": "table:spmResults baseline",
+    "module": "stackelberg_pomdp.experiments.mspm_evolutionary_baseline",
+    "args": {
+      "setting": "MSGSpace",
+      "num_types": 4,
+      "num_messages": 2,
+      "generations": 20,
+      "population_size": 24,
+      "elite_size": 6,
+      "response_records": 300,
+      "bcce_check_freq": 100,
+      "bcce_threshold": 0.05,
+      "output_dir": "results/mspm_evolutionary_baseline/4types_2messages_seed{seed}",
+      "seed": "{seed}"
+    }
+  },
+  "fig_atari_bilateral_trade": {
+    "status": "companion_stackerlberg",
+    "description": "Atari Space Invaders bilateral trade figure.",
+    "figure_or_table": "fig_atari_ppo_ppo_byvar",
+    "owner": "Code/StackeRLberg and atari experiment/",
+    "todo": "Port the StackeRLberg Atari commands into this manifest or keep this as a companion-code target with exact handoff instructions."
+  },
+  "fig_hidden_queries_ablation": {
+    "status": "companion_stackerlberg",
+    "description": "Hidden-query ablation for theorem-assumption violations.",
+    "figure_or_table": "fig_hidden",
+    "owner": "Code/StackeRLberg",
+    "todo": "Add exact StackeRLberg command and output mapping."
+  },
+  "fig_memory_phase_ablation": {
+    "status": "companion_stackerlberg",
+    "description": "Memory-based leader / phase-variable ablation.",
+    "figure_or_table": "fig_memory_pg",
+    "owner": "Code/StackeRLberg",
+    "todo": "Add exact StackeRLberg command and output mapping."
+  },
+  "fig_reward_during_learning_ablation": {
+    "status": "companion_stackerlberg",
+    "description": "Leader reward during follower-learning ablation.",
+    "figure_or_table": "fig_bots_leaderreward",
+    "owner": "Code/StackeRLberg",
+    "todo": "Add exact StackeRLberg command and output mapping."
+  },
+  "fig_continuous_follower_learning_ablation": {
+    "status": "companion_stackerlberg",
+    "description": "Continuous follower-learning/reset ablation.",
+    "figure_or_table": "fig_reset",
+    "owner": "Code/StackeRLberg",
+    "todo": "Add exact StackeRLberg command and output mapping."
+  }
+}

@@ -3,6 +3,24 @@ import hashlib
 import gym
 from stable_baselines3.common.utils import obs_as_tensor
 
+
+def zero_observation(space):
+    if isinstance(space, gym.spaces.Dict):
+        return {
+            key: zero_observation(subspace)
+            for key, subspace in space.spaces.items()
+        }
+    if isinstance(space, gym.spaces.Box):
+        return np.zeros(space.shape, dtype=space.dtype)
+    if isinstance(space, gym.spaces.Discrete):
+        return 0
+    if isinstance(space, gym.spaces.MultiDiscrete):
+        return np.zeros(space.nvec.shape, dtype=np.int64)
+    if isinstance(space, gym.spaces.MultiBinary):
+        return np.zeros(space.n, dtype=np.int8)
+    raise NotImplementedError(f"Unsupported observation space: {space}")
+
+
 class RandomPolicy:
     def __init__(self, env, seed):
         self.env = env
@@ -33,11 +51,14 @@ class RandomPolicy:
 
 
 class BaselinePolicyWrapper:
-    def __init__(self, baselines_policy, env):
+    def __init__(self, baselines_policy, env, deterministic=True):
         self.baselines_policy = baselines_policy
         self.env = env
+        self.deterministic = deterministic
 
     def get_action(self, observation):
-        obs_full = self.env.observation_space.sample()
-        obs_full['base_environment'] = observation['base_environment']
-        return self.baselines_policy.predict(obs_full)[0]
+        obs_full = zero_observation(self.env.observation_space)
+        for key, value in observation.items():
+            if key in obs_full and not key.startswith("critic:"):
+                obs_full[key] = value
+        return self.baselines_policy.predict(obs_full, deterministic=self.deterministic)[0]

@@ -1,6 +1,61 @@
-from stackelberg_pomdp.gym_envs.envs.custom_envs import *
-from games import *
-import warnings
+from stackelberg_pomdp.games import (
+    MatrixDesignGame,
+    SimpleAllocationGame,
+    get_mspm_setting,
+    get_normal_form_game,
+)
+from stackelberg_pomdp.gym_envs.envs.base_envs import (
+    BaseEnvMatrixDesignGame,
+    BaseEnvSimpleMatrixGame,
+    BaseMessageSPM,
+    BaseSPM,
+    BaseSimpleAllocation,
+    BertrandCompetitionEnv,
+)
+from stackelberg_pomdp.gym_envs.envs.wrappers import (
+    LoggingWrapper,
+    MWFollowersWrapper,
+    OpennessEvaluationWrapper,
+    QLearningFollowersWrapper,
+    ReactiveLeaderWrapper,
+    RoundRobinFollowersWrapper,
+    StackPOMDPWrapper,
+    StationaryCycleRewardWrapper,
+)
+
+
+def _mw_update_period(env):
+    return sum(env.followers_action_space[follower].n for follower in env.followers_list)
+
+
+def _requested_response_episodes(config_dict, default=50000):
+    return config_dict.get('tot_num_response_episodes', default)
+
+
+def _set_effective_response_episodes(config_dict, value):
+    config_dict['effective_tot_num_response_episodes'] = value
+
+
+def _align_mw_response_episodes(env, config_dict):
+    if not config_dict.get('align_mw_response_phase', True):
+        return _requested_response_episodes(config_dict)
+
+    requested = _requested_response_episodes(config_dict)
+    period = _mw_update_period(env)
+    aligned = requested - (requested % period)
+    if aligned <= 0:
+        raise ValueError(
+            f"tot_num_response_episodes={requested} is shorter than one MW update period ({period})."
+        )
+    if aligned != requested:
+        print(
+            f"[config] aligning MW response phase: tot_num_response_episodes {requested} -> {aligned} "
+            f"(update_period={period})",
+            flush=True,
+        )
+    _set_effective_response_episodes(config_dict, aligned)
+    return aligned
+
 
 def get_bertrand_env(config_dict):
 
@@ -14,106 +69,22 @@ def get_bertrand_env(config_dict):
         m=config_dict.get('price_grid_length', 15),
         price_min=config_dict.get('price_min', 1.05),
         price_max=config_dict.get('price_max', 1.7),
+        leader_observation_space=config_dict.get('platform_observation_space', 'no_observation'),
+        leader_k=config_dict.get('leader_k', 1),
+        sort_leader_observation=config_dict.get('sort_obs', False),
         seed=seed,
         logger=log,
     )
 
-    followers_alg = config_dict.get('followers_algorithm', 'Qlearning')
-    if followers_alg == 'RoundRobin':
-        env = RoundRobinFollowersWrapper(env)
-    else:
-        env = QLearningFollowersWrapper(
-            env,
-            alpha=config_dict.get('follower_alpha', 0.15),
-            beta=config_dict.get('follower_beta', 4e-5),
-            warm_start_q=config_dict.get('warm_start_q', False),
-            q_tables_path=config_dict.get('q_tables_path'),
-        )
-
-    if config_dict.get('platform_observation_space', 'no_observation') == 'price_profile':
-        env = ReactiveLeaderWrapper(env, leader_k=config_dict.get('leader_k', 1),
-                                    sort_obs=config_dict.get('sort_obs', False))
-
-    env = StackPOMDPWrapper(
+    return wrap_env(
         env,
-        tot_num_eq_episodes=config_dict.get('tot_num_eq_episodes', 50000),
-        tot_num_reward_episodes=config_dict.get('tot_num_reward_episodes', 30),
-        critic_obs=config_dict.get('critic_obs', 'full'),
-        response_phase_prob=config_dict.get('response_phase_prob', 1),
+        config_dict,
+        allow_round_robin=True,
+        use_reactive_leader=config_dict.get('platform_observation_space', 'no_observation') == 'price_profile',
+        use_cycle_reward=True,
+        use_openness_evaluation=True,
+        use_logging=True,
     )
-
-    env = StationaryCycleRewardWrapper(env)
-
-    intervention_lambda = config_dict.get('intervention_lambda', 0.0)
-    if intervention_lambda > 0:
-        env = OpennessEvaluationWrapper(
-            env,
-            intervention_lambda=intervention_lambda,
-            m=config_dict.get('price_grid_length', 4),
-        )
-
-    env = LoggingWrapper(env, logger=config_dict.get('logger'))
-
-    return env
-
-def wrap_env(env, config_dict):
-    if config_dict["followers_algorithm"] == "MW":
-        env = MWFollowersWrapper(env)
-    elif config_dict["followers_algorithm"] == "Qlearning":
-        env = QLearningFollowersWrapper(env)
-
-    env = StackPOMDPWrapper(
-        env,
-        tot_num_reward_episodes=config_dict['tot_num_reward_episodes'],
-        tot_num_eq_episodes=config_dict['tot_num_eq_episodes'],
-        critic_obs=config_dict['critic_obs'],
-        response_phase_prob=config_dict['response_phase_prob'],
-    )
-
-    if "RL:StopOnThreshold" in config_dict["learning_method"] or "PolicyEnumeration" in config_dict["learning_method"]:
-        env = StopOnThresholdWrapper(env)
-
-    return env
-
-def get_standard_matrix_env(config_dict):
-
-    log = config_dict["logger"]
-    seed = config_dict["seed"]
-
-    game_type = config_dict["experiment_type"].split(":")[1]
-    randomized = config_dict["experiment_type"].split(":")[2] == 'True'
-
-    if game_type == "game_1":
-        matrix_game = np.array(
-            [
-                [[15, 15], [10, 10], [0, 0]],
-                [[10, 10], [10, 10], [0, 0]],
-                [[0, 0], [0, 0], [30, 30]],
-            ]
-        )
-    elif game_type == "game_2":
-        matrix_game = np.array(
-            [
-                [[20, 15], [0, 0], [0, 0]],
-                [[30, 0], [10, 5], [0, 0]],
-                [[0, 0], [0, 0], [5, 10]],
-            ]
-        )
-    elif game_type == "game_3":
-        matrix_game = np.array([[[1, 1], [3, 0]], [[0, 0], [2, 1]]])
-    elif game_type == "game_4":
-        matrix_game = np.array([[[3, 2], [1, 3]], [[2, 0], [0, 1]]])
-
-    game = StackelbergMatrixGame(matrix_game)
-
-    env = BaseEnvSimpleMatrixGame(
-        game,
-        logger=log,
-        seed=seed,
-        randomized=randomized,
-    )
-
-    return wrap_env(env, config_dict)
 
 
 def get_matrix_design_env(config_dict):
@@ -128,28 +99,7 @@ def get_matrix_design_env(config_dict):
         seed=seed,
     )
 
-    return wrap_env(env, config_dict)
-
-
-
-def get_simple_allocation_env(config_dict):
-
-    log = config_dict["logger"]
-    seed = config_dict["seed"]
-
-    # Extract the number of messages from the experiment_type argument
-    num_messages = int(config_dict["experiment_type"].split(":")[1])
-
-    game = SimpleAllocationGame(num_messages=num_messages)
-
-    env = BaseSimpleAllocation(
-        game=game,
-        logger=log,
-        seed=seed,
-    )
-
-    return wrap_env(env, config_dict)
-
+    return wrap_env(env, config_dict, use_reactive_leader=True, use_logging=True)
 
 
 def get_mspm_env(config_dict):
@@ -157,33 +107,151 @@ def get_mspm_env(config_dict):
     log = config_dict["logger"]
     seed = config_dict["seed"]
 
-    experiment_details = config_dict["experiment_type"].split(":")
-    if len(experiment_details) != 4:
-        raise Exception("Experiment details must have exactly 4 components: 'mspm', 'mspm_setting', 'num_followers_types', 'num_followers_messages'")
-
-    mspm_setting = experiment_details[1]
-    num_followers_types = int(experiment_details[2])
-    num_followers_messages = int(experiment_details[3])
-
-    if mspm_setting == "PI" and num_followers_types != 2:
-        warnings.warn("For 'PI' setting, 'num_followers_types' should be 2. Overriding 'num_followers_types' to 2.")
-        num_followers_types = 2
-
-    setting_mapping = {
-        "PI": lambda: PISetting(num_messages=num_followers_messages),
-        "MSGSpace": lambda: MSGSpaceSetting(num_types=num_followers_types, num_messages=num_followers_messages)
-    }
-
-    setting_class = setting_mapping.get(mspm_setting)
-    if not setting_class:
-        raise Exception("SPM setting not recognized! Available options: PI, MSGSpace")
-
-    setting = setting_class()
+    setting = get_mspm_setting(
+        config_dict["setting"],
+        config_dict["num_types"],
+        config_dict["num_messages"],
+    )
 
     env = BaseMessageSPM(
         game=setting,
         logger=log,
         seed=seed,
     )
+    env.include_zero_weight_reward_profiles = config_dict.get(
+        'include_zero_weight_reward_profiles',
+        True,
+    )
+
+    return wrap_env(
+        env,
+        config_dict,
+        use_reactive_leader=True,
+    )
+
+
+def get_spm_env(config_dict):
+    setting = get_mspm_setting(
+        config_dict["setting"],
+        config_dict["num_types"],
+        config_dict.get("num_messages", 1),
+    )
+    return BaseSPM(
+        game=setting,
+        logger=config_dict["logger"],
+        seed=config_dict["seed"],
+        discrete_prices=config_dict.get("discrete_prices", False),
+    )
+
+
+def get_simple_allocation_env(config_dict):
+
+    log = config_dict["logger"]
+    seed = config_dict["seed"]
+
+    game = SimpleAllocationGame(num_messages=config_dict["num_messages"])
+
+    env = BaseSimpleAllocation(
+        game=game,
+        logger=log,
+        seed=seed,
+    )
+    env.include_zero_weight_reward_profiles = config_dict.get(
+        'include_zero_weight_reward_profiles',
+        True,
+    )
+
+    return wrap_env(env, config_dict, use_reactive_leader=True)
+
+
+def get_standard_matrix_env(config_dict):
+
+    log = config_dict["logger"]
+    seed = config_dict["seed"]
+
+    game_type = config_dict["experiment_type"].split(":")[1]
+    randomized = config_dict["experiment_type"].split(":")[2] == 'True'
+
+    game = get_normal_form_game(game_type)
+
+    env = BaseEnvSimpleMatrixGame(
+        game,
+        logger=log,
+        seed=seed,
+        randomized=randomized,
+    )
 
     return wrap_env(env, config_dict)
+
+
+def wrap_env(
+        env,
+        config_dict,
+        *,
+        allow_round_robin=False,
+        use_reactive_leader=False,
+        use_cycle_reward=False,
+        use_openness_evaluation=False,
+        use_logging=False,
+):
+    followers_alg = config_dict.get('followers_algorithm', 'Qlearning')
+    tot_num_response_episodes = _requested_response_episodes(config_dict)
+    if followers_alg == 'RoundRobin':
+        if not allow_round_robin:
+            raise ValueError("RoundRobin followers are not supported for this experiment.")
+        _set_effective_response_episodes(config_dict, tot_num_response_episodes)
+        env = RoundRobinFollowersWrapper(env)
+    elif followers_alg == "MW":
+        tot_num_response_episodes = _align_mw_response_episodes(env, config_dict)
+        env = MWFollowersWrapper(
+            env,
+            epsilon=config_dict.get('mw_epsilon', MWFollowersWrapper.DEFAULT_EPS),
+            reset_weights_each_episode=config_dict.get('mw_reset_weights_each_episode', True),
+        )
+    else:
+        _set_effective_response_episodes(config_dict, tot_num_response_episodes)
+        env = QLearningFollowersWrapper(
+            env,
+            alpha=config_dict.get('follower_alpha', 0.15),
+            beta=config_dict.get('follower_beta', 4e-5),
+            warm_start_q=config_dict.get('warm_start_q', False),
+            q_tables_path=config_dict.get('q_tables_path'),
+        )
+
+    if use_reactive_leader:
+        env = ReactiveLeaderWrapper(env)
+
+    pomdp_mode = config_dict.get('pomdp_mode', 'stackelberg')
+    if pomdp_mode in ("stackelberg", "hidden_queries", "reward_during_response"):
+        env = StackPOMDPWrapper(
+            env,
+            tot_num_response_episodes=tot_num_response_episodes,
+            tot_num_reward_episodes=config_dict.get('tot_num_reward_episodes', 30),
+            critic_obs=config_dict.get('critic_obs', 'full'),
+            response_variant=pomdp_mode,
+            response_bcce_threshold=config_dict.get('response_bcce_threshold'),
+            response_bcce_min_records=config_dict.get('response_bcce_min_records', 1),
+            response_bcce_check_freq=config_dict.get('response_bcce_check_freq', 1),
+        )
+    else:
+        raise ValueError(f"Unsupported pomdp_mode: {pomdp_mode}")
+
+    if use_cycle_reward:
+        env = StationaryCycleRewardWrapper(env)
+
+    intervention_lambda = config_dict.get('intervention_lambda', 0.0)
+    if use_openness_evaluation and intervention_lambda > 0:
+        env = OpennessEvaluationWrapper(
+            env,
+            intervention_lambda=intervention_lambda,
+            m=config_dict.get('price_grid_length', 4),
+        )
+
+    if use_logging:
+        env = LoggingWrapper(
+            env,
+            logger=config_dict.get('logger'),
+            log_regular_done=use_logging,
+        )
+
+    return env

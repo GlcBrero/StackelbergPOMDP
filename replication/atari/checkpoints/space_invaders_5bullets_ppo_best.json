@@ -1,0 +1,16 @@
+{
+  "algorithm": "PPO",
+  "checkpoint": "space_invaders_5bullets_ppo_seed1_250k_eval3.2.pkl",
+  "checkpoint_total_timesteps": 250000,
+  "evaluation": "space_invaders_5bullets_ppo_seed1_250k_eval3.2.evaluation.json",
+  "evaluation_episodes": 20,
+  "evaluation_policy": "deterministic_argmax",
+  "initial_bullets": 5,
+  "mean_final_ammo": 0.0,
+  "mean_reward": 3.2,
+  "mean_reward_per_bullet": 0.64,
+  "mean_shots_fired": 5.0,
+  "no_replenishment": true,
+  "seed": 1,
+  "selection_rule": "highest deterministic 20-episode mean reward; shortest mean episode length breaks ties"
+}

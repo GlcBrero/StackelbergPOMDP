@@ -19,9 +19,8 @@ sys.path.insert(0, base_dir)
 import numpy as np
 import json
 from stable_baselines3.common import logger
-from stackelberg_pomdp.gym_envs.envs.custom_envs import (
-    BertrandCompetitionEnv, QLearningFollowersWrapper
-)
+from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
+from stackelberg_pomdp.gym_envs.envs.wrappers import QLearningFollowersWrapper
 
 # ── Parameters ──
 M = 4

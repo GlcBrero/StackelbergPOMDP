@@ -27,19 +27,20 @@ For named paper targets, prefer the replication runner:
 
 ```bash
 python replication/run.py --list
-python replication/run.py platform_intervention_state --seed 1 --dry-run
+python replication/run.py fig_collusion_learning_state --seed 1 --dry-run
 ```
 
 For direct ad hoc runs, use:
 
 ```bash
-python -m stackelberg_pomdp.main_args --experiment_type <experiment>
+python -m stackelberg_pomdp.experiments.simple_allocation --help
+python -m stackelberg_pomdp.experiments.price_collusion --help
 ```
 
-The legacy form also works from inside `stackelberg_pomdp/`:
+The legacy all-argument CLI remains available for debugging old commands:
 
 ```bash
-python main_args.py --experiment_type <experiment>
+python -m stackelberg_pomdp.main_args --experiment_type <experiment>
 ```
 
 ## Paper Experiment Families
@@ -51,12 +52,9 @@ Figure: `SA-Ablation_new`.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.main_args \
-  --experiment_type simple_allocation:3 \
-  --tot_num_reward_episodes 30 \
-  --followers_algorithm MW \
-  --critic_obs full \
-  --algorithm PPO
+python -m stackelberg_pomdp.experiments.simple_allocation \
+  --num_messages 3 \
+  --seed 1
 ```
 
 ### MSPM
@@ -66,14 +64,11 @@ Table: MSPM welfare loss and optimal-found rates.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.main_args \
-  --learning_method RL:StopOnThreshold \
-  --experiment_type mspm:MSGSpace:5:2 \
-  --tot_num_eq_episodes 1000 \
-  --tot_num_reward_episodes 100 \
-  --followers_algorithm MW \
-  --critic_obs full \
-  --algorithm PPO
+python -m stackelberg_pomdp.experiments.mspm \
+  --setting MSGSpace \
+  --num_types 5 \
+  --num_messages 2 \
+  --seed 1
 ```
 
 ### Normal Form / Maintain
@@ -83,11 +78,10 @@ Figure: `simpleMatrixGame2_new`.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.main_args \
-  --experiment_type normal_form:game_2:True \
-  --followers_algorithm MW \
-  --critic_obs full \
-  --algorithm PPO
+python -m stackelberg_pomdp.experiments.normal_form \
+  --game_name game_2 \
+  --randomized true \
+  --seed 1
 ```
 
 ### Matrix Design
@@ -97,11 +91,7 @@ Figure: `MatrixDesign-Ablation_new`.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.main_args \
-  --experiment_type matrix_design \
-  --followers_algorithm MW \
-  --critic_obs full \
-  --algorithm PPO
+python -m stackelberg_pomdp.experiments.matrix_design --seed 1
 ```
 
 ### Bertrand Collusion Calibration
@@ -111,12 +101,12 @@ Figure: `deviation_m4`; calibration for the platform-intervention experiments.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.calvano_replication \
+python -m replication.bertrand.calibrate_price_learners \
   --m 4 \
   --alpha 0.25 \
   --beta 1e-4 \
   --n_sessions 5 \
-  --output_dir results/calvano_m4
+  --output_dir results/price_collusion_m4
 ```
 
 ### Bertrand Platform Intervention
@@ -126,46 +116,19 @@ Figure: `collusion_learning_25seeds`.
 Canonical command shape:
 
 ```bash
-python -m stackelberg_pomdp.main_args \
-  --experiment_type bertrand \
-  --platform_intervention learn_threshold \
+python -m stackelberg_pomdp.experiments.price_collusion \
   --platform_observation_space price_profile \
   --price_grid_length 4 \
   --price_min 1.05 \
   --price_max 1.7 \
-  --tot_num_eq_episodes 50000 \
-  --tot_num_reward_episodes 30 \
-  --algorithm A2C \
-  --max_steps 50000000 \
-  --critic_obs full \
-  --fix_episode_actions true \
-  --followers_algorithm Qlearning \
-  --seed 1 \
-  --learning_method RL:Standard \
-  --response_phase_prob 1.0 \
-  --follower_alpha 0.25 \
-  --follower_beta 1e-4
+  --seed 1
 ```
 
 Use `--platform_observation_space no_observation` for the no-state learned
 policy.
 
-## Consolidation Target
+## Current Target Coverage
 
-The current collection of top-level `run_*.sh` scripts should be replaced by a
-small set of named replication targets:
-
-- `collusion_calibration_m4`
-- `collusion_deviation_m4`
-- `platform_intervention_state`
-- `platform_intervention_no_state`
-- `simple_allocation_ablation`
-- `mspm_table`
-- `normal_form_randomized`
-- `matrix_design_ablation`
-
-Each target should define seeds, hyperparameters, output directory, expected
-figure/table, and the exact command used locally or on SLURM.
-
-The Bertrand/Calvano targets have started moving into
-`replication/bertrand_targets.json`.
+`replication/targets.json` contains runnable targets for the experiments owned
+by this codebase and explicit TODO entries for companion-code experiments such
+as Atari and the theorem-violation ablations.

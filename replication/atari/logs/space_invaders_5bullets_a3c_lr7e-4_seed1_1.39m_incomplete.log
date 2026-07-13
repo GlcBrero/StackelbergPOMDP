@@ -1,0 +1,358 @@
+I0713 16:04:13.817175 6511801 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+I0713 16:04:13.864473 6511844 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+I0713 16:04:13.920675 6511874 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+2026-07-13 16:04:14,084	INFO worker.py:1518 -- Started a local Ray instance.
+I0713 16:04:15.150481 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:15.169095 6512854 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+2026-07-13 16:04:15,174	INFO algorithm.py:355 -- Current log_level is WARN. For more information, set 'log_level': 'INFO' / 'DEBUG' or use the -v and -vv flags.
+[2m[36m(RolloutWorker pid=57120)[0m 2026-07-13 16:04:18,388	WARNING env.py:142 -- Your env doesn't have a .spec.max_episode_steps attribute. This is fine if you have set 'horizon' in your config dictionary, or `soft_horizon`. However, if you haven't, 'horizon' will default to infinity, and your environment will not be reset.
+[2m[36m(RolloutWorker pid=57120)[0m [W NNPACK.cpp:64] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2m[36m(RolloutWorker pid=57122)[0m [W NNPACK.cpp:64] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2m[36m(RolloutWorker pid=57121)[0m [W NNPACK.cpp:64] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2m[36m(RolloutWorker pid=57123)[0m [W NNPACK.cpp:64] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W NNPACK.cpp:64] Could not initialize NNPACK! Reason: Unsupported hardware.
+2026-07-13 16:04:18,701	WARNING util.py:66 -- Install gputil for GPU system monitoring.
+I0713 16:04:18.800058 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:18.867510 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.131734 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.163576 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.195016 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.211654 6513403 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+I0713 16:04:19.224449 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.286584 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:19.303685 6513484 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+wandb: Currently logged in as: glcbrero. Use `wandb login --relogin` to force relogin
+I0713 16:04:20.156576 6511594 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+I0713 16:04:20.176344 6513866 ev_poll_posix.cc:593] FD from fork parent still in poll list: fd(11, generation: 1)
+wandb: wandb version 0.28.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.14.2
+wandb: Run data is saved locally in /Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/wandb/run-20260713_160420-0n9uyqu2
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run five_bullet_a3c_seed1_10m
+wandb: ⭐️ View project at https://wandb.ai/glcbrero/StackPOMDP
+wandb: 🚀 View run at https://wandb.ai/glcbrero/StackPOMDP/runs/0n9uyqu2
+iter=   1 steps=     5000 reward=  1.567 length=  158.1 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.412 sps=   599
+iter=   2 steps=    10000 reward=  1.387 length=  153.9 shots= 4.24 ammo= 0.76 reward_per_bullet=  0.367 sps=   611
+iter=   3 steps=    15000 reward=  1.538 length=  161.6 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.388 sps=   600
+iter=   4 steps=    20000 reward=  1.590 length=  167.2 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.385 sps=   604
+iter=   5 steps=    25040 reward=  1.600 length=  175.3 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.403 sps=   604
+iter=   6 steps=    30040 reward=  1.640 length=  170.7 shots= 4.30 ammo= 0.70 reward_per_bullet=  0.416 sps=   605
+iter=   7 steps=    35040 reward=  1.560 length=  166.4 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.401 sps=   606
+iter=   8 steps=    40040 reward=  1.540 length=  167.2 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.380 sps=   608
+iter=   9 steps=    45040 reward=  1.410 length=  157.6 shots= 4.29 ammo= 0.71 reward_per_bullet=  0.368 sps=   610
+iter=  10 steps=    50060 reward=  1.400 length=  152.2 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.363 sps=   612
+iter=  11 steps=    55080 reward=  1.310 length=  146.7 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.366 sps=   614
+iter=  12 steps=    60080 reward=  1.290 length=  151.7 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.347 sps=   617
+iter=  13 steps=    65100 reward=  1.280 length=  154.4 shots= 4.25 ammo= 0.75 reward_per_bullet=  0.337 sps=   617
+iter=  14 steps=    70100 reward=  1.240 length=  162.1 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.311 sps=   620
+iter=  15 steps=    75120 reward=  1.260 length=  168.7 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.314 sps=   621
+iter=  16 steps=    80160 reward=  1.210 length=  168.7 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.299 sps=   622
+iter=  17 steps=    85180 reward=  1.260 length=  173.3 shots= 4.47 ammo= 0.53 reward_per_bullet=  0.301 sps=   623
+iter=  18 steps=    90180 reward=  1.390 length=  172.7 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.319 sps=   624
+iter=  19 steps=    95200 reward=  1.550 length=  172.5 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.347 sps=   624
+iter=  20 steps=   100200 reward=  1.620 length=  169.8 shots= 4.52 ammo= 0.48 reward_per_bullet=  0.354 sps=   625
+iter=  21 steps=   105200 reward=  1.550 length=  158.5 shots= 4.50 ammo= 0.50 reward_per_bullet=  0.366 sps=   626
+iter=  22 steps=   110200 reward=  1.360 length=  161.6 shots= 4.54 ammo= 0.46 reward_per_bullet=  0.325 sps=   626
+iter=  23 steps=   115200 reward=  1.410 length=  161.0 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.349 sps=   627
+[2m[36m(RolloutWorker pid=57123)[0m I0713 16:07:28.742853 6512961 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(RolloutWorker pid=57123)[0m E0713 16:07:28.743010 6512961 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(RolloutWorker pid=57120)[0m I0713 16:07:28.780992 6512930 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(RolloutWorker pid=57120)[0m E0713 16:07:28.781144 6512930 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(RolloutWorker pid=57122)[0m I0713 16:07:28.818284 6512970 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(RolloutWorker pid=57122)[0m E0713 16:07:28.818425 6512970 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(RolloutWorker pid=57121)[0m I0713 16:07:28.794220 6512911 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(RolloutWorker pid=57121)[0m E0713 16:07:28.794382 6512911 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+iter=  24 steps=   120200 reward=  1.330 length=  160.7 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.314 sps=   628
+iter=  25 steps=   125200 reward=  1.400 length=  163.4 shots= 4.30 ammo= 0.70 reward_per_bullet=  0.325 sps=   629
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter=  26 steps=   130220 reward=  1.300 length=  165.6 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.307 sps=   629
+iter=  27 steps=   135220 reward=  1.410 length=  166.6 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.327 sps=   630
+iter=  28 steps=   140240 reward=  1.360 length=  159.4 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.329 sps=   630
+iter=  29 steps=   145280 reward=  1.450 length=  163.9 shots= 4.48 ammo= 0.52 reward_per_bullet=  0.339 sps=   630
+iter=  30 steps=   150320 reward=  1.360 length=  154.8 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.341 sps=   629
+iter=  31 steps=   155360 reward=  1.370 length=  145.7 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.342 sps=   630
+[2m[36m(pid=57096)[0m I0713 16:08:35.183455 6512304 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(pid=57096)[0m E0713 16:08:35.183628 6512304 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57098)[0m I0713 16:08:35.226844 6512619 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(pid=57098)[0m E0713 16:08:35.227015 6512619 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57102)[0m I0713 16:08:35.223296 6512574 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57102)[0m E0713 16:08:35.223488 6512574 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57094)[0m I0713 16:08:35.183469 6512336 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57094)[0m E0713 16:08:35.183639 6512336 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57101)[0m I0713 16:08:35.209610 6512417 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57101)[0m E0713 16:08:35.209848 6512417 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57103)[0m I0713 16:08:35.211637 6512476 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57103)[0m E0713 16:08:35.211812 6512476 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57100)[0m I0713 16:08:35.211976 6512449 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57100)[0m E0713 16:08:35.212106 6512449 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57097)[0m I0713 16:08:35.213970 6512527 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57097)[0m E0713 16:08:35.214130 6512527 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57093)[0m I0713 16:08:35.185361 6512349 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57093)[0m E0713 16:08:35.185521 6512349 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57105)[0m I0713 16:08:35.216204 6512555 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(pid=57105)[0m E0713 16:08:35.216352 6512555 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57104)[0m I0713 16:08:35.211825 6512507 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {http2_error:11, grpc_status:14}
+[2m[36m(pid=57104)[0m E0713 16:08:35.211995 6512507 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+[2m[36m(pid=57106)[0m I0713 16:08:35.195630 6512384 chttp2_transport.cc:1369] ipv4:127.0.0.1:61730: Got goaway [11] err=UNAVAILABLE:GOAWAY received; Error code: 11; Debug Text: too_many_pings {grpc_status:14, http2_error:11}
+[2m[36m(pid=57106)[0m E0713 16:08:35.195797 6512384 chttp2_transport.cc:1401] ipv4:127.0.0.1:61730: Received a GOAWAY with error code ENHANCE_YOUR_CALM and debug data equal to "too_many_pings". Current keepalive time (before throttling): 60000ms
+iter=  32 steps=   160360 reward=  1.300 length=  152.5 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.318 sps=   630
+iter=  33 steps=   165360 reward=  1.330 length=  162.8 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.313 sps=   631
+iter=  34 steps=   170400 reward=  1.310 length=  167.5 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.314 sps=   631
+iter=  35 steps=   175420 reward=  1.400 length=  162.3 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.334 sps=   631
+iter=  36 steps=   180420 reward=  1.330 length=  166.2 shots= 4.51 ammo= 0.49 reward_per_bullet=  0.313 sps=   632
+iter=  37 steps=   185420 reward=  1.240 length=  166.6 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.302 sps=   632
+iter=  38 steps=   190420 reward=  1.190 length=  164.1 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.298 sps=   632
+iter=  39 steps=   195440 reward=  1.290 length=  158.8 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.321 sps=   633
+iter=  40 steps=   200480 reward=  1.450 length=  162.6 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.368 sps=   633
+iter=  41 steps=   205480 reward=  1.380 length=  162.5 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.339 sps=   633
+iter=  42 steps=   210480 reward=  1.420 length=  170.7 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.359 sps=   633
+iter=  43 steps=   215500 reward=  1.350 length=  163.1 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.323 sps=   634
+iter=  44 steps=   220500 reward=  1.350 length=  162.3 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.316 sps=   634
+iter=  45 steps=   225500 reward=  1.350 length=  157.5 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.316 sps=   633
+iter=  46 steps=   230500 reward=  1.410 length=  161.2 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.353 sps=   634
+iter=  47 steps=   235500 reward=  1.310 length=  160.6 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.334 sps=   633
+iter=  48 steps=   240500 reward=  1.350 length=  165.6 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.336 sps=   633
+iter=  49 steps=   245520 reward=  1.360 length=  158.5 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.327 sps=   633
+iter=  50 steps=   250560 reward=  1.440 length=  147.7 shots= 4.23 ammo= 0.77 reward_per_bullet=  0.364 sps=   634
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter=  51 steps=   255600 reward=  1.390 length=  152.0 shots= 4.29 ammo= 0.71 reward_per_bullet=  0.351 sps=   635
+iter=  52 steps=   260600 reward=  1.330 length=  160.7 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.349 sps=   635
+iter=  53 steps=   265600 reward=  1.310 length=  167.1 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.343 sps=   636
+iter=  54 steps=   270600 reward=  1.460 length=  171.2 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.369 sps=   636
+iter=  55 steps=   275600 reward=  1.420 length=  163.0 shots= 4.47 ammo= 0.53 reward_per_bullet=  0.347 sps=   636
+iter=  56 steps=   280600 reward=  1.500 length=  165.4 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.348 sps=   637
+iter=  57 steps=   285600 reward=  1.460 length=  159.9 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.349 sps=   637
+iter=  58 steps=   290600 reward=  1.420 length=  157.5 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.350 sps=   637
+iter=  59 steps=   295620 reward=  1.360 length=  152.3 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.331 sps=   638
+iter=  60 steps=   300640 reward=  1.310 length=  151.8 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.323 sps=   638
+iter=  61 steps=   305640 reward=  1.340 length=  155.4 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.328 sps=   638
+iter=  62 steps=   310640 reward=  1.380 length=  154.9 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.355 sps=   638
+iter=  63 steps=   315640 reward=  1.400 length=  164.3 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.345 sps=   638
+iter=  64 steps=   320640 reward=  1.470 length=  170.8 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.363 sps=   638
+iter=  65 steps=   325640 reward=  1.290 length=  165.2 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.327 sps=   638
+iter=  66 steps=   330640 reward=  1.250 length=  169.9 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.305 sps=   639
+iter=  67 steps=   335660 reward=  1.240 length=  156.5 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.321 sps=   639
+iter=  68 steps=   340660 reward=  1.340 length=  151.5 shots= 4.21 ammo= 0.79 reward_per_bullet=  0.355 sps=   639
+iter=  69 steps=   345680 reward=  1.410 length=  147.3 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.358 sps=   639
+iter=  70 steps=   350680 reward=  1.260 length=  151.6 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.321 sps=   639
+iter=  71 steps=   355680 reward=  1.200 length=  164.1 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.286 sps=   639
+iter=  72 steps=   360680 reward=  1.300 length=  168.1 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.307 sps=   639
+iter=  73 steps=   365700 reward=  1.310 length=  173.3 shots= 4.58 ammo= 0.42 reward_per_bullet=  0.304 sps=   639
+iter=  74 steps=   370740 reward=  1.460 length=  162.8 shots= 4.60 ammo= 0.40 reward_per_bullet=  0.333 sps=   640
+iter=  75 steps=   375780 reward=  1.440 length=  173.0 shots= 4.60 ammo= 0.40 reward_per_bullet=  0.319 sps=   640
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter=  76 steps=   380820 reward=  1.540 length=  178.7 shots= 4.60 ammo= 0.40 reward_per_bullet=  0.336 sps=   640
+iter=  77 steps=   385820 reward=  1.450 length=  171.3 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.337 sps=   640
+iter=  78 steps=   390820 reward=  1.460 length=  158.8 shots= 4.21 ammo= 0.79 reward_per_bullet=  0.361 sps=   640
+iter=  79 steps=   395860 reward=  1.300 length=  148.0 shots= 4.12 ammo= 0.88 reward_per_bullet=  0.336 sps=   640
+iter=  80 steps=   400900 reward=  1.380 length=  157.0 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.339 sps=   640
+iter=  81 steps=   405920 reward=  1.290 length=  157.9 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.318 sps=   640
+iter=  82 steps=   410920 reward=  1.350 length=  156.5 shots= 4.16 ammo= 0.84 reward_per_bullet=  0.353 sps=   640
+iter=  83 steps=   415940 reward=  1.360 length=  148.2 shots= 4.03 ammo= 0.97 reward_per_bullet=  0.380 sps=   640
+iter=  84 steps=   420940 reward=  1.350 length=  145.6 shots= 4.16 ammo= 0.84 reward_per_bullet=  0.366 sps=   640
+iter=  85 steps=   425940 reward=  1.400 length=  154.0 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.357 sps=   640
+iter=  86 steps=   430940 reward=  1.380 length=  160.8 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.342 sps=   641
+iter=  87 steps=   435960 reward=  1.360 length=  166.2 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.354 sps=   641
+iter=  88 steps=   440980 reward=  1.440 length=  165.0 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.359 sps=   640
+iter=  89 steps=   445980 reward=  1.360 length=  177.4 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.335 sps=   640
+iter=  90 steps=   450980 reward=  1.400 length=  166.0 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.356 sps=   640
+iter=  91 steps=   455980 reward=  1.390 length=  164.2 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.356 sps=   640
+iter=  92 steps=   461000 reward=  1.350 length=  156.8 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.355 sps=   640
+iter=  93 steps=   466000 reward=  1.300 length=  155.2 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.330 sps=   641
+iter=  94 steps=   471000 reward=  1.340 length=  166.2 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.333 sps=   640
+iter=  95 steps=   476020 reward=  1.390 length=  174.2 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.329 sps=   641
+iter=  96 steps=   481060 reward=  1.350 length=  187.4 shots= 4.50 ammo= 0.50 reward_per_bullet=  0.321 sps=   641
+iter=  97 steps=   486060 reward=  1.410 length=  184.9 shots= 4.58 ammo= 0.42 reward_per_bullet=  0.328 sps=   640
+iter=  98 steps=   491060 reward=  1.400 length=  179.6 shots= 4.58 ammo= 0.42 reward_per_bullet=  0.324 sps=   641
+iter=  99 steps=   496100 reward=  1.410 length=  174.1 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.334 sps=   641
+iter= 100 steps=   501100 reward=  1.490 length=  162.3 shots= 4.48 ammo= 0.52 reward_per_bullet=  0.348 sps=   641
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 101 steps=   506140 reward=  1.380 length=  164.3 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.341 sps=   641
+iter= 102 steps=   511140 reward=  1.410 length=  160.9 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.341 sps=   640
+iter= 103 steps=   516140 reward=  1.450 length=  163.8 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.340 sps=   641
+iter= 104 steps=   521160 reward=  1.490 length=  160.9 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.342 sps=   641
+iter= 105 steps=   526160 reward=  1.300 length=  163.2 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.294 sps=   641
+iter= 106 steps=   531180 reward=  1.300 length=  156.9 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.310 sps=   641
+iter= 107 steps=   536200 reward=  1.350 length=  157.0 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.327 sps=   641
+iter= 108 steps=   541200 reward=  1.430 length=  152.6 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.362 sps=   641
+iter= 109 steps=   546220 reward=  1.450 length=  162.7 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.361 sps=   641
+iter= 110 steps=   551220 reward=  1.340 length=  149.8 shots= 4.12 ammo= 0.88 reward_per_bullet=  0.351 sps=   641
+iter= 111 steps=   556220 reward=  1.420 length=  160.0 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.345 sps=   641
+iter= 112 steps=   561260 reward=  1.420 length=  155.8 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.353 sps=   641
+iter= 113 steps=   566300 reward=  1.470 length=  168.1 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.358 sps=   641
+iter= 114 steps=   571300 reward=  1.360 length=  164.3 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.340 sps=   641
+iter= 115 steps=   576300 reward=  1.340 length=  152.2 shots= 4.29 ammo= 0.71 reward_per_bullet=  0.354 sps=   641
+iter= 116 steps=   581320 reward=  1.410 length=  147.5 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.349 sps=   641
+iter= 117 steps=   586320 reward=  1.430 length=  157.7 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.349 sps=   641
+iter= 118 steps=   591320 reward=  1.520 length=  167.2 shots= 4.51 ammo= 0.49 reward_per_bullet=  0.364 sps=   641
+iter= 119 steps=   596320 reward=  1.480 length=  181.2 shots= 4.57 ammo= 0.43 reward_per_bullet=  0.349 sps=   640
+iter= 120 steps=   601340 reward=  1.390 length=  180.4 shots= 4.47 ammo= 0.53 reward_per_bullet=  0.344 sps=   641
+iter= 121 steps=   606360 reward=  1.300 length=  164.8 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.329 sps=   641
+iter= 122 steps=   611360 reward=  1.240 length=  154.9 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.326 sps=   641
+iter= 123 steps=   616360 reward=  1.300 length=  161.6 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.335 sps=   641
+iter= 124 steps=   621360 reward=  1.360 length=  168.2 shots= 4.29 ammo= 0.71 reward_per_bullet=  0.362 sps=   641
+iter= 125 steps=   626360 reward=  1.400 length=  168.2 shots= 4.51 ammo= 0.49 reward_per_bullet=  0.332 sps=   641
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 126 steps=   631360 reward=  1.340 length=  161.3 shots= 4.50 ammo= 0.50 reward_per_bullet=  0.317 sps=   641
+iter= 127 steps=   636380 reward=  1.320 length=  161.7 shots= 4.53 ammo= 0.47 reward_per_bullet=  0.307 sps=   641
+iter= 128 steps=   641420 reward=  1.330 length=  170.7 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.315 sps=   641
+iter= 129 steps=   646420 reward=  1.310 length=  168.1 shots= 4.62 ammo= 0.38 reward_per_bullet=  0.300 sps=   641
+iter= 130 steps=   651420 reward=  1.420 length=  166.0 shots= 4.50 ammo= 0.50 reward_per_bullet=  0.345 sps=   641
+iter= 131 steps=   656420 reward=  1.450 length=  160.3 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.352 sps=   641
+iter= 132 steps=   661440 reward=  1.460 length=  160.9 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.384 sps=   641
+iter= 133 steps=   666440 reward=  1.360 length=  162.3 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.347 sps=   640
+iter= 134 steps=   671460 reward=  1.300 length=  158.3 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.322 sps=   640
+iter= 135 steps=   676460 reward=  1.240 length=  165.5 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.285 sps=   640
+iter= 136 steps=   681460 reward=  1.260 length=  172.6 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.280 sps=   641
+iter= 137 steps=   686460 reward=  1.220 length=  173.8 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.284 sps=   640
+iter= 138 steps=   691460 reward=  1.290 length=  164.5 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.318 sps=   641
+iter= 139 steps=   696500 reward=  1.380 length=  154.5 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.351 sps=   641
+iter= 140 steps=   701540 reward=  1.460 length=  148.8 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.365 sps=   641
+iter= 141 steps=   706540 reward=  1.450 length=  152.8 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.358 sps=   641
+iter= 142 steps=   711540 reward=  1.420 length=  159.6 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.351 sps=   641
+iter= 143 steps=   716540 reward=  1.400 length=  161.0 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.342 sps=   641
+iter= 144 steps=   721580 reward=  1.320 length=  166.5 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.329 sps=   641
+iter= 145 steps=   726600 reward=  1.260 length=  170.2 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.298 sps=   641
+iter= 146 steps=   731600 reward=  1.280 length=  159.9 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.324 sps=   641
+iter= 147 steps=   736620 reward=  1.400 length=  153.8 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.339 sps=   641
+iter= 148 steps=   741660 reward=  1.460 length=  146.3 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.357 sps=   641
+iter= 149 steps=   746680 reward=  1.410 length=  152.0 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.347 sps=   641
+iter= 150 steps=   751680 reward=  1.480 length=  157.4 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.376 sps=   641
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 151 steps=   756680 reward=  1.480 length=  153.9 shots= 4.30 ammo= 0.70 reward_per_bullet=  0.374 sps=   641
+iter= 152 steps=   761680 reward=  1.550 length=  151.4 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.373 sps=   641
+iter= 153 steps=   766680 reward=  1.530 length=  149.2 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.364 sps=   641
+iter= 154 steps=   771680 reward=  1.560 length=  156.8 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.371 sps=   641
+iter= 155 steps=   776680 reward=  1.590 length=  167.1 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.374 sps=   641
+iter= 156 steps=   781680 reward=  1.400 length=  166.3 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.326 sps=   641
+iter= 157 steps=   786680 reward=  1.170 length=  169.9 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.283 sps=   641
+iter= 158 steps=   791700 reward=  1.250 length=  166.2 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.313 sps=   641
+iter= 159 steps=   796720 reward=  1.380 length=  173.5 shots= 4.47 ammo= 0.53 reward_per_bullet=  0.340 sps=   641
+iter= 160 steps=   801720 reward=  1.460 length=  172.9 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.360 sps=   641
+iter= 161 steps=   806740 reward=  1.360 length=  182.3 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.338 sps=   641
+iter= 162 steps=   811740 reward=  1.320 length=  178.3 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.328 sps=   641
+iter= 163 steps=   816740 reward=  1.390 length=  161.6 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.352 sps=   641
+iter= 164 steps=   821760 reward=  1.400 length=  144.2 shots= 4.20 ammo= 0.80 reward_per_bullet=  0.378 sps=   641
+iter= 165 steps=   826780 reward=  1.450 length=  149.5 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.376 sps=   641
+iter= 166 steps=   831780 reward=  1.490 length=  166.9 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.365 sps=   641
+iter= 167 steps=   836820 reward=  1.490 length=  168.7 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.366 sps=   642
+iter= 168 steps=   841820 reward=  1.510 length=  175.7 shots= 4.50 ammo= 0.50 reward_per_bullet=  0.362 sps=   642
+iter= 169 steps=   846820 reward=  1.480 length=  176.3 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.360 sps=   642
+iter= 170 steps=   851840 reward=  1.440 length=  168.5 shots= 4.54 ammo= 0.46 reward_per_bullet=  0.341 sps=   642
+iter= 171 steps=   856840 reward=  1.540 length=  169.9 shots= 4.62 ammo= 0.38 reward_per_bullet=  0.355 sps=   642
+iter= 172 steps=   861840 reward=  1.510 length=  166.3 shots= 4.55 ammo= 0.45 reward_per_bullet=  0.352 sps=   642
+iter= 173 steps=   866840 reward=  1.460 length=  160.3 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.358 sps=   642
+iter= 174 steps=   871860 reward=  1.350 length=  137.0 shots= 4.19 ammo= 0.81 reward_per_bullet=  0.357 sps=   642
+iter= 175 steps=   876860 reward=  1.300 length=  134.0 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.350 sps=   642
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 176 steps=   881860 reward=  1.410 length=  152.2 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.358 sps=   642
+iter= 177 steps=   886860 reward=  1.420 length=  155.3 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.360 sps=   642
+iter= 178 steps=   891860 reward=  1.470 length=  155.9 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.358 sps=   642
+iter= 179 steps=   896860 reward=  1.400 length=  148.6 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.342 sps=   642
+iter= 180 steps=   901860 reward=  1.460 length=  155.8 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.363 sps=   642
+iter= 181 steps=   906860 reward=  1.460 length=  165.9 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.347 sps=   642
+iter= 182 steps=   911900 reward=  1.530 length=  176.9 shots= 4.51 ammo= 0.49 reward_per_bullet=  0.356 sps=   642
+iter= 183 steps=   916900 reward=  1.380 length=  179.5 shots= 4.52 ammo= 0.48 reward_per_bullet=  0.310 sps=   642
+iter= 184 steps=   921900 reward=  1.310 length=  172.0 shots= 4.49 ammo= 0.51 reward_per_bullet=  0.311 sps=   642
+iter= 185 steps=   926900 reward=  1.410 length=  161.0 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.350 sps=   642
+iter= 186 steps=   931900 reward=  1.370 length=  153.8 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.346 sps=   642
+iter= 187 steps=   936900 reward=  1.450 length=  158.2 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.348 sps=   642
+iter= 188 steps=   941900 reward=  1.420 length=  163.7 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.337 sps=   642
+iter= 189 steps=   946940 reward=  1.490 length=  166.6 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.366 sps=   642
+iter= 190 steps=   951940 reward=  1.400 length=  162.0 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.359 sps=   642
+iter= 191 steps=   956940 reward=  1.390 length=  160.0 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.351 sps=   642
+iter= 192 steps=   961940 reward=  1.270 length=  149.9 shots= 4.19 ammo= 0.81 reward_per_bullet=  0.348 sps=   642
+iter= 193 steps=   966940 reward=  1.300 length=  157.6 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.346 sps=   642
+iter= 194 steps=   971960 reward=  1.260 length=  152.6 shots= 4.23 ammo= 0.77 reward_per_bullet=  0.350 sps=   642
+iter= 195 steps=   976960 reward=  1.320 length=  164.1 shots= 4.30 ammo= 0.70 reward_per_bullet=  0.349 sps=   642
+iter= 196 steps=   981980 reward=  1.380 length=  161.7 shots= 4.39 ammo= 0.61 reward_per_bullet=  0.346 sps=   642
+iter= 197 steps=   986980 reward=  1.480 length=  173.0 shots= 4.40 ammo= 0.60 reward_per_bullet=  0.359 sps=   642
+iter= 198 steps=   991980 reward=  1.380 length=  176.6 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.332 sps=   641
+iter= 199 steps=   997000 reward=  1.330 length=  175.8 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.306 sps=   641
+iter= 200 steps=  1002000 reward=  1.380 length=  170.5 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.331 sps=   641
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 201 steps=  1007020 reward=  1.420 length=  182.1 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.350 sps=   641
+iter= 202 steps=  1012020 reward=  1.450 length=  171.5 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.373 sps=   641
+iter= 203 steps=  1017020 reward=  1.370 length=  163.0 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.362 sps=   641
+iter= 204 steps=  1022020 reward=  1.330 length=  154.6 shots= 4.20 ammo= 0.80 reward_per_bullet=  0.349 sps=   641
+iter= 205 steps=  1027020 reward=  1.380 length=  152.1 shots= 4.21 ammo= 0.79 reward_per_bullet=  0.356 sps=   641
+iter= 206 steps=  1032020 reward=  1.320 length=  152.2 shots= 4.12 ammo= 0.88 reward_per_bullet=  0.350 sps=   641
+iter= 207 steps=  1037020 reward=  1.290 length=  160.9 shots= 4.21 ammo= 0.79 reward_per_bullet=  0.331 sps=   641
+iter= 208 steps=  1042020 reward=  1.230 length=  171.8 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.310 sps=   641
+iter= 209 steps=  1047020 reward=  1.270 length=  176.9 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.306 sps=   641
+iter= 210 steps=  1052040 reward=  1.220 length=  171.7 shots= 4.25 ammo= 0.75 reward_per_bullet=  0.298 sps=   641
+iter= 211 steps=  1057040 reward=  1.410 length=  162.2 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.345 sps=   641
+iter= 212 steps=  1062060 reward=  1.430 length=  157.6 shots= 4.16 ammo= 0.84 reward_per_bullet=  0.349 sps=   641
+iter= 213 steps=  1067060 reward=  1.580 length=  155.0 shots= 4.23 ammo= 0.77 reward_per_bullet=  0.394 sps=   641
+iter= 214 steps=  1072060 reward=  1.370 length=  152.8 shots= 4.24 ammo= 0.76 reward_per_bullet=  0.340 sps=   641
+iter= 215 steps=  1077100 reward=  1.410 length=  149.1 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.356 sps=   641
+iter= 216 steps=  1082140 reward=  1.320 length=  155.4 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.331 sps=   641
+iter= 217 steps=  1087180 reward=  1.430 length=  167.5 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.344 sps=   641
+iter= 218 steps=  1092220 reward=  1.390 length=  179.0 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.331 sps=   641
+iter= 219 steps=  1097220 reward=  1.400 length=  178.5 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.329 sps=   641
+iter= 220 steps=  1102220 reward=  1.420 length=  179.8 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.343 sps=   641
+iter= 221 steps=  1107220 reward=  1.450 length=  164.1 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.378 sps=   641
+iter= 222 steps=  1112220 reward=  1.380 length=  166.4 shots= 4.25 ammo= 0.75 reward_per_bullet=  0.382 sps=   641
+iter= 223 steps=  1117240 reward=  1.300 length=  154.1 shots= 4.20 ammo= 0.80 reward_per_bullet=  0.368 sps=   640
+iter= 224 steps=  1122240 reward=  1.330 length=  149.8 shots= 4.12 ammo= 0.88 reward_per_bullet=  0.375 sps=   640
+iter= 225 steps=  1127260 reward=  1.430 length=  137.9 shots= 3.98 ammo= 1.02 reward_per_bullet=  0.403 sps=   640
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 226 steps=  1132260 reward=  1.410 length=  143.9 shots= 4.00 ammo= 1.00 reward_per_bullet=  0.398 sps=   640
+iter= 227 steps=  1137260 reward=  1.420 length=  150.9 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.368 sps=   640
+iter= 228 steps=  1142260 reward=  1.330 length=  153.1 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.339 sps=   640
+iter= 229 steps=  1147260 reward=  1.220 length=  158.3 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.307 sps=   640
+iter= 230 steps=  1152280 reward=  1.280 length=  162.4 shots= 4.29 ammo= 0.71 reward_per_bullet=  0.326 sps=   640
+iter= 231 steps=  1157280 reward=  1.260 length=  163.9 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.313 sps=   640
+iter= 232 steps=  1162280 reward=  1.450 length=  159.6 shots= 4.31 ammo= 0.69 reward_per_bullet=  0.362 sps=   639
+iter= 233 steps=  1167280 reward=  1.370 length=  157.9 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.344 sps=   639
+iter= 234 steps=  1172300 reward=  1.390 length=  166.1 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.337 sps=   639
+iter= 235 steps=  1177320 reward=  1.270 length=  167.0 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.299 sps=   639
+iter= 236 steps=  1182320 reward=  1.310 length=  167.2 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.304 sps=   639
+iter= 237 steps=  1187320 reward=  1.280 length=  156.2 shots= 4.22 ammo= 0.78 reward_per_bullet=  0.319 sps=   639
+iter= 238 steps=  1192320 reward=  1.290 length=  155.6 shots= 4.30 ammo= 0.70 reward_per_bullet=  0.329 sps=   639
+iter= 239 steps=  1197320 reward=  1.270 length=  158.4 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.318 sps=   639
+iter= 240 steps=  1202320 reward=  1.290 length=  151.1 shots= 4.36 ammo= 0.64 reward_per_bullet=  0.332 sps=   639
+iter= 241 steps=  1207340 reward=  1.370 length=  153.6 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.353 sps=   639
+iter= 242 steps=  1212340 reward=  1.300 length=  161.2 shots= 4.24 ammo= 0.76 reward_per_bullet=  0.343 sps=   639
+iter= 243 steps=  1217340 reward=  1.430 length=  159.4 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.379 sps=   639
+iter= 244 steps=  1222340 reward=  1.350 length=  171.4 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.342 sps=   638
+iter= 245 steps=  1227340 reward=  1.390 length=  164.3 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.359 sps=   638
+iter= 246 steps=  1232360 reward=  1.360 length=  161.7 shots= 4.10 ammo= 0.90 reward_per_bullet=  0.367 sps=   638
+iter= 247 steps=  1237360 reward=  1.360 length=  154.8 shots= 4.00 ammo= 1.00 reward_per_bullet=  0.381 sps=   638
+iter= 248 steps=  1242360 reward=  1.340 length=  161.8 shots= 4.05 ammo= 0.95 reward_per_bullet=  0.367 sps=   638
+iter= 249 steps=  1247360 reward=  1.390 length=  169.6 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.345 sps=   638
+iter= 250 steps=  1252360 reward=  1.430 length=  172.6 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.333 sps=   638
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 251 steps=  1257360 reward=  1.420 length=  162.9 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.330 sps=   638
+iter= 252 steps=  1262380 reward=  1.340 length=  157.0 shots= 4.42 ammo= 0.58 reward_per_bullet=  0.330 sps=   638
+iter= 253 steps=  1267420 reward=  1.370 length=  154.9 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.344 sps=   638
+iter= 254 steps=  1272460 reward=  1.340 length=  149.5 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.347 sps=   637
+iter= 255 steps=  1277460 reward=  1.360 length=  144.4 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.359 sps=   637
+iter= 256 steps=  1282480 reward=  1.450 length=  151.6 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.369 sps=   637
+iter= 257 steps=  1287520 reward=  1.360 length=  157.2 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.351 sps=   637
+iter= 258 steps=  1292520 reward=  1.470 length=  166.2 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.359 sps=   637
+iter= 259 steps=  1297520 reward=  1.340 length=  161.7 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.333 sps=   637
+iter= 260 steps=  1302560 reward=  1.380 length=  168.9 shots= 4.32 ammo= 0.68 reward_per_bullet=  0.342 sps=   637
+iter= 261 steps=  1307600 reward=  1.350 length=  170.2 shots= 4.35 ammo= 0.65 reward_per_bullet=  0.341 sps=   637
+iter= 262 steps=  1312600 reward=  1.410 length=  171.8 shots= 4.51 ammo= 0.49 reward_per_bullet=  0.338 sps=   637
+iter= 263 steps=  1317600 reward=  1.430 length=  168.9 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.353 sps=   637
+iter= 264 steps=  1322600 reward=  1.330 length=  162.8 shots= 4.43 ammo= 0.57 reward_per_bullet=  0.334 sps=   637
+iter= 265 steps=  1327600 reward=  1.350 length=  169.4 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.346 sps=   637
+iter= 266 steps=  1332640 reward=  1.290 length=  173.3 shots= 4.45 ammo= 0.55 reward_per_bullet=  0.319 sps=   637
+iter= 267 steps=  1337640 reward=  1.300 length=  168.4 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.317 sps=   637
+iter= 268 steps=  1342640 reward=  1.300 length=  159.0 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.314 sps=   637
+iter= 269 steps=  1347660 reward=  1.340 length=  162.5 shots= 4.34 ammo= 0.66 reward_per_bullet=  0.321 sps=   636
+iter= 270 steps=  1352660 reward=  1.260 length=  168.7 shots= 4.26 ammo= 0.74 reward_per_bullet=  0.302 sps=   636
+iter= 271 steps=  1357660 reward=  1.420 length=  164.8 shots= 4.24 ammo= 0.76 reward_per_bullet=  0.350 sps=   636
+iter= 272 steps=  1362660 reward=  1.390 length=  163.7 shots= 4.27 ammo= 0.73 reward_per_bullet=  0.352 sps=   636
+iter= 273 steps=  1367660 reward=  1.360 length=  148.4 shots= 4.28 ammo= 0.72 reward_per_bullet=  0.359 sps=   636
+iter= 274 steps=  1372660 reward=  1.310 length=  150.7 shots= 4.37 ammo= 0.63 reward_per_bullet=  0.330 sps=   636
+iter= 275 steps=  1377660 reward=  1.240 length=  151.7 shots= 4.33 ammo= 0.67 reward_per_bullet=  0.314 sps=   636
+checkpoint=/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/space_invaders_5bullets_a3c_seed1.pkl
+iter= 276 steps=  1382660 reward=  1.380 length=  161.5 shots= 4.38 ammo= 0.62 reward_per_bullet=  0.346 sps=   636
+iter= 277 steps=  1387660 reward=  1.410 length=  166.9 shots= 4.41 ammo= 0.59 reward_per_bullet=  0.349 sps=   636
+iter= 278 steps=  1392660 reward=  1.440 length=  173.8 shots= 4.48 ammo= 0.52 reward_per_bullet=  0.350 sps=   636
+iter= 279 steps=  1397660 reward=  1.480 length=  165.2 shots= 4.46 ammo= 0.54 reward_per_bullet=  0.374 sps=   636
+iter= 280 steps=  1402660 reward=  1.460 length=  167.1 shots= 4.44 ammo= 0.56 reward_per_bullet=  0.357 sps=   636
+iter= 281 steps=  1407700 reward=  1.260 length=  155.4 shots= 4.21 ammo= 0.79 reward_per_bullet=  0.331 sps=   636

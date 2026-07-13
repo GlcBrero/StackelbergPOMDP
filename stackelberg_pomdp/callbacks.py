@@ -1,29 +1,37 @@
 import os
 import threading
+import time
+from itertools import product
 from typing import Union
 
 import gym
+import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
-from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 from stackelberg_pomdp.baselines_utils import CustomPolicy
-from stackelberg_pomdp.gym_envs.envs.custom_envs import StackPOMDPWrapper
-from utils import compute_welfare_loss, get_all_wrappers
+from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
+from stackelberg_pomdp.leader_policies import BaselinePolicyWrapper
+from stackelberg_pomdp.utils import (
+    check_empirical_bcce_gap,
+    compute_empirical_welfare,
+)
+try:
+    from .utils import get_all_wrappers
+except ImportError:
+    from utils import get_all_wrappers
 
-class GiveModelToEnvCallback(BaseCallback):
 
-    def __init__(self):
-        super(GiveModelToEnvCallback, self).__init__()
-
-    def _on_step(self) -> None:
-        super(GiveModelToEnvCallback, self)._on_step()
-
-    def _init_callback(self):
-        for current_env in get_all_wrappers(self.training_env):
-            if type(current_env) == StackPOMDPWrapper:
-                current_env.model = self.model
-
+def _wandb_log(metrics, step):
+    if wandb is not None and wandb.run is not None:
+        metrics = dict(metrics)
+        metrics["global_step"] = step
+        wandb.log(metrics)
 
 
 class FixPolicyActionsCallback(BaseCallback):
@@ -39,6 +47,392 @@ class FixPolicyActionsCallback(BaseCallback):
         self.model.policy.fix_policy_actions()
 
 
+class TrainingProgressCallback(BaseCallback):
+    """Print lightweight training progress for long paper runs."""
+
+    def __init__(self, total_timesteps, print_freq=10000):
+        super().__init__()
+        self.total_timesteps = total_timesteps
+        self.print_freq = max(1, int(print_freq))
+        self._last_print_timestep = 0
+        self._start_time = None
+
+    def _init_callback(self) -> None:
+        self._start_time = time.time()
+        self.effective_total_timesteps = max(
+            self.total_timesteps,
+            getattr(self.model, "n_steps", self.total_timesteps),
+        )
+        print(
+            f"[train] start total_timesteps={self.total_timesteps} "
+            f"effective_total={self.effective_total_timesteps} "
+            f"progress_freq={self.print_freq}",
+            flush=True,
+        )
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self._last_print_timestep < self.print_freq:
+            return True
+
+        elapsed = max(time.time() - self._start_time, 1e-9)
+        fps = self.num_timesteps / elapsed
+        pct = 100 * self.num_timesteps / max(self.effective_total_timesteps, 1)
+
+        print(
+            f"[train] steps={self.num_timesteps}/{self.effective_total_timesteps} "
+            f"({pct:.1f}%) fps={fps:.1f}",
+            flush=True,
+        )
+        self._last_print_timestep = self.num_timesteps
+        return True
+
+
+class TrainingRewardCallback(BaseCallback):
+    """Print the reward-phase return actually observed during training."""
+
+    def __init__(self, print_freq=1, zero_welfare_tol=None):
+        super().__init__()
+        self.print_freq = max(1, int(print_freq))
+        self.zero_welfare_tol = None if zero_welfare_tol is None else float(zero_welfare_tol)
+        self.episode_count = 0
+        self.reward_phase_sum = 0.0
+        self.reward_generated_steps = 0
+        self.efficiency_sum = 0.0
+        self.efficiency_weight_sum = 0.0
+        self.last_bcce_gap = None
+        self.best_bcce_clean_reward_phase_sum = None
+        self.best_bcce_allocative_efficiency = None
+
+    def _init_callback(self) -> None:
+        self.stack_env = None
+        for env in get_all_wrappers(self.training_env):
+            if type(env) == StackPOMDPWrapper:
+                self.stack_env = env
+                break
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        rewards = self.locals.get("rewards", [])
+        dones = self.locals.get("dones", [])
+        if not infos:
+            return True
+
+        info = infos[0]
+        if info.get("is_reward_phase", False):
+            self.reward_phase_sum += float(rewards[0])
+            if info.get("reward_generated", False):
+                self.reward_generated_steps += 1
+                if "weighted_efficiency" in info:
+                    self.efficiency_sum += float(info["weighted_efficiency"])
+                    self.efficiency_weight_sum += float(info.get("exact_profile_weight", 1.0))
+                elif "efficiency" in info:
+                    self.efficiency_sum += float(info["efficiency"])
+                    self.efficiency_weight_sum += 1.0
+
+        if bool(dones[0]):
+            self.episode_count += 1
+            if self.episode_count % self.print_freq == 0:
+                reward_phase_avg = (
+                    self.reward_phase_sum / self.reward_generated_steps
+                    if self.reward_generated_steps
+                    else 0.0
+                )
+                allocative_efficiency = (
+                    self.efficiency_sum / self.efficiency_weight_sum
+                    if self.efficiency_weight_sum
+                    else None
+                )
+                self.logger.record("clean_reward_phase_sum", self.reward_phase_sum)
+                self.logger.record("clean_reward_phase_avg", reward_phase_avg)
+                self.logger.record("reward_generated_steps", self.reward_generated_steps)
+                wandb_metrics = {}
+                if allocative_efficiency is not None:
+                    self.logger.record("clean_allocative_efficiency", allocative_efficiency)
+                    # Common paper-facing metric shared with the direct SPM baseline.
+                    self.logger.record("paper_allocative_efficiency", allocative_efficiency)
+                self.logger.record("paper_expected_reward", reward_phase_avg)
+                self.logger.record("reward", reward_phase_avg)
+                wandb_metrics["reward"] = reward_phase_avg
+                bcce_gap = getattr(self.stack_env, "last_response_bcce_gap", None)
+                bcce_certified = False
+                if bcce_gap is not None:
+                    self.last_bcce_gap = bcce_gap
+                    if bcce_gap <= getattr(self.stack_env, "response_bcce_threshold", float("inf")):
+                        bcce_certified = True
+                        if (
+                                self.best_bcce_clean_reward_phase_sum is None
+                                or self.reward_phase_sum > self.best_bcce_clean_reward_phase_sum
+                        ):
+                            self.best_bcce_clean_reward_phase_sum = self.reward_phase_sum
+                        if allocative_efficiency is not None and (
+                                self.best_bcce_allocative_efficiency is None
+                                or allocative_efficiency > self.best_bcce_allocative_efficiency
+                        ):
+                            self.best_bcce_allocative_efficiency = allocative_efficiency
+                    self.logger.record("bcce_gap", bcce_gap)
+                if bcce_certified and allocative_efficiency is not None:
+                    self.logger.record(
+                        "bcce_certified_allocative_efficiency",
+                        allocative_efficiency,
+                    )
+                if self.best_bcce_clean_reward_phase_sum is not None:
+                    self.logger.record(
+                        "best_bcce_clean_reward_phase_sum",
+                        self.best_bcce_clean_reward_phase_sum,
+                    )
+                if self.best_bcce_allocative_efficiency is not None:
+                    self.logger.record(
+                        "best_bcce_allocative_efficiency",
+                        self.best_bcce_allocative_efficiency,
+                    )
+                _wandb_log(wandb_metrics, step=self.num_timesteps)
+                efficiency_text = (
+                    f"allocative_efficiency={allocative_efficiency:.6g} "
+                    if allocative_efficiency is not None
+                    else ""
+                )
+                print(
+                    f"[reward] steps={self.num_timesteps} "
+                    f"episode={self.episode_count} "
+                    f"reward_phase_avg={reward_phase_avg:.6g} "
+                    f"reward_phase_sum={self.reward_phase_sum:.6g} "
+                    f"{efficiency_text}"
+                    f"reward_generated_steps={self.reward_generated_steps}",
+                    flush=True,
+                )
+            if (
+                self.zero_welfare_tol is not None
+                and
+                self.reward_generated_steps
+                and abs(self.reward_phase_sum) <= self.zero_welfare_tol
+            ):
+                self._print_zero_welfare_response()
+            self.reward_phase_sum = 0.0
+            self.reward_generated_steps = 0
+            self.efficiency_sum = 0.0
+            self.efficiency_weight_sum = 0.0
+
+        return True
+
+    def _print_zero_welfare_response(self):
+        if self.stack_env is None:
+            return
+
+        policy = getattr(self.stack_env, "response_leader_policy", None)
+        if policy is None:
+            policy = BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
+        response_strategy = getattr(self.stack_env, "last_response_strategy", None)
+        if response_strategy is None:
+            if not hasattr(self.stack_env, "response_strategy"):
+                return
+            response_strategy = self.stack_env.response_strategy()
+        if not response_strategy:
+            return
+
+        bcce_gap = check_empirical_bcce_gap(self.stack_env, policy, response_strategy)
+        leader_reward = compute_empirical_welfare(self.stack_env, policy, response_strategy)
+
+        print(
+            f"[zero_welfare_equilibrium] steps={self.num_timesteps} "
+            f"episode={self.episode_count} "
+            f"bcce_gap={bcce_gap:.6g} "
+            f"bcce_leader_reward={leader_reward:.6g} "
+            f"snapshots={len(response_strategy)}",
+            flush=True,
+        )
+        self.logger.record("zero_welfare_bcce_gap", bcce_gap)
+        self.logger.record("zero_welfare_leader_reward", leader_reward)
+        _wandb_log(
+            {
+                "zero_welfare_bcce_gap": bcce_gap,
+                "zero_welfare_leader_reward": leader_reward,
+            },
+            step=self.num_timesteps,
+        )
+
+
+class ExactSPMEvaluationCallback(BaseCallback):
+    """Evaluate the direct SPM baseline exactly over all type profiles."""
+
+    def __init__(self, eval_env, print_freq=10000, deterministic=True, action_samples=1):
+        super().__init__()
+        self.eval_env = eval_env
+        self.print_freq = max(1, int(print_freq))
+        self.deterministic = deterministic
+        self.action_samples = max(1, int(action_samples))
+        self._last_eval_timestep = 0
+
+    def _init_callback(self) -> None:
+        self._log_evaluation(step=0)
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self._last_eval_timestep < self.print_freq:
+            return True
+
+        self._log_evaluation(step=self.num_timesteps)
+        self._last_eval_timestep = self.num_timesteps
+        return True
+
+    def _log_evaluation(self, step):
+        metrics = self._evaluate()
+        self.logger.record("spm_exact_reward", metrics["spm_exact_reward"])
+        self.logger.record("spm_exact_allocated", metrics["spm_exact_allocated"])
+        self.logger.record("spm_exact_efficient", metrics["spm_exact_efficient"])
+        self.logger.record("spm_exact_allocative_efficiency", metrics["spm_exact_allocative_efficiency"])
+        self.logger.record("exact_expected_reward", metrics["spm_exact_reward"])
+        self.logger.record("paper_allocative_efficiency", metrics["spm_exact_allocative_efficiency"])
+        metrics["exact_expected_reward"] = metrics["spm_exact_reward"]
+        metrics["paper_allocative_efficiency"] = metrics["spm_exact_allocative_efficiency"]
+        print(
+            f"[spm_exact] steps={step} "
+            f"reward={metrics['spm_exact_reward']:.6g} "
+            f"allocated={metrics['spm_exact_allocated']:.6g} "
+            f"efficient={metrics['spm_exact_efficient']:.6g} "
+            f"alloc_eff={metrics['spm_exact_allocative_efficiency']:.6g} "
+            f"deterministic={self.deterministic}",
+            flush=True,
+        )
+
+    def _evaluate(self):
+        base_env = self.eval_env.env
+        game = base_env.game
+        total_reward = 0.0
+        total_allocated = 0.0
+        total_efficient = 0.0
+        total_allocative_efficiency = 0.0
+        total_weight = 0.0
+        type_profiles = list(product(range(game.num_types), repeat=len(game.followers_list)))
+
+        previous_freeze = base_env.freeze_types
+        previous_types = getattr(base_env, "types", None)
+        base_env.freeze_types = True
+        try:
+            for type_values in type_profiles:
+                base_env.types = {
+                    follower: type_value
+                    for follower, type_value in zip(game.followers_list, type_values)
+                }
+                profile_weight = game.type_profile_probability(base_env.types)
+                sample_weight = profile_weight / self.action_samples
+                for _ in range(self.action_samples):
+                    obs = self.eval_env.reset()
+                    done = False
+                    reward_sum = 0.0
+                    while not done:
+                        action, _ = self.model.predict(obs, deterministic=self.deterministic)
+                        obs, reward, done, _ = self.eval_env.step(action)
+                        reward_sum += float(np.asarray(reward).item())
+                    allocated = base_env.mechanism_episode.allocated_value
+                    efficient = game.efficient_welfare(base_env.mechanism_episode.valuations)
+                    # The PI plot reports average realized allocative efficiency,
+                    # not the ratio of ex ante expected allocated to efficient value.
+                    allocative_efficiency = 1.0 if efficient == 0 else allocated / efficient
+
+                    total_reward += sample_weight * reward_sum
+                    total_allocated += sample_weight * allocated
+                    total_efficient += sample_weight * efficient
+                    total_allocative_efficiency += sample_weight * allocative_efficiency
+                    total_weight += sample_weight
+        finally:
+            base_env.freeze_types = previous_freeze
+            if previous_types is not None:
+                base_env.types = previous_types
+
+        return {
+            "spm_exact_reward": total_reward / total_weight,
+            "spm_exact_allocated": total_allocated / total_weight,
+            "spm_exact_efficient": total_efficient / total_weight,
+            "spm_exact_allocative_efficiency": total_allocative_efficiency / total_weight,
+        }
+
+
+class ResponsePhaseDiagnosticsCallback(BaseCallback):
+    """Report passive response-strategy diagnostics at response-phase boundaries."""
+
+    def __init__(self, print_freq=1):
+        super().__init__()
+        self.print_freq = max(1, int(print_freq))
+        self.response_phase_count = 0
+
+    def _init_callback(self) -> None:
+        self.stack_env = None
+        for env in get_all_wrappers(self.training_env):
+            if type(env) == StackPOMDPWrapper:
+                self.stack_env = env
+                break
+        if self.stack_env is None:
+            raise ValueError("ResponsePhaseDiagnosticsCallback requires a StackPOMDPWrapper.")
+
+    def _on_step(self) -> bool:
+        if not any(info.get("response_phase_done", False) for info in self.locals.get("infos", [])):
+            return True
+
+        response_info = next(
+            info for info in self.locals.get("infos", [])
+            if info.get("response_phase_done", False)
+        )
+        self.response_phase_count += 1
+        if self.response_phase_count % self.print_freq != 0:
+            return True
+        if not hasattr(self.stack_env, "response_strategy"):
+            return True
+
+        policy = getattr(self.stack_env, "response_leader_policy", None)
+        if policy is None:
+            policy = BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
+        response_strategy = self.stack_env.response_strategy()
+        bcce_gap = check_empirical_bcce_gap(self.stack_env, policy, response_strategy)
+        bcce_leader_reward = compute_empirical_welfare(self.stack_env, policy, response_strategy)
+
+        self.stack_env.last_response_bcce_gap = bcce_gap
+        print(
+            f"[response] steps={self.num_timesteps} "
+            f"episode={self.response_phase_count} "
+            f"bcce_gap={bcce_gap:.6g} "
+            f"bcce_leader_reward={bcce_leader_reward:.6g} "
+            f"snapshots={len(response_strategy)} "
+            f"stop_reason={response_info.get('response_phase_stop_reason')}",
+            flush=True,
+        )
+        self.logger.record("bcce_gap", bcce_gap)
+        self.logger.record("bcce_leader_reward", bcce_leader_reward)
+        self.logger.record("response_snapshots", len(response_strategy))
+        _wandb_log(
+            {
+                "bcce_gap": bcce_gap,
+                "bcce_leader_reward": bcce_leader_reward,
+                "response_snapshots": len(response_strategy),
+            },
+            step=self.num_timesteps,
+        )
+        return True
+
+
+class ResponsePhasePolicyCallback(BaseCallback):
+    """Attach the current fixed episode leader policy for response checks.
+
+    StackPOMDP training samples one action per actor observation and caches it
+    for the whole episode. Response checks must use that same sampled/cached
+    policy, not the deterministic mean action for unseen counterfactual
+    observations.
+    """
+
+    def _init_callback(self) -> None:
+        self.stack_env = None
+        for env in get_all_wrappers(self.training_env):
+            if type(env) == StackPOMDPWrapper:
+                self.stack_env = env
+                break
+        if self.stack_env is None:
+            raise ValueError("ResponsePhasePolicyCallback requires a StackPOMDPWrapper.")
+
+        self.stack_env.set_response_leader_policy(
+            BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
+        )
+
+    def _on_step(self) -> bool:
+        return True
+
 
 class ClearCacheOnResetWrapper(gym.Wrapper):
     """Clears the eval policy's action cache on episode reset."""
@@ -53,19 +447,19 @@ class ClearCacheOnResetWrapper(gym.Wrapper):
 
 
 class BackgroundEvalCallback(BaseCallback):
-    """Run deterministic evaluation in a background thread with a frozen policy snapshot.
+    """Run paper-style deterministic StackPOMDP evaluation and print rewards.
 
     Creates a separate CustomPolicy instance (never trained) and periodically
     copies weights from the training policy. Eval runs in a daemon thread so
-    training is never blocked. The eval env has its own logger writing to a
-    separate CSV.
+    training is never blocked.
     """
 
-    def __init__(self, eval_env, eval_freq, n_eval_episodes=1):
+    def __init__(self, eval_env, eval_freq, n_eval_episodes=1, reward_steps=1):
         super().__init__()
         self.eval_env = eval_env
         self.eval_freq = eval_freq
         self.n_eval_episodes = n_eval_episodes
+        self.reward_steps = max(1, int(reward_steps))
         self._eval_thread = None
 
     def _init_callback(self) -> None:
@@ -75,6 +469,7 @@ class BackgroundEvalCallback(BaseCallback):
             action_space=self.model.action_space,
             lr_schedule=lambda _: 0.0,
             cutoff_entry=policy.mlp_extractor.cutoff_entry,
+            actor_obs_keys=policy.actor_obs_keys,
         )
         self._eval_policy.fix_policy_actions()
 
@@ -102,9 +497,31 @@ class BackgroundEvalCallback(BaseCallback):
 
     def _run_eval(self):
         try:
-            evaluate_policy(
-                self._eval_policy, self.eval_env,
-                n_eval_episodes=self.n_eval_episodes, deterministic=True,
+            reward_phase_totals = []
+            episode_lengths = []
+            for _ in range(self.n_eval_episodes):
+                obs = self.eval_env.reset()
+                done = False
+                reward_phase_total = 0.0
+                episode_length = 0
+                while not done:
+                    action, _ = self._eval_policy.predict(obs, deterministic=True)
+                    obs, reward, done, info = self.eval_env.step(action)
+                    if info.get("is_reward_phase", False):
+                        reward_phase_total += reward
+                    episode_length += 1
+                reward_phase_totals.append(reward_phase_total)
+                episode_lengths.append(episode_length)
+
+            mean_reward_phase_avg = (
+                sum(reward_phase_totals) / len(reward_phase_totals) / self.reward_steps
+            )
+            print(
+                f"[eval] steps={self.num_timesteps} "
+                f"reward_phase_avg={mean_reward_phase_avg:.4g} "
+                f"episodes={len(reward_phase_totals)} "
+                f"length={sum(episode_lengths) / len(episode_lengths):.1f}",
+                flush=True,
             )
         except Exception as e:
             print(f"Eval error: {e}")

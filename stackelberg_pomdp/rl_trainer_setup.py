@@ -1,70 +1,87 @@
-from stable_baselines3.common.policies import register_policy
-
-from stackelberg_pomdp.gym_envs.envs.custom_envs import BaseMessageSPM, BertrandCompetitionEnv
+from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
+from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
 from stackelberg_pomdp.baselines_utils import CustomPolicy, CustomA2C, CustomPPO
+from stackelberg_pomdp.utils import get_all_wrappers
 
 
-def get_cutoff_entry(env):
-    from stable_baselines3.common.preprocessing import preprocess_obs
-    from stable_baselines3.common.utils import obs_as_tensor, get_device
-    obs = env.observation_space.sample()
-    tensor_obs = obs_as_tensor(obs, get_device())
-    cutoff_entry = 0
-    for key in obs.keys():
-        if key.split(":")[0] == "critic":
-            cutoff_entry = cutoff_entry + preprocess_obs(tensor_obs[key], env.observation_space[key]).flatten().shape[0]
-    return cutoff_entry
+def _is_critic_key(key):
+    return key.split(":")[0] == "critic"
+
+
+def get_observation_split(env):
+    from stable_baselines3.common.preprocessing import get_flattened_obs_dim
+
+    critic_feature_dim = 0
+    actor_obs_keys = []
+    seen_critic = False
+    for key in env.observation_space.spaces.keys():
+        if _is_critic_key(key):
+            seen_critic = True
+            critic_feature_dim += get_flattened_obs_dim(env.observation_space[key])
+        else:
+            if seen_critic:
+                raise ValueError(
+                    f"Actor-visible observation key {key!r} appears after critic-only keys. "
+                    "Use a prefix that sorts before 'critic:', such as 'base:'."
+                )
+            actor_obs_keys.append(key)
+
+    return critic_feature_dim, tuple(actor_obs_keys)
+
+
+def _stack_pomdp_wrapper(env):
+    for wrapper in get_all_wrappers(env):
+        if isinstance(wrapper, StackPOMDPWrapper):
+            return wrapper
+    return None
+
 
 def get_custom_training_algorithm(config_dict, env, tensorboard_folder=None):
 
     algorithm = config_dict['algorithm']
     seed = config_dict['training_seed']
+    learning_rate = config_dict.get('learning_rate', 7e-4)
 
-    register_policy("CustomPolicy", CustomPolicy)
+    # Compute the actor/critic feature split from the final wrapped observation
+    # space. Actor sees every non-critic key; critic additionally sees critic:*.
+    cutoff_entry, actor_obs_keys = get_observation_split(env)
 
-    if isinstance(env.unwrapped, BaseMessageSPM):
-        learning_rate = 3e-6
-        decay_rate_value = 0
+    stack_env = _stack_pomdp_wrapper(env)
+    if stack_env is not None:
+        n_steps = stack_env.rollout_buffer_episode_length()
+    elif hasattr(env.unwrapped, "rollout_buffer_episode_length"):
+        n_steps = env.unwrapped.rollout_buffer_episode_length()
     else:
-        learning_rate = 7e-4 # SB3 A2C default, matches ai_collusion
-        decay_rate_value = 0 # Default decay rate
+        n_steps = config_dict['tot_num_reward_episodes']
 
-    cutoff_entry = get_cutoff_entry(env)  # Determines which part of the observation is shared between actor and critic
-
-    # For Bertrand, each step = one sub-episode, so n_steps = full episode length
-    if isinstance(env.unwrapped, BertrandCompetitionEnv):
-        n_steps = config_dict['tot_num_eq_episodes'] + config_dict['tot_num_reward_episodes']
-        # Add openness evaluation steps when intervention penalty is active
-        if config_dict.get('intervention_lambda', 0) > 0:
-            m = config_dict.get('price_grid_length', 4)
-            n_steps += m * m
-    else:
-        # Scale n_steps to match expected reward steps in default POMG
-        n_steps = int(1 + config_dict['tot_num_eq_episodes'] * config_dict['response_phase_prob'] / config_dict['tot_num_reward_episodes'])
-        n_steps = min(n_steps, 100) # Limit to factor 100 to avoid too long training times
-
-        if algorithm == "PPO":
-            n_steps *= 2048  # Default n_steps for PPO
-        elif algorithm == "A2C":
-            n_steps *= 5  # Default n_steps for A2C
+    if isinstance(env.unwrapped, BertrandCompetitionEnv) and config_dict.get('intervention_lambda', 0) > 0:
+        m = config_dict.get('price_grid_length', 4)
+        n_steps += m * m
 
     ent_coef = config_dict.get('ent_coef', 0.01)
 
     if algorithm == "PPO":
-        # PPO needs multi-episode batches for stable learning.
-        # batch_size = one episode, n_steps = multiple episodes, n_epochs > 1.
+        # PPO uses small complete-episode batches. For simple allocation this is
+        # close to SB3's default 2048 rollout length while avoiding mid-episode
+        # advantage bootstrapping.
         ppo_episodes_per_batch = config_dict.get('ppo_episodes_per_batch', 16)
         ppo_n_epochs = config_dict.get('ppo_n_epochs', 4)
         ppo_n_steps = n_steps * ppo_episodes_per_batch
-        m = CustomPPO(env=env, policy="CustomPolicy", gamma=1, learning_rate=learning_rate, seed=seed, n_steps=ppo_n_steps,
+        m = CustomPPO(env=env, policy=CustomPolicy, gamma=1, learning_rate=learning_rate, seed=seed, n_steps=ppo_n_steps,
                 ent_coef=ent_coef, batch_size=n_steps, n_epochs=ppo_n_epochs,
-                policy_kwargs={"cutoff_entry": cutoff_entry, "decay_rate": decay_rate_value},
+                policy_kwargs={
+                    "cutoff_entry": cutoff_entry,
+                    "actor_obs_keys": actor_obs_keys,
+                },
                 tensorboard_log=tensorboard_folder)
 
     elif algorithm == "A2C":
-        m = CustomA2C(env=env, policy="CustomPolicy", gamma=1, learning_rate=learning_rate, seed=seed, n_steps=n_steps,
+        m = CustomA2C(env=env, policy=CustomPolicy, gamma=1, learning_rate=learning_rate, seed=seed, n_steps=n_steps,
                  ent_coef=ent_coef,
-                 policy_kwargs={"cutoff_entry": cutoff_entry, "decay_rate": decay_rate_value},
+                 policy_kwargs={
+                     "cutoff_entry": cutoff_entry,
+                     "actor_obs_keys": actor_obs_keys,
+                 },
                  tensorboard_log=tensorboard_folder)
 
     else:

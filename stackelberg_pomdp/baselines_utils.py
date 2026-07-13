@@ -25,24 +25,31 @@ class CustomPolicy(MultiInputActorCriticPolicy):
     """
     def __init__(self, *args, **kwargs):
 
-        cutoff_entry = kwargs.pop("cutoff_entry", 0)
-        kwargs.pop("decay_rate", None)  # unused, kept for config compat
+        self.cutoff_entry = kwargs.pop("cutoff_entry", 0)
+        self.actor_obs_keys = kwargs.pop("actor_obs_keys", ("base_environment",))
 
         super(CustomPolicy, self).__init__(
             *args,
             **kwargs,
-            net_arch=[dict(pi=[64, 64], vf=[64, 64], cutoff_entry=cutoff_entry)],
+            net_arch=dict(pi=[64, 64], vf=[64, 64]),
         )
 
         self.fix_actions = False
         self.obs_action_map = {}
+
+    def _cache_key(self, obs):
+        values = []
+        for key in self.actor_obs_keys:
+            values.extend(obs[key].reshape(-1).tolist())
+        return tuple(values)
 
     def _build_mlp_extractor(self) -> None:
         """
         Create the policy and value networks.
         Part of the layers can be shared.
         """
-        # Validate that critic-only entries are at the end of the observation space (once at init)
+        # Validate that actor-visible entries are before critic-only entries.
+        # The cutoff is computed from the final wrapped observation space.
         seen_critic = False
         for key in self.observation_space.spaces.keys():
             is_critic = key.split(":")[0] == "critic"
@@ -56,6 +63,7 @@ class CustomPolicy(MultiInputActorCriticPolicy):
             net_arch=self.net_arch,
             activation_fn=self.activation_fn,
             device=self.device,
+            cutoff_entry=self.cutoff_entry,
         )
 
     def clear_obs_action_map(self):
@@ -83,8 +91,7 @@ class CustomPolicy(MultiInputActorCriticPolicy):
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
         distribution = self._get_action_dist_from_latent(latent_pi)
-        val = obs['base_environment'].reshape(-1).tolist()
-        obs_key = tuple(val)
+        obs_key = self._cache_key(obs)
         if self.fix_actions and obs_key in self.obs_action_map:
             actions = self.obs_action_map[obs_key]
         else:
@@ -103,7 +110,7 @@ class CustomPolicy(MultiInputActorCriticPolicy):
 
 
         processed_observation, vectorized_env = self.obs_to_tensor(observation)
-        obs_key = tuple(processed_observation['base_environment'].reshape(-1).tolist())
+        obs_key = self._cache_key(processed_observation)
 
         if self.fix_actions and obs_key in self.obs_action_map:
             actions = self.obs_action_map[obs_key]
@@ -142,6 +149,7 @@ class CustomMLPExtractor(nn.Module):
         net_arch: List[Union[int, Dict[str, List[int]]]],
         activation_fn: Type[nn.Module],
         device: Union[th.device, str] = "auto",
+        cutoff_entry: int = 0,
     ):
         super(CustomMLPExtractor, self).__init__()
         device = get_device(device)
@@ -150,25 +158,32 @@ class CustomMLPExtractor(nn.Module):
         value_only_layers = []  # Layer sizes of the network that only belongs to the value network
         last_layer_dim_shared = feature_dim
 
-        self.cutoff_entry = net_arch[0]['cutoff_entry'] # The last cutoff_entry features will only be used by the value network
+        # The last cutoff_entry features will only be used by the value network.
+        # Keep this separate from SB3's net_arch because recent SB3 versions
+        # normalize net_arch and drop custom metadata keys.
+        self.cutoff_entry = cutoff_entry
 
         # Iterate through the shared layers and build the shared parts of the network
-        for layer in net_arch:
-            if isinstance(layer, int):  # Check that this is a shared layer
-                # TODO: give layer a meaningful name
-                shared_net.append(nn.Linear(last_layer_dim_shared, layer))  # add linear of size layer
-                shared_net.append(activation_fn())
-                last_layer_dim_shared = layer
-            else:
-                assert isinstance(layer, dict), "Error: the net_arch list can only contain ints and dicts"
-                if "pi" in layer:
-                    assert isinstance(layer["pi"], list), "Error: net_arch[-1]['pi'] must contain a list of integers."
-                    policy_only_layers = layer["pi"]
+        if isinstance(net_arch, dict):
+            policy_only_layers = net_arch.get("pi", [])
+            value_only_layers = net_arch.get("vf", [])
+        else:
+            for layer in net_arch:
+                if isinstance(layer, int):  # Check that this is a shared layer
+                    # TODO: give layer a meaningful name
+                    shared_net.append(nn.Linear(last_layer_dim_shared, layer))  # add linear of size layer
+                    shared_net.append(activation_fn())
+                    last_layer_dim_shared = layer
+                else:
+                    assert isinstance(layer, dict), "Error: the net_arch list can only contain ints and dicts"
+                    if "pi" in layer:
+                        assert isinstance(layer["pi"], list), "Error: net_arch[-1]['pi'] must contain a list of integers."
+                        policy_only_layers = layer["pi"]
 
-                if "vf" in layer:
-                    assert isinstance(layer["vf"], list), "Error: net_arch[-1]['vf'] must contain a list of integers."
-                    value_only_layers = layer["vf"]
-                break  # From here on the network splits up in policy and value network
+                    if "vf" in layer:
+                        assert isinstance(layer["vf"], list), "Error: net_arch[-1]['vf'] must contain a list of integers."
+                        value_only_layers = layer["vf"]
+                    break  # From here on the network splits up in policy and value network
 
         last_layer_dim_pi = last_layer_dim_shared - self.cutoff_entry
         last_layer_dim_vf = last_layer_dim_shared
@@ -238,7 +253,6 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
         from the rollout buffer before they are added.
         """
         assert self._last_obs is not None, "No previous observation was provided"
-        self._exclude_last_obs = False
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
 
@@ -269,6 +283,8 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
 
+            # Count every executed environment step against max_steps, including
+            # hidden-query response steps that are omitted from the PPO buffer.
             self.num_timesteps += env.num_envs
 
             # Give access to local variables
@@ -295,15 +311,14 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
                         terminal_value = self.policy.predict_values(terminal_obs)[0]
                     rewards[idx] += self.gamma * terminal_value
 
+            exclude_from_buffer = infos[0].get("exclude_from_buffer", False)
+
             # Store only the unexcluded transitions
-            if not self._exclude_last_obs:
+            if not exclude_from_buffer:
                 n_steps += 1
                 rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
             self._last_obs = new_obs
             self._last_episode_starts = dones
-
-            # TODO: Next line only works for dummy vec_env. We may need to iterate through envs in case of vectorized environment.
-            self._exclude_last_obs = infos[0].get("exclude_from_buffer", False)
 
         with th.no_grad():
             # Compute value for the last timestep
