@@ -1,5 +1,23 @@
 # Autonomous Run Report
 
+## 2026-07-13 — PI SPM versus MSPM ten-seed Unity launch
+
+- Working MSPM implementation committed as `d8a709a`; reproducible Unity array
+  manifest committed as `d6dcbc1`.
+- Submitted SLURM array `61798498` with 20 tasks: tasks 0--9 are MSPM seeds
+  1--10 and tasks 10--19 are SPM seeds 1--10, each for 10M training steps.
+- W&B group: `pi_spm_vs_mspm_10seeds_20260713`. MSPM run IDs are
+  `3vqh4jad`, `9ic017js`, `wtg9nzex`, `o8kt1bgy`, `d5hnhwmo`, `ayzjxfxx`,
+  `a6rtlw1p`, `esz18gc4`, `nxee73a9`, and `61rzh15c`. SPM run IDs are
+  `2kzm425e`, `nctxnwlv`, `zj9xq68m`, `ntvmo7u9`, `tdr60qek`, `0famcbr5`,
+  `7aqpjy6x`, `a4grx2bi`, `flczyzr5`, and `l05qz1cd`.
+- Startup verification: all 20 tasks entered training, all 20 initialized W&B,
+  and no task log contained a traceback or import/startup error.
+- Unity logs:
+  `simulation_logs/cluster_pi_spm_vs_mspm_10seeds/slurm_61798498_<task>.{out,err}`.
+- Next: monitor completion, retrieve logs/results, aggregate ten seeds per
+  method, and regenerate the paper figure with cross-seed uncertainty.
+
 ## 2026-07-13 — PI SPM versus MSPM paper figure
 
 - Task: create a paper-style training-step versus leader-reward comparison and place it on the Desktop.
