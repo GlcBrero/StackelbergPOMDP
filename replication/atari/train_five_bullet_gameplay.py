@@ -219,6 +219,7 @@ def _init_wandb(args, checkpoint_path):
     return wandb.init(
         project=WANDB_PROJECT,
         entity=args.wandb_entity,
+        job_type=args.wandb_job_type,
         name=args.wandb_name or (
             f"five_bullet_{args.algorithm.lower()}"
             f"{'_ammo_mask' if args.ammo_aware else ''}_seed{args.seed}"
@@ -243,6 +244,7 @@ def _init_wandb(args, checkpoint_path):
             "ammo_hidden": args.ammo_hidden if args.ammo_aware else None,
             "projectile_fire_mask": bool(args.ammo_aware),
             "archive_checkpoints": bool(args.archive_checkpoints),
+            "wandb_job_type": args.wandb_job_type,
         },
     )
 
@@ -292,6 +294,7 @@ def parse_args():
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--wandb-entity", default="glcbrero")
     parser.add_argument("--wandb-name")
+    parser.add_argument("--wandb-job-type", default="atari_5bullet_gameplay")
     parser.add_argument("--ray-local-mode", action="store_true")
     return parser.parse_args()
 
