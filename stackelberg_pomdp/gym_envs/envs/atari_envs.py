@@ -194,6 +194,86 @@ class SinglePlayerAtariBulletEnv(gym.Env):
             close()
 
 
+class AmmoAwareSinglePlayerAtariBulletEnv(SinglePlayerAtariBulletEnv):
+    """Five-bullet gameplay view with ammo state and safe FIRE masking.
+
+    The image preprocessing and bullet accounting are identical to
+    :class:`SinglePlayerAtariBulletEnv`.  The policy additionally observes the
+    remaining bullet fraction and an action mask.  FIRE-containing actions are
+    unavailable while an ALE player projectile is active (and once ammo is
+    exhausted).  When a projectile is active at decision time, the selected
+    non-FIRE action remains non-FIRE throughout the outer four-frame repeat,
+    even if that projectile disappears before the repeat ends.
+    """
+
+    AMMO_KEY = "ammo_fraction"
+    ACTION_MASK_KEY = "action_mask"
+    IMAGE_KEY = "image"
+    PROJECTILE_RAM_SLOTS = (0x55, 0x56)
+    INACTIVE_PROJECTILE_RAM_VALUE = 0xF6
+
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config=config, **kwargs)
+        self._image_observation_space = self.observation_space
+        meanings = self.env.unwrapped.get_action_meanings()
+        self.fire_action_indices = tuple(
+            idx for idx, meaning in enumerate(meanings) if "FIRE" in meaning
+        )
+        self.observation_space = Dict(OrderedDict([
+            (self.IMAGE_KEY, self._image_observation_space),
+            (
+                self.AMMO_KEY,
+                Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+            ),
+            (
+                self.ACTION_MASK_KEY,
+                Box(
+                    low=0.0,
+                    high=1.0,
+                    shape=(self.action_space.n,),
+                    dtype=np.float32,
+                ),
+            ),
+        ]))
+
+    def _projectile_active(self):
+        ram = self.env.unwrapped.ale.getRAM()
+        return any(
+            ram[slot] != self.INACTIVE_PROJECTILE_RAM_VALUE
+            for slot in self.PROJECTILE_RAM_SLOTS
+        )
+
+    def _action_mask(self):
+        mask = np.ones(self.action_space.n, dtype=np.float32)
+        if self._projectile_active() or not self.bullet_pool.available_bool(1):
+            mask[list(self.fire_action_indices)] = 0.0
+        return mask
+
+    def _ammo_observation(self, image):
+        denominator = max(float(self.initial_bullets), 1.0)
+        ammo_fraction = np.array(
+            [np.clip(float(self.bullet_pool.val) / denominator, 0.0, 1.0)],
+            dtype=np.float32,
+        )
+        return OrderedDict([
+            (self.IMAGE_KEY, image),
+            (self.AMMO_KEY, ammo_fraction),
+            (self.ACTION_MASK_KEY, self._action_mask()),
+        ])
+
+    def reset(self):
+        return self._ammo_observation(super().reset())
+
+    def step(self, action):
+        image, reward, done, info = super().step(action)
+        info = dict(info)
+        info["projectile_active"] = bool(self._projectile_active())
+        info["fire_actions_available"] = bool(
+            self._action_mask()[list(self.fire_action_indices)].any()
+        )
+        return self._ammo_observation(image), reward, done, info
+
+
 class BaseAtariBulletPricingEnv(BaseEnv):
     """One-ALE Atari trade game with seller pricing only.
 
@@ -477,8 +557,9 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
 
     The economic game is the same as :class:`BaseAtariBulletPricingEnv`, but
     the buyer no longer chooses an Atari action. The env loads a frozen
-    unmodified-game Space Invaders policy and uses its argmax action each step.
-    The trainable buyer/follower action is only the scalar threshold.
+    five-bullet Space Invaders policy (legacy image-only or ammo-aware) and uses
+    its argmax action each step. The trainable buyer/follower action is only the
+    scalar threshold.
     """
 
     def __init__(
@@ -493,6 +574,9 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
         self.fixed_game_action = int(fixed_game_action)
         self._frozen_game_model = None
         self._torch = None
+        self._frozen_game_ammo_aware = False
+        self._frozen_ammo_denominator = 5.0
+        self._frozen_fire_action_indices = ()
 
         self.followers_action_space = {
             self.BUYER: Box(0.0, self.price_max, shape=(1,), dtype=np.float32)
@@ -516,6 +600,7 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
         path = os.path.expanduser(checkpoint_path)
         with open(path, "rb") as handle:
             payload = pickle.load(handle)
+        metadata = payload.get("metadata", {})
         source = (
             payload.get(self.BUYER)
             or payload.get(self.SELLER)
@@ -524,11 +609,53 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
         if source is None:
             raise ValueError(f"{path} has no usable policy weights: {list(payload)}")
 
-        model = NatureCNNTorch(
-            self.buyer_image_space,
+        self._frozen_game_ammo_aware = bool(metadata.get("ammo_aware", False))
+        if self._frozen_game_ammo_aware:
+            from stackelberg_pomdp.atari_models import AmmoAwareNatureCNNTorch
+
+            model_class = AmmoAwareNatureCNNTorch
+            model_observation_space = Dict(OrderedDict([
+                ("image", self.buyer_image_space),
+                (
+                    "ammo_fraction",
+                    Box(0.0, 1.0, shape=(1,), dtype=np.float32),
+                ),
+                (
+                    "action_mask",
+                    Box(
+                        0.0,
+                        1.0,
+                        shape=(self.buyer_game_action_space.n,),
+                        dtype=np.float32,
+                    ),
+                ),
+            ]))
+            self._frozen_ammo_denominator = float(
+                metadata.get("ammo_fraction_denominator") or 5.0
+            )
+            self._frozen_fire_action_indices = tuple(
+                idx
+                for idx, meaning in enumerate(
+                    self.buyer_env.unwrapped.get_action_meanings()
+                )
+                if "FIRE" in meaning
+            )
+            model_config = {
+                "vf_share_layers": True,
+                "custom_model_config": {
+                    "ammo_hidden": int(metadata.get("ammo_hidden") or 32),
+                },
+            }
+        else:
+            model_class = NatureCNNTorch
+            model_observation_space = self.buyer_image_space
+            model_config = {"vf_share_layers": True}
+
+        model = model_class(
+            model_observation_space,
             self.buyer_game_action_space,
             self.buyer_game_action_space.n,
-            {"vf_share_layers": True},
+            model_config,
             "frozen_threshold_buyer_game",
         )
         current = model.state_dict()
@@ -555,9 +682,36 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
     def _frozen_game_action(self):
         if self._frozen_game_model is None:
             return self.fixed_game_action
+        image = self._torch.as_tensor(self._buyer_image()[None, ...])
+        if self._frozen_game_ammo_aware:
+            ram = self.buyer_env.unwrapped.ale.getRAM()
+            projectile_active = any(
+                ram[slot]
+                != AmmoAwareSinglePlayerAtariBulletEnv.INACTIVE_PROJECTILE_RAM_VALUE
+                for slot in AmmoAwareSinglePlayerAtariBulletEnv.PROJECTILE_RAM_SLOTS
+            )
+            action_mask = np.ones(
+                self.buyer_game_action_space.n, dtype=np.float32
+            )
+            if projectile_active or not self.buyer_pool.available_bool(1):
+                action_mask[list(self._frozen_fire_action_indices)] = 0.0
+            ammo_fraction = np.array([
+                np.clip(
+                    float(self.buyer_pool.val) / self._frozen_ammo_denominator,
+                    0.0,
+                    1.0,
+                )
+            ], dtype=np.float32)
+            model_observation = {
+                "image": image,
+                "ammo_fraction": self._torch.as_tensor(ammo_fraction[None, ...]),
+                "action_mask": self._torch.as_tensor(action_mask[None, ...]),
+            }
+        else:
+            model_observation = image
         with self._torch.no_grad():
             logits, _ = self._frozen_game_model(
-                {"obs": self._torch.as_tensor(self._buyer_image()[None, ...])},
+                {"obs": model_observation},
                 [],
                 None,
             )

@@ -2,7 +2,8 @@
 
 This is used when an RL process must keep running but its original W&B client
 can no longer publish.  It parses only the scientific time-series metrics and
-deliberately excludes iteration and learning rate.
+deliberately excludes iteration and constant learning rate from the time
+series.  Learning rate remains recorded once in the run configuration.
 """
 
 import argparse
@@ -46,9 +47,12 @@ def main():
     parser.add_argument("--name", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--learning-rate", type=float)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--poll-seconds", type=float, default=10.0)
     args = parser.parse_args()
+    if args.learning_rate is None:
+        args.learning_rate = 2.5e-4 if args.algorithm == "PPO" else 1e-4
 
     import wandb
 
@@ -62,6 +66,7 @@ def main():
         config={
             "seed": args.seed,
             "algorithm": args.algorithm,
+            "learning_rate": args.learning_rate,
             "checkpoint_path": str(Path(args.checkpoint).expanduser().resolve()),
             "initial_bullets": 5,
             "no_replenishment": True,

@@ -1,14 +1,16 @@
 """Train and evaluate a scarce-bullet Space Invaders gameplay policy.
 
-The policy sees only four stacked Atari frames and selects only a gameplay
-action.  Every episode starts with exactly five bullets and has no mechanism,
-seller, pricing action, threshold action, or bullet replenishment.
+Every episode starts with exactly five bullets and has no mechanism, seller,
+pricing action, threshold action, or bullet replenishment.  The baseline sees
+only four stacked Atari frames.  The optional ammo-aware variant additionally
+receives normalized remaining ammo and masks FIRE while a shot is active.
 """
 
 import argparse
 import json
 import os
 import pickle
+import shutil
 import time
 from pathlib import Path
 
@@ -20,12 +22,18 @@ from ray.rllib.algorithms.ppo import PPO
 from ray.rllib.models import ModelCatalog
 from ray.tune.registry import register_env
 
-from stackelberg_pomdp.gym_envs.envs.atari_envs import SinglePlayerAtariBulletEnv
+from stackelberg_pomdp.atari_models import AmmoAwareNatureCNNTorch
+from stackelberg_pomdp.gym_envs.envs.atari_envs import (
+    AmmoAwareSinglePlayerAtariBulletEnv,
+    SinglePlayerAtariBulletEnv,
+)
 from stackerlberg.train.atari_models import NatureCNNTorch
 
 
 ENV_NAME = "stackpomdp_space_invaders_five_bullets"
 MODEL_NAME = "stackpomdp_nature_cnn"
+AMMO_AWARE_ENV_NAME = "stackpomdp_space_invaders_five_bullets_ammo_aware"
+AMMO_AWARE_MODEL_NAME = "stackpomdp_ammo_aware_nature_cnn"
 WANDB_PROJECT = "StackPOMDP"
 INITIAL_BULLETS = 5
 
@@ -57,9 +65,25 @@ def make_env_config(seed, max_steps=None):
     }
 
 
+def _environment_class(args):
+    return (
+        AmmoAwareSinglePlayerAtariBulletEnv
+        if args.ammo_aware
+        else SinglePlayerAtariBulletEnv
+    )
+
+
+def _environment_name(args):
+    return AMMO_AWARE_ENV_NAME if args.ammo_aware else ENV_NAME
+
+
+def _model_name(args):
+    return AMMO_AWARE_MODEL_NAME if args.ammo_aware else MODEL_NAME
+
+
 def build_config(args):
     config = {
-        "env": ENV_NAME,
+        "env": _environment_name(args),
         "env_config": make_env_config(args.seed, args.max_steps),
         "framework": "torch",
         "preprocessor_pref": "rllib",
@@ -77,8 +101,11 @@ def build_config(args):
         # skipping.  RLlib must not clip the accumulated skip-window reward again.
         "clip_rewards": False,
         "model": {
-            "custom_model": MODEL_NAME,
+            "custom_model": _model_name(args),
             "vf_share_layers": True,
+            "custom_model_config": {
+                "ammo_hidden": args.ammo_hidden,
+            } if args.ammo_aware else {},
         },
         "seed": args.seed,
     }
@@ -124,6 +151,11 @@ def save_checkpoint(trainer, path, args, iteration, timesteps):
             "clip_game_rewards": True,
             "iteration": iteration,
             "total_timesteps": timesteps,
+            "ammo_aware": bool(args.ammo_aware),
+            "ammo_fraction_denominator": INITIAL_BULLETS if args.ammo_aware else None,
+            "ammo_hidden": args.ammo_hidden if args.ammo_aware else None,
+            "projectile_fire_mask": bool(args.ammo_aware),
+            "archive_checkpoints": bool(args.archive_checkpoints),
         },
     }
     with path.open("wb") as handle:
@@ -134,7 +166,7 @@ def save_checkpoint(trainer, path, args, iteration, timesteps):
 def evaluate_argmax(trainer, args):
     episodes = []
     for episode_idx in range(args.eval_episodes):
-        env = SinglePlayerAtariBulletEnv(
+        env = _environment_class(args)(
             make_env_config(args.eval_seed + episode_idx * 1009, args.max_steps)
         )
         observation = env.reset()
@@ -165,6 +197,8 @@ def evaluate_argmax(trainer, args):
         "evaluator": "deterministic_argmax",
         "initial_bullets": INITIAL_BULLETS,
         "no_replenishment": True,
+        "ammo_aware": bool(args.ammo_aware),
+        "projectile_fire_mask": bool(args.ammo_aware),
         **{
             f"mean_{key}": float(np.mean([episode[key] for episode in episodes]))
             for key in keys
@@ -185,7 +219,10 @@ def _init_wandb(args, checkpoint_path):
     return wandb.init(
         project=WANDB_PROJECT,
         entity=args.wandb_entity,
-        name=args.wandb_name or f"five_bullet_{args.algorithm.lower()}_seed{args.seed}",
+        name=args.wandb_name or (
+            f"five_bullet_{args.algorithm.lower()}"
+            f"{'_ammo_mask' if args.ammo_aware else ''}_seed{args.seed}"
+        ),
         config={
             "seed": args.seed,
             "algorithm": args.algorithm,
@@ -201,6 +238,11 @@ def _init_wandb(args, checkpoint_path):
             "frame_skip": 4,
             "frame_stack": 4,
             "evaluation_policy": "deterministic_argmax",
+            "ammo_aware": bool(args.ammo_aware),
+            "ammo_fraction_denominator": INITIAL_BULLETS if args.ammo_aware else None,
+            "ammo_hidden": args.ammo_hidden if args.ammo_aware else None,
+            "projectile_fire_mask": bool(args.ammo_aware),
+            "archive_checkpoints": bool(args.archive_checkpoints),
         },
     )
 
@@ -217,6 +259,11 @@ def parse_args():
     )
     parser.add_argument("--checkpoint")
     parser.add_argument("--checkpoint-every", type=int, default=25)
+    parser.add_argument(
+        "--archive-checkpoints",
+        action="store_true",
+        help="Keep a step-suffixed copy of each periodic checkpoint.",
+    )
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--eval-seed", type=int, default=100_001)
     parser.add_argument("--max-steps", type=int)
@@ -233,6 +280,15 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--grad-clip", type=float, default=0.5)
     parser.add_argument("--vf-loss-coeff", type=float, default=0.25)
+    parser.add_argument(
+        "--ammo-aware",
+        action="store_true",
+        help=(
+            "Expose bullets_remaining/5 through a learned feature projection "
+            "and mask FIRE actions while a projectile is active."
+        ),
+    )
+    parser.add_argument("--ammo-hidden", type=int, default=32)
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--wandb-entity", default="glcbrero")
     parser.add_argument("--wandb-name")
@@ -256,18 +312,25 @@ def main():
         raise ValueError("--iterations must be positive")
     if args.eval_episodes <= 0:
         raise ValueError("--eval-episodes must be positive")
+    if args.ammo_hidden <= 0:
+        raise ValueError("--ammo-hidden must be positive")
 
     checkpoint_path = Path(
         args.checkpoint
         or (
             "replication/atari/checkpoints/"
-            f"space_invaders_5bullets_{args.algorithm.lower()}_seed{args.seed}.pkl"
+            f"space_invaders_5bullets_{args.algorithm.lower()}"
+            f"{'_ammo_aware' if args.ammo_aware else ''}_seed{args.seed}.pkl"
         )
     ).expanduser().resolve()
     os.environ.setdefault("WANDB_START_METHOD", "thread")
 
-    register_env(ENV_NAME, lambda config: SinglePlayerAtariBulletEnv(config))
+    environment_class = _environment_class(args)
+    register_env(_environment_name(args), lambda config: environment_class(config))
     ModelCatalog.register_custom_model(MODEL_NAME, NatureCNNTorch)
+    ModelCatalog.register_custom_model(
+        AMMO_AWARE_MODEL_NAME, AmmoAwareNatureCNNTorch
+    )
     ray.init(
         local_mode=args.ray_local_mode,
         ignore_reinit_error=True,
@@ -319,6 +382,12 @@ def main():
             if iteration % args.checkpoint_every == 0 or stop:
                 saved = save_checkpoint(trainer, checkpoint_path, args, iteration, timesteps)
                 print(f"checkpoint={saved}", flush=True)
+                if args.archive_checkpoints:
+                    archive = saved.with_name(
+                        f"{saved.stem}_step{timesteps}{saved.suffix}"
+                    )
+                    shutil.copy2(saved, archive)
+                    print(f"checkpoint_archive={archive}", flush=True)
             if stop:
                 break
 

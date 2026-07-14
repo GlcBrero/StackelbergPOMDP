@@ -1,0 +1,38 @@
+{
+  "checkpoint_total_timesteps": 500000,
+  "summary": {
+    "episodes": 20,
+    "evaluator": "deterministic_argmax",
+    "initial_bullets": 5,
+    "mean_episode_length": 294.35,
+    "mean_final_ammo": 0.0,
+    "mean_reward": 3.2,
+    "mean_reward_per_bullet": 0.64,
+    "mean_shots_fired": 5.0,
+    "no_replenishment": true,
+    "positive_reward_episodes": 20,
+    "used_all_bullets_episodes": 20
+  },
+  "episode_results": [
+    {"episode": 0, "reward": 4.0, "length": 517, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 1, "reward": 3.0, "length": 203, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 2, "reward": 3.0, "length": 200, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 3, "reward": 3.0, "length": 204, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 4, "reward": 3.0, "length": 199, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 5, "reward": 3.0, "length": 201, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 6, "reward": 3.0, "length": 205, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 7, "reward": 4.0, "length": 514, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 8, "reward": 3.0, "length": 199, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 9, "reward": 4.0, "length": 518, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 10, "reward": 3.0, "length": 153, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 11, "reward": 3.0, "length": 150, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 12, "reward": 4.0, "length": 519, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 13, "reward": 3.0, "length": 200, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 14, "reward": 4.0, "length": 514, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 15, "reward": 3.0, "length": 199, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6},
+    {"episode": 16, "reward": 2.0, "length": 263, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.4},
+    {"episode": 17, "reward": 2.0, "length": 259, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.4},
+    {"episode": 18, "reward": 4.0, "length": 517, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.8},
+    {"episode": 19, "reward": 3.0, "length": 153, "shots_fired": 5, "final_ammo": 0.0, "reward_per_bullet": 0.6}
+  ]
+}

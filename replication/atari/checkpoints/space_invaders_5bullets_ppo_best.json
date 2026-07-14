@@ -12,5 +12,7 @@
   "mean_shots_fired": 5.0,
   "no_replenishment": true,
   "seed": 1,
-  "selection_rule": "highest deterministic 20-episode mean reward; shortest mean episode length breaks ties"
+  "selection_rule": "highest deterministic 20-episode mean reward; shortest mean episode length breaks ties",
+  "tied_backup_checkpoint": "space_invaders_5bullets_ppo_seed1_500k_eval3.2.pkl",
+  "tied_backup_evaluation": "space_invaders_5bullets_ppo_seed1_500k_eval3.2.evaluation.json"
 }

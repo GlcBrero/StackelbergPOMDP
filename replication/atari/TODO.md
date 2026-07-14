@@ -22,6 +22,20 @@ resource chain used by the new trade environment. It writes the frozen buyer
 checkpoint and deterministic 20-episode evaluation under
 `replication/atari/checkpoints/` and logs to W&B project `StackPOMDP`.
 
+Evaluate any exported PPO/A3C checkpoint without starting Ray:
+
+```bash
+PYTHONPATH=.:../StackeRLberg \
+  python -m replication.atari.evaluate_five_bullet_checkpoint \
+  --checkpoint replication/atari/checkpoints/<checkpoint>.pkl \
+  --episodes 20
+```
+
+The evaluator uses the fixed fresh-seed suite, deterministic argmax actions,
+the identical five-bullet preprocessing chain, and atomically writes a JSON
+record beside the checkpoint. The `*_best.json` manifests identify protected
+PPO and A3C deployment checkpoints independently of volatile latest weights.
+
 TODO:
 
 - Add the exact StackeRLberg commands for stage-1 meta-follower training and
