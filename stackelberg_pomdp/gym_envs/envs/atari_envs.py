@@ -720,3 +720,283 @@ class BaseFrozenGameplayAtariBulletPricingEnv(BaseAtariBulletPricingEnv):
     def _extract_buyer_action(self, action):
         threshold = float(np.asarray(action).reshape(-1)[0])
         return self._frozen_game_action(), threshold
+
+
+class FrozenGameplayBuyerThresholdEnv(gym.Env):
+    """Single-agent E1 environment for the buyer's economic threshold head.
+
+    A non-Atari seller supplies exogenous prices.  The wrapped
+    :class:`BaseFrozenGameplayAtariBulletPricingEnv` executes deterministic
+    argmax game actions from the protected E0 checkpoint.  The only action
+    exposed here is the buyer's scalar willingness-to-pay threshold.
+
+    The environment is event-driven: it returns one RL transition per genuine
+    trade opportunity.  After the fifth opportunity, frozen gameplay is rolled
+    forward internally until the episodic-life episode ends.  This prevents PPO
+    from fitting economically meaningless threshold actions after trading has
+    closed while preserving the exact undiscounted episode return.
+
+    The observation is ``[price, trade_flag, remaining_fraction,
+    ammo_fraction]``.  Fractions use the five-opportunity/five-bullet capacity,
+    so they retain the complete discrete state while keeping all inputs on a
+    comparable numerical scale.
+    """
+
+    metadata = {"render.modes": ["human", "rgb_array"]}
+    OBSERVATION_FIELDS = (
+        "price",
+        "trade_opportunity",
+        "remaining_opportunities_fraction",
+        "buyer_ammo_fraction",
+    )
+
+    def __init__(self, config=None, **kwargs):
+        super().__init__()
+        worker_index = int(getattr(config, "worker_index", 0))
+        vector_index = int(getattr(config, "vector_index", 0))
+        values = dict(config or {})
+        values.update(kwargs)
+
+        base_seed = int(values.pop("seed", 1))
+        self.seed_value = base_seed + 10_000 * worker_index + vector_index
+        self.price_mode = str(values.pop("price_mode", "uniform"))
+        self.price_min = float(values.pop("price_min", 0.0))
+        self.price_max = float(values.pop("price_max", 1.0))
+        self.fixed_price = float(values.pop("fixed_price", 0.5))
+        self.offer_chances = int(values.pop("offer_chances", 5))
+        self.max_replenish = int(values.pop("max_replenish", 5))
+        self.rollout_after_last_offer = bool(
+            values.pop("rollout_after_last_offer", True)
+        )
+        game_checkpoint = values.pop("game_checkpoint", None)
+        if game_checkpoint is None:
+            raise ValueError("game_checkpoint is required")
+
+        if self.price_mode not in {"fixed", "uniform"}:
+            raise ValueError("price_mode must be 'fixed' or 'uniform'")
+        if not 0.0 <= self.price_min <= self.price_max:
+            raise ValueError("prices must satisfy 0 <= price_min <= price_max")
+        if not self.price_min <= self.fixed_price <= self.price_max:
+            raise ValueError("fixed_price must lie in [price_min, price_max]")
+        if self.offer_chances <= 0:
+            raise ValueError("offer_chances must be positive")
+        if self.max_replenish <= 0:
+            raise ValueError("max_replenish must be positive")
+
+        base_options = {
+            "price_max": self.price_max,
+            "offer_chances": self.offer_chances,
+            "buyer_initial_bullets": int(values.pop("buyer_initial_bullets", 0)),
+            "max_replenish": self.max_replenish,
+            "buyer_game_reward_scale": float(
+                values.pop("buyer_game_reward_scale", 1.0)
+            ),
+            "payment_penalty_lambda": float(
+                values.pop("payment_penalty_lambda", 1.0)
+            ),
+            "max_steps": values.pop("max_steps", 300),
+            "noop_max": int(values.pop("noop_max", 30)),
+            "frame_skip": int(values.pop("frame_skip", 4)),
+            "frame_stack": int(values.pop("frame_stack", 4)),
+            "episodic_life": bool(values.pop("episodic_life", True)),
+            "clip_game_rewards": bool(values.pop("clip_game_rewards", True)),
+            "seed": self.seed_value,
+            "game_checkpoint": game_checkpoint,
+        }
+        if values:
+            raise TypeError(f"unexpected environment options: {sorted(values)}")
+        if base_options["buyer_initial_bullets"] != 0:
+            raise ValueError("E1 requires buyer_initial_bullets=0")
+        if self.max_replenish > self.offer_chances:
+            raise ValueError("max_replenish cannot exceed offer_chances in E1")
+
+        self.base = BaseFrozenGameplayAtariBulletPricingEnv(**base_options)
+        self.action_space = Box(
+            0.0, self.price_max, shape=(1,), dtype=np.float32
+        )
+        self.observation_space = Box(
+            low=np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([self.price_max, 1.0, 1.0, 1.0], dtype=np.float32),
+            dtype=np.float32,
+        )
+        self._price_rng = np.random.default_rng(self.seed_value + 811)
+        self.current_offer_price = 0.0
+        self._done = False
+        self._reset_episode_metrics()
+
+    def _reset_episode_metrics(self):
+        self.episode_net_reward = 0.0
+        self.episode_game_reward = 0.0
+        self.episode_payments = 0.0
+        self.episode_decisions = 0
+        self.episode_game_steps = 0
+        self.episode_trade_opportunities = 0
+        self.episode_purchases = 0
+        self.episode_shots_fired = 0
+        self.offered_prices = []
+        self.thresholds = []
+        self.accepted_prices = []
+
+    def _sample_price(self):
+        if self.price_mode == "fixed":
+            return self.fixed_price
+        return float(self._price_rng.uniform(self.price_min, self.price_max))
+
+    def _has_trade_opportunity(self):
+        return bool(
+            self.base._offer_events_used < self.offer_chances
+            and self.base._accepted_trades < self.max_replenish
+            and not self._done
+        )
+
+    def _announce_next_price(self):
+        self.base._trade_now = self._has_trade_opportunity()
+        self.current_offer_price = (
+            self._sample_price() if self.base._trade_now else 0.0
+        )
+        self.base.current_price = self.current_offer_price
+
+    def _economic_observation(self):
+        remaining = max(self.offer_chances - self.base._offer_events_used, 0)
+        return np.array(
+            [
+                self.current_offer_price if self.base._trade_now else 0.0,
+                float(bool(self.base._trade_now)),
+                float(remaining) / float(self.offer_chances),
+                float(self.base.buyer_pool.val) / float(self.max_replenish),
+            ],
+            dtype=np.float32,
+        )
+
+    @staticmethod
+    def _shots_this_step(base_info):
+        buyer_info = dict(base_info.get("buyer_info", {}))
+        return int(
+            buyer_info.get(
+                "shots_fired_this_step",
+                int(bool(buyer_info.get("shot_did_fire", False))),
+            )
+        )
+
+    def _record_base_step(self, rewards, base_info, *, economic_decision):
+        buyer_reward = float(rewards.get(self.base.BUYER, 0.0))
+        game_reward = float(base_info.get("buyer_game_reward_unscaled", 0.0))
+        payment = float(base_info.get("buyer_paid_this_step", 0.0))
+        self.episode_net_reward += buyer_reward
+        self.episode_game_reward += game_reward
+        self.episode_payments += payment
+        self.episode_game_steps += 1
+        self.episode_shots_fired += self._shots_this_step(base_info)
+        if economic_decision:
+            self.episode_decisions += 1
+            self.episode_trade_opportunities += int(
+                bool(base_info.get("trade_event", False))
+            )
+            traded = bool(base_info.get("trade_this_step", False))
+            self.episode_purchases += int(traded)
+            offered_price = float(base_info.get("price_offered", 0.0))
+            threshold = float(base_info.get("threshold", 0.0))
+            self.offered_prices.append(offered_price)
+            self.thresholds.append(threshold)
+            if traded:
+                self.accepted_prices.append(offered_price)
+        return buyer_reward
+
+    def _episode_info(self, base_info, *, tail_game_steps):
+        purchases = self.episode_purchases
+        shots = self.episode_shots_fired
+        return {
+            **dict(base_info),
+            "episode_net_reward": self.episode_net_reward,
+            "episode_game_reward": self.episode_game_reward,
+            "episode_payments": self.episode_payments,
+            "economic_decisions": self.episode_decisions,
+            "game_steps": self.episode_game_steps,
+            "trade_opportunities": self.episode_trade_opportunities,
+            "purchases": purchases,
+            "shots_fired": shots,
+            "final_ammo": float(self.base.buyer_pool.val),
+            "acceptance_rate": (
+                purchases / self.episode_trade_opportunities
+                if self.episode_trade_opportunities
+                else 0.0
+            ),
+            "fired_fraction_of_purchases": shots / purchases if purchases else 0.0,
+            "reward_per_purchased_bullet": (
+                self.episode_game_reward / purchases if purchases else 0.0
+            ),
+            "tail_game_steps_this_transition": int(tail_game_steps),
+            "offered_prices": tuple(self.offered_prices),
+            "thresholds": tuple(self.thresholds),
+            "accepted_prices": tuple(self.accepted_prices),
+        }
+
+    def reset(self):
+        self._done = False
+        self._reset_episode_metrics()
+        self.base.reset()
+        self._announce_next_price()
+        return self._economic_observation()
+
+    def step(self, threshold_action):
+        if self._done:
+            raise RuntimeError("step() called after episode termination")
+        if not self.base._trade_now:
+            raise RuntimeError("E1 exposes actions only at trade opportunities")
+
+        threshold = float(
+            np.clip(
+                np.asarray(threshold_action).reshape(-1)[0],
+                0.0,
+                self.price_max,
+            )
+        )
+        price = self.current_offer_price
+        _, rewards, done, base_info = self.base.step(
+            {
+                self.base.SELLER: np.array([price], dtype=np.float32),
+                self.base.BUYER: np.array([threshold], dtype=np.float32),
+            }
+        )
+        transition_reward = self._record_base_step(
+            rewards, base_info, economic_decision=True
+        )
+        self._done = bool(done)
+        tail_game_steps = 0
+
+        if (
+            not self._done
+            and not self._has_trade_opportunity()
+            and self.rollout_after_last_offer
+        ):
+            self.base._trade_now = False
+            self.base.current_price = 0.0
+            while not self._done:
+                _, tail_rewards, tail_done, tail_info = self.base.step(
+                    {
+                        self.base.SELLER: np.array([0.0], dtype=np.float32),
+                        self.base.BUYER: np.array([0.0], dtype=np.float32),
+                    }
+                )
+                transition_reward += self._record_base_step(
+                    tail_rewards, tail_info, economic_decision=False
+                )
+                base_info = tail_info
+                self._done = bool(tail_done)
+                tail_game_steps += 1
+
+        if not self._done:
+            self._announce_next_price()
+        else:
+            self.base._trade_now = False
+            self.base.current_price = 0.0
+            self.current_offer_price = 0.0
+
+        info = self._episode_info(base_info, tail_game_steps=tail_game_steps)
+        return self._economic_observation(), transition_reward, self._done, info
+
+    def render(self, mode="rgb_array"):
+        return self.base.render(mode=mode)
+
+    def close(self):
+        self.base.close()
