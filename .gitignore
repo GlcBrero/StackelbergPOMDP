@@ -13,3 +13,6 @@ wandb/
 
 *.zip
 *.pkl
+
+# Atari ROMs are required locally but cannot be distributed with the code.
+stackelberg_pomdp/atari/roms/*.bin

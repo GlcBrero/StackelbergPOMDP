@@ -1,7 +1,129 @@
 # Atari Replication
 
-This directory contains the staged Space Invaders replication. The protected
-E0 gameplay checkpoint is selected by
+This directory contains the staged Space Invaders replication. The current
+implementation is the native Stable-Baselines3 pipeline described below. The
+older RLlib experiments are retained under **Legacy RLlib reference** so their
+checkpoints and completed results remain reproducible.
+
+## Native SB3 shared pipeline (current)
+
+One policy architecture and one environment interface are used in every stage:
+
+- a Nature CNN and ammo/market features feed a categorical Atari-action head;
+- a bounded Beta head outputs scalar willingness to pay;
+- offered price is excluded structurally from both actor heads;
+- one price-informed critic receives the shared features plus price;
+- the environment buys exactly when `price <= threshold`;
+- FIRE actions are masked while an ALE projectile is active;
+- E0, free trade, E1, and joint fine-tuning differ only in environment
+  configuration and which actor parameters receive gradients.
+
+The observation keys are identical throughout: `image`, `ammo_fraction`,
+`projectile_active`, `action_mask`, `offer_active`,
+`opportunities_remaining`, and `critic:price`. The `critic:` prefix documents
+and enforces that price is not an actor input.
+
+Set the ROM path and ignore incompatible user-site packages before invoking
+SB3 in the project conda environment:
+
+```bash
+export PYTHONNOUSERSITE=1
+export STACKPOMDP_SPACE_INVADERS_ROM="$PWD/../StackeRLberg/stackerlberg/envs/roms/space_invaders.bin"
+export PYTHONPATH=.
+```
+
+### E0: five initial bullets
+
+```bash
+python -m replication.atari.train_price_aware_atari_sb3 \
+  --stage gameplay \
+  --seed 1 \
+  --timesteps 10000000 \
+  --num-envs 4 \
+  --checkpoint replication/atari/checkpoints/sb3/space_invaders_e0_ppo_seed1_10m.zip \
+  --wandb-project StackPOMDP \
+  --wandb-group atari_price_aware_sb3 \
+  --wandb-job-type atari_sb3_e0_pretraining
+```
+
+The active local run is
+[`sb3_e0_five_bullet_ppo_seed1_10m_local`](https://wandb.ai/glcbrero/StackPOMDP/runs/cx4srrh4).
+It uses five initial bullets, no seller, no offers, no replenishment, clipped
+game rewards, deterministic 20-episode evaluation every 100k steps, and saves
+both latest and deterministic-best checkpoints. The E0 pass gate is median
+reward 5, mean reward at least 4.8, and all five bullets fired in at least 95%
+of evaluation episodes.
+
+Standalone evaluation:
+
+```bash
+python -m replication.atari.evaluate_price_aware_atari_sb3 \
+  --checkpoint replication/atari/checkpoints/sb3/space_invaders_e0_ppo_seed1_10m_best.zip \
+  --stage gameplay \
+  --episodes 20
+```
+
+### Free-trade bridge
+
+The optional short bridge starts with zero ammo and presents five zero-price
+offers. The threshold is still frozen; zero-price offers are therefore always
+accepted. Gameplay remains trainable so it can adapt from five bullets present
+at reset to bullets arriving through the final trade interface. The current E0
+best checkpoint already passes this bridge without training: all 20 paired
+episodes bought five, fired five, scored five, and paid zero. The primary
+pipeline therefore skips bridge optimization and initializes E1 directly from
+E0; the command below remains available if a future E0 checkpoint fails this
+gate.
+
+```bash
+python -m replication.atari.train_price_aware_atari_sb3 \
+  --stage free_trade \
+  --resume replication/atari/checkpoints/sb3/space_invaders_e0_ppo_seed1_10m_best.zip \
+  --seed 1 \
+  --timesteps 500000 \
+  --checkpoint replication/atari/checkpoints/sb3/space_invaders_free_trade_ppo_seed1_500k.zip
+```
+
+### E1: frozen gameplay, trainable WTP head
+
+E1 starts with zero ammo, draws five offers from `Uniform(0, 1)`, freezes the
+CNN/gameplay head, selects Atari actions by deterministic argmax, and trains
+only the threshold head plus the single price-informed critic. PPO uses
+undiscounted returns (`gamma=1`, `gae_lambda=1`).
+
+```bash
+python -m replication.atari.train_price_aware_atari_sb3 \
+  --stage priced \
+  --resume replication/atari/checkpoints/sb3/space_invaders_e0_ppo_seed1_10m_best.zip \
+  --seed 1 \
+  --timesteps 1000000 \
+  --learning-rate 5e-5 \
+  --entropy-coeff 0 \
+  --checkpoint replication/atari/checkpoints/sb3/space_invaders_e1_ppo_seed1_1m.zip
+```
+
+The training callback selects E1 checkpoints on economic performance rather
+than raw game score. It evaluates paired seeds on fixed prices `0.0, 0.1, ...,
+1.0`, separately evaluates random prices, writes JSON and fixed-price CSV
+artifacts, and logs the table's scalar cells to W&B. A standalone full
+evaluation uses 20 episodes per fixed price and 100 random-price episodes:
+
+```bash
+python -m replication.atari.evaluate_price_aware_atari_sb3 \
+  --checkpoint replication/atari/checkpoints/sb3/space_invaders_e1_ppo_seed1_1m_best.zip \
+  --stage priced \
+  --episodes-per-price 20 \
+  --random-episodes 100
+```
+
+Joint economic/gameplay fine-tuning remains available with `--stage joint`,
+but it is run only after frozen-gameplay E1 passes. It trains both actor heads
+with the same observation/action interface and retains the price-informed
+critic.
+
+## Legacy RLlib reference
+
+The previously protected RLlib E0 gameplay checkpoint is selected by
 `checkpoints/space_invaders_5bullets_a3c_best.json`.
 
 ## E0: five-bullet gameplay

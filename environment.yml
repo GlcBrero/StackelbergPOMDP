@@ -10,6 +10,8 @@ dependencies:
       - numpy==1.23.0
       - cloudpickle==1.6.0
       - gym==0.21.0
+      - multi-agent-ale-py==0.1.10
+      - opencv-python==4.9.0.80
       - torch==2.0.0
       - stable-baselines3==1.8.0
       - importlib-metadata==4.13.0
