@@ -46,13 +46,17 @@ python -m replication.atari.train_price_aware_atari_sb3 \
   --wandb-job-type atari_sb3_e0_pretraining
 ```
 
-The active local run is
+The completed local run is
 [`sb3_e0_five_bullet_ppo_seed1_10m_local`](https://wandb.ai/glcbrero/StackPOMDP/runs/cx4srrh4).
 It uses five initial bullets, no seller, no offers, no replenishment, clipped
 game rewards, deterministic 20-episode evaluation every 100k steps, and saves
 both latest and deterministic-best checkpoints. The E0 pass gate is median
 reward 5, mean reward at least 4.8, and all five bullets fired in at least 95%
-of evaluation episodes.
+of evaluation episodes. Training completed at 10,000,384 steps. Both the final
+and selected-best 20-episode evaluations have mean/median reward `5.0`, mean
+shots `5.0`, all-five-shots rate `1.0`, and mean final ammo `0.0`. The selected
+checkpoint is
+`checkpoints/sb3/space_invaders_e0_ppo_seed1_10m_best.zip`.
 
 Standalone evaluation:
 
@@ -116,10 +120,48 @@ python -m replication.atari.evaluate_price_aware_atari_sb3 \
   --random-episodes 100
 ```
 
+The seed-1 E1 run completed one million new steps and is recorded at
+[`sb3_e1_buyer_wtp_seed1_1m_local`](https://wandb.ai/glcbrero/StackPOMDP/runs/nbsoebx0).
+The selected checkpoint occurred after 900,000 E1 steps (2,600,000 cumulative
+SB3 steps) with deterministic WTP approximately `0.90855`. The canonical zip
+was rebuilt with a structurally stable optimizer parameter group and its normal
+SB3 reload was verified:
+
+```text
+replication/atari/checkpoints/sb3/space_invaders_e1_ppo_seed1_1m_best.zip
+```
+
+The full paired fixed-price evaluation uses 20 episodes per row:
+
+| Price | Purchases | Shots | Game reward | Payments | Net reward |
+|---:|---:|---:|---:|---:|---:|
+| 0.0 | 5.0 | 5.0 | 5.0 | 0.0 | 5.0 |
+| 0.1 | 5.0 | 5.0 | 5.0 | 0.5 | 4.5 |
+| 0.2 | 5.0 | 5.0 | 5.0 | 1.0 | 4.0 |
+| 0.3 | 5.0 | 5.0 | 5.0 | 1.5 | 3.5 |
+| 0.4 | 5.0 | 5.0 | 5.0 | 2.0 | 3.0 |
+| 0.5 | 5.0 | 5.0 | 5.0 | 2.5 | 2.5 |
+| 0.6 | 5.0 | 5.0 | 5.0 | 3.0 | 2.0 |
+| 0.7 | 5.0 | 5.0 | 5.0 | 3.5 | 1.5 |
+| 0.8 | 5.0 | 5.0 | 5.0 | 4.0 | 1.0 |
+| 0.9 | 5.0 | 5.0 | 5.0 | 4.5 | 0.5 |
+| 1.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+
+Across 100 separate Uniform-price episodes, mean net reward is `2.4261`, mean
+game reward/purchases/shots are all `4.49`, mean payments are `2.0639`, mean
+final ammo is `0`, every purchased bullet is fired, every episode has positive
+net reward, and reward/payment accounting error is exactly zero. The fixed and
+random pass conditions both pass. Full artifacts are:
+
+- `checkpoints/sb3/space_invaders_e1_ppo_seed1_1m_best.full_evaluation.json`
+- `checkpoints/sb3/space_invaders_e1_ppo_seed1_1m_best.full_fixed_prices.csv`
+- W&B artifact `sb3-atari-e1-selected-seed1`
+
 Joint economic/gameplay fine-tuning remains available with `--stage joint`,
 but it is run only after frozen-gameplay E1 passes. It trains both actor heads
 with the same observation/action interface and retains the price-informed
-critic.
+critic. Because frozen-gameplay E1 passed cleanly, no joint fine-tuning run was
+started.
 
 ## Legacy RLlib reference
 

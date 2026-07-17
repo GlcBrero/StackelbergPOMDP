@@ -217,6 +217,10 @@ class AtariTrainingCallback(BaseCallback):
         self.recent = defaultdict(lambda: deque(maxlen=100))
         self.best_key = None
         self.started = time.time()
+        self.starting_timesteps = None
+
+    def _on_training_start(self):
+        self.starting_timesteps = int(self.num_timesteps)
 
     def _record_episodes(self):
         for info in self.locals.get("infos", []):
@@ -246,9 +250,16 @@ class AtariTrainingCallback(BaseCallback):
             if values
         }
         elapsed = max(time.time() - self.started, 1.0e-9)
+        starting_timesteps = (
+            int(self.starting_timesteps)
+            if self.starting_timesteps is not None
+            else 0
+        )
         metrics.update({
             "total_timesteps": int(self.num_timesteps),
-            "train/steps_per_second": float(self.num_timesteps / elapsed),
+            "train/steps_per_second": float(
+                max(int(self.num_timesteps) - starting_timesteps, 0) / elapsed
+            ),
             "train/learning_rate": float(
                 self.model.policy.optimizer.param_groups[0]["lr"]
             ),
