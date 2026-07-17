@@ -374,6 +374,8 @@ def build_or_load_model(args, vec_env):
             max_grad_norm=args.max_grad_norm,
         )
         model.policy.set_stage(args.stage, rebuild_optimizer=True)
+        model.policy_kwargs = dict(model.policy_kwargs)
+        model.policy_kwargs["stage"] = args.stage
         for parameter_group in model.policy.optimizer.param_groups:
             parameter_group["lr"] = args.learning_rate
         return model

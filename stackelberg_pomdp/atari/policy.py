@@ -284,7 +284,11 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
         if rebuild_optimizer:
             learning_rate = self.optimizer.param_groups[0]["lr"]
             self.optimizer = self.optimizer_class(
-                (parameter for parameter in self.parameters() if parameter.requires_grad),
+                # Keep one stable parameter group across curriculum stages so
+                # SB3 checkpoints can reconstruct and reload optimizer state.
+                # Frozen tensors have no gradients and therefore remain
+                # unchanged even though they are present in the optimizer.
+                self.parameters(),
                 lr=learning_rate,
                 **self.optimizer_kwargs,
             )

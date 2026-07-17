@@ -223,5 +223,11 @@ def test_resume_rebuilds_rollout_buffer_with_undiscounted_e1_parameters():
                 parameter.requires_grad
                 for parameter in resumed.policy.threshold_net.parameters()
             )
+            repaired_checkpoint = Path(directory) / "priced.zip"
+            resumed.save(repaired_checkpoint)
+            reloaded = PPO.load(repaired_checkpoint, device="cpu")
+            assert reloaded.policy.stage == "priced"
+            assert reloaded.rollout_buffer.gamma == 1.0
+            assert reloaded.rollout_buffer.gae_lambda == 1.0
         finally:
             vec_env.close()
