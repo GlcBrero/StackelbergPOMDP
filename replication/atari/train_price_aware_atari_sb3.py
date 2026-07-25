@@ -19,6 +19,7 @@ import tempfile
 import time
 
 import numpy as np
+import torch as th
 
 
 # The project environment deliberately ignores broken user-site packages.  Set
@@ -41,6 +42,9 @@ from stackelberg_pomdp.atari.evaluation import (
     evaluate_gameplay as evaluate_gameplay_policy,
 )
 from stackelberg_pomdp.atari.policy import PriceAwareAtariPolicy
+from replication.atari.evaluate_price_aware_atari_sb3 import (
+    write_trade_events_csv,
+)
 
 
 WANDB_PROJECT = "StackPOMDP"
@@ -51,6 +55,7 @@ JOB_TYPES = {
     "priced": "atari_sb3_e1_threshold",
     "joint": "atari_sb3_joint_finetuning",
 }
+STOCHASTIC_E1_JOB_TYPE = "atari_sb3_e1_stochastic_timing"
 
 
 def checkpoint_with_zip(path):
@@ -74,6 +79,9 @@ def env_config(args, *, seed, stage=None, fixed_price=None):
         price_min=args.price_min,
         price_max=args.price_max,
         fixed_price=(args.fixed_price if fixed_price is None else fixed_price),
+        offer_timing=args.offer_timing,
+        offer_probability=args.offer_probability,
+        actor_economic_context=args.actor_economic_context,
         noop_max=30,
         frame_skip=4,
         frame_stack=4,
@@ -136,18 +144,37 @@ def evaluation_metrics(result, *, total_timesteps):
             "mean_game_reward",
             "mean_payments",
             "mean_purchases",
+            "mean_trade_opportunities",
+            "aggregate_acceptance_rate",
             "mean_shots_fired",
             "aggregate_fired_fraction_of_purchases",
             "mean_threshold",
             "profitable_price_passed",
+            "mean_offer_step",
+            "mean_purchase_step",
+            "mean_offer_normalized_timestep",
+            "mean_purchase_normalized_timestep",
+            "late_rejection_rate",
         ):
             if field in row:
                 metrics[f"evaluation/fixed_{label}/{field}"] = row[field]
+        for time_bin in ("early", "middle", "late"):
+            for field in (
+                    "offer_count",
+                    "purchase_count",
+                    "rejection_count",
+                    "acceptance_rate",
+                    "mean_threshold",
+            ):
+                key = f"{field}_{time_bin}"
+                value = row.get(key)
+                if isinstance(value, (int, float, bool)):
+                    metrics[f"evaluation/fixed_{label}/{key}"] = value
     metrics["total_timesteps"] = int(total_timesteps)
     return metrics
 
 
-def evaluation_key(result, stage):
+def evaluation_key(result, stage, *, contextual_timing=False):
     summary = result["summary"]
     if stage == "gameplay":
         return (
@@ -163,19 +190,29 @@ def evaluation_key(result, stage):
             float(summary["mean_game_reward"]),
             float(summary["aggregate_fired_fraction_of_purchases"]),
         )
+    if contextual_timing:
+        # This treatment explicitly permits rational late-offer rejection.
+        # Select the policy on its actual training objective rather than the
+        # immediate-offer control's discontinuous buy-almost-everything gate.
+        return (
+            float(summary["random_mean_net_reward"]),
+            float(summary["random_positive_net_reward_rate"]),
+            float(summary["random_fired_fraction_of_purchases"]),
+            float(summary["zero_price_acceptance_rate"]),
+        )
     profitable_rows = [
         row
         for row in result["fixed_price_table"]
         if row["buying_profitable"]
     ]
-    minimum_profitable_purchases = min(
-        (row["mean_purchases"] for row in profitable_rows),
+    minimum_profitable_acceptance = min(
+        (row["aggregate_acceptance_rate"] for row in profitable_rows),
         default=0.0,
     )
     return (
         float(summary["pass_condition"]),
         float(summary["random_mean_net_reward"]),
-        float(minimum_profitable_purchases),
+        float(minimum_profitable_acceptance),
         float(summary["random_fired_fraction_of_purchases"]),
     )
 
@@ -183,6 +220,7 @@ def evaluation_key(result, stage):
 def write_evaluation_result(path, result):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    write_trade_events_csv(path.with_suffix(".trade_events.csv"), result)
     rows = result.get("fixed_price_table")
     if not rows:
         return None
@@ -221,6 +259,18 @@ class AtariTrainingCallback(BaseCallback):
 
     def _on_training_start(self):
         self.starting_timesteps = int(self.num_timesteps)
+        for target_name, interval in (
+                ("next_log", self.args.log_every),
+                ("next_checkpoint", self.args.checkpoint_every),
+                ("next_evaluation", self.args.eval_every),
+        ):
+            setattr(
+                self,
+                target_name,
+                (
+                    int(self.num_timesteps) // int(interval) + 1
+                ) * int(interval),
+            )
 
     def _record_episodes(self):
         for info in self.locals.get("infos", []):
@@ -239,9 +289,29 @@ class AtariTrainingCallback(BaseCallback):
                 "reward_per_bullet": "reward_per_bullet",
                 "acceptance_rate": "acceptance_rate",
                 "fired_fraction_of_purchases": "fired_fraction_of_purchases",
+                "unused_purchased_bullets": "unused_purchased_bullets",
+                "offer_step_sum": "offer_step_sum",
+                "offer_normalized_timestep_sum": (
+                    "offer_normalized_timestep_sum"
+                ),
+                "purchase_step_sum": "purchase_step_sum",
+                "purchase_normalized_timestep_sum": (
+                    "purchase_normalized_timestep_sum"
+                ),
+                "last_offer_accepted": "last_offer_accepted",
             }
+            for time_bin in ("early", "middle", "late"):
+                mappings[f"offer_count_{time_bin}"] = (
+                    f"offer_count_{time_bin}"
+                )
+                mappings[f"purchase_count_{time_bin}"] = (
+                    f"purchase_count_{time_bin}"
+                )
             for output, source in mappings.items():
                 self.recent[output].append(float(episode.get(source, 0.0)))
+            for count in range(6):
+                name = f"opportunity_count_is_{count}"
+                self.recent[name].append(float(episode.get(name, 0.0)))
 
     def _metrics(self):
         metrics = {
@@ -249,6 +319,39 @@ class AtariTrainingCallback(BaseCallback):
             for name, values in self.recent.items()
             if values
         }
+        total_offers = float(sum(self.recent["trade_opportunities"]))
+        total_purchases = float(sum(self.recent["purchases"]))
+        if total_offers:
+            metrics["train/acceptance_rate_aggregate"] = (
+                total_purchases / total_offers
+            )
+            metrics["train/mean_offer_step"] = float(
+                sum(self.recent["offer_step_sum"]) / total_offers
+            )
+            metrics["train/mean_offer_normalized_timestep"] = float(
+                sum(self.recent["offer_normalized_timestep_sum"])
+                / total_offers
+            )
+        if total_purchases:
+            metrics["train/mean_purchase_step"] = float(
+                sum(self.recent["purchase_step_sum"]) / total_purchases
+            )
+            metrics["train/mean_purchase_normalized_timestep"] = float(
+                sum(self.recent["purchase_normalized_timestep_sum"])
+                / total_purchases
+            )
+        for time_bin in ("early", "middle", "late"):
+            offers = float(sum(self.recent[f"offer_count_{time_bin}"]))
+            purchases = float(
+                sum(self.recent[f"purchase_count_{time_bin}"])
+            )
+            if offers:
+                metrics[f"train/acceptance_rate_{time_bin}"] = (
+                    purchases / offers
+                )
+                metrics[f"train/rejection_rate_{time_bin}"] = (
+                    (offers - purchases) / offers
+                )
         elapsed = max(time.time() - self.started, 1.0e-9)
         starting_timesteps = (
             int(self.starting_timesteps)
@@ -277,13 +380,29 @@ class AtariTrainingCallback(BaseCallback):
         print(f"checkpoint={path}", flush=True)
 
     def _evaluate(self):
+        step_path = self.checkpoint_path.with_name(
+            f"{self.checkpoint_path.stem}_step{int(self.num_timesteps)}"
+            f"{self.checkpoint_path.suffix}"
+        )
+        self._save(step_path)
         result = evaluate_stage(self.model, self.args)
+        write_evaluation_result(
+            step_path.with_suffix(".evaluation.json"), result
+        )
         summary = result["summary"]
         self._log(
             evaluation_metrics(result, total_timesteps=self.num_timesteps)
         )
 
-        key = evaluation_key(result, self.args.stage)
+        contextual_timing = bool(
+            self.args.actor_economic_context
+            and self.args.offer_timing == "bernoulli"
+        )
+        key = evaluation_key(
+            result,
+            self.args.stage,
+            contextual_timing=contextual_timing,
+        )
         if self.best_key is None or key > self.best_key:
             self.best_key = key
             self._save(self.best_path)
@@ -299,6 +418,9 @@ class AtariTrainingCallback(BaseCallback):
                     self.wandb_run.summary["best/fixed_price_csv"] = str(
                         best_csv_path
                     )
+                self.wandb_run.summary["best/trade_events_csv"] = str(
+                    best_result_path.with_suffix(".trade_events.csv")
+                )
         return result
 
     def _on_step(self):
@@ -327,6 +449,9 @@ class AtariTrainingCallback(BaseCallback):
             self.wandb_run.summary["evaluation_path"] = str(result_path)
             if csv_path is not None:
                 self.wandb_run.summary["fixed_price_csv"] = str(csv_path)
+            self.wandb_run.summary["trade_events_csv"] = str(
+                result_path.with_suffix(".trade_events.csv")
+            )
 
 
 def init_wandb(args, checkpoint_path):
@@ -338,14 +463,29 @@ def init_wandb(args, checkpoint_path):
         project=args.wandb_project,
         entity=args.wandb_entity,
         group=args.wandb_group,
-        job_type=args.wandb_job_type or JOB_TYPES[args.stage],
+        job_type=(
+            args.wandb_job_type
+            or (
+                STOCHASTIC_E1_JOB_TYPE
+                if args.actor_economic_context
+                and args.offer_timing == "bernoulli"
+                else JOB_TYPES[args.stage]
+            )
+        ),
         name=args.wandb_name,
         config={
             **vars(args),
             "algorithm": "SB3-PPO",
-            "architecture": "native_sb3_price_aware_atari_v1",
+            "architecture": (
+                "native_sb3_contextual_atari_v2"
+                if args.actor_economic_context
+                else "native_sb3_price_aware_atari_v1"
+            ),
             "checkpoint_path": str(checkpoint_path),
-            "actor_observes_price": False,
+            "actor_observes_price": args.actor_economic_context,
+            "actor_observes_normalized_timestep": (
+                args.actor_economic_context
+            ),
             "critic_observes_price": True,
             "initial_bullets": 5 if args.stage == "gameplay" else 0,
             "no_replenishment": True,
@@ -358,6 +498,9 @@ def init_wandb(args, checkpoint_path):
             "frame_stack": 4,
             "fire_mask": True,
             "evaluation_policy": "deterministic_argmax",
+            "offer_timing": args.offer_timing,
+            "offer_probability": args.offer_probability,
+            "one_shot_offers": True,
         },
     )
     run.define_metric("total_timesteps")
@@ -367,30 +510,7 @@ def init_wandb(args, checkpoint_path):
     return run
 
 
-def build_or_load_model(args, vec_env):
-    if args.resume:
-        model = PPO.load(
-            args.resume,
-            env=vec_env,
-            device=args.device,
-            learning_rate=args.learning_rate,
-            n_steps=args.n_steps,
-            batch_size=args.batch_size,
-            n_epochs=args.n_epochs,
-            gamma=args.gamma,
-            gae_lambda=args.gae_lambda,
-            ent_coef=args.entropy_coeff,
-            clip_range=args.clip_range,
-            vf_coef=args.value_coefficient,
-            max_grad_norm=args.max_grad_norm,
-        )
-        model.policy.set_stage(args.stage, rebuild_optimizer=True)
-        model.policy_kwargs = dict(model.policy_kwargs)
-        model.policy_kwargs["stage"] = args.stage
-        for parameter_group in model.policy.optimizer.param_groups:
-            parameter_group["lr"] = args.learning_rate
-        return model
-
+def _new_model(args, vec_env):
     return PPO(
         PriceAwareAtariPolicy,
         vec_env,
@@ -400,6 +520,9 @@ def build_or_load_model(args, vec_env):
             "ammo_features": 32,
             "market_features": 16,
             "threshold_hidden": 64,
+            "actor_economic_context": bool(
+                getattr(args, "actor_economic_context", False)
+            ),
         },
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
@@ -417,6 +540,109 @@ def build_or_load_model(args, vec_env):
     )
 
 
+GAMEPLAY_STATE_PREFIXES = (
+    "features_extractor.",
+    "pi_features_extractor.",
+    "vf_features_extractor.",
+    "game_action_net.",
+)
+
+
+def copy_pretrained_gameplay(source_policy, target_policy):
+    """Copy and verify only the protected E0 gameplay computation."""
+
+    source_state = source_policy.state_dict()
+    target_state = target_policy.state_dict()
+    expected = {
+        name
+        for name in target_state
+        if name.startswith(GAMEPLAY_STATE_PREFIXES)
+    }
+    copied = set()
+    for name in sorted(expected):
+        source_tensor = source_state.get(name)
+        if source_tensor is None:
+            raise RuntimeError(f"pretrained gameplay tensor missing: {name}")
+        if source_tensor.shape != target_state[name].shape:
+            raise RuntimeError(
+                "pretrained gameplay tensor shape changed for "
+                f"{name}: {tuple(source_tensor.shape)} != "
+                f"{tuple(target_state[name].shape)}"
+            )
+        target_state[name] = source_tensor.detach().clone()
+        copied.add(name)
+    if not expected or copied != expected:
+        raise RuntimeError("failed to identify every pretrained gameplay tensor")
+    target_policy.load_state_dict(target_state, strict=True)
+    migrated_state = target_policy.state_dict()
+    mismatched = [
+        name
+        for name in sorted(copied)
+        if not th.equal(migrated_state[name], source_state[name])
+    ]
+    if mismatched:
+        raise RuntimeError(
+            f"pretrained gameplay verification failed: {mismatched[:3]}"
+        )
+    return tuple(sorted(copied))
+
+
+def _load_existing_model(args, vec_env):
+    model = PPO.load(
+        args.resume,
+        env=vec_env,
+        device=args.device,
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        ent_coef=args.entropy_coeff,
+        clip_range=args.clip_range,
+        vf_coef=args.value_coefficient,
+        max_grad_norm=args.max_grad_norm,
+    )
+    stage_changed = model.policy.stage != args.stage
+    model.policy.set_stage(args.stage, rebuild_optimizer=stage_changed)
+    model.policy_kwargs = dict(model.policy_kwargs)
+    model.policy_kwargs["stage"] = args.stage
+    for parameter_group in model.policy.optimizer.param_groups:
+        parameter_group["lr"] = args.learning_rate
+    return model
+
+
+def build_or_load_model(args, vec_env):
+    if not args.resume:
+        return _new_model(args, vec_env)
+
+    target_context = bool(getattr(args, "actor_economic_context", False))
+    if not target_context:
+        return _load_existing_model(args, vec_env)
+
+    source = PPO.load(args.resume, device=args.device)
+    source_context = bool(
+        getattr(source.policy, "actor_economic_context", False)
+    )
+    if source_context:
+        del source
+        return _load_existing_model(args, vec_env)
+
+    model = _new_model(args, vec_env)
+    copied = copy_pretrained_gameplay(source.policy, model.policy)
+    model.policy.set_stage(args.stage, rebuild_optimizer=True)
+    model.policy_kwargs = dict(model.policy_kwargs)
+    model.policy_kwargs["stage"] = args.stage
+    model.policy_kwargs["actor_economic_context"] = True
+    print(json.dumps({
+        "migration": "e0_gameplay_to_contextual_e1",
+        "source_checkpoint": str(Path(args.resume).expanduser().resolve()),
+        "copied_gameplay_tensors": len(copied),
+        "economic_head_initialized_fresh": True,
+    }, sort_keys=True), flush=True)
+    return model
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -426,6 +652,15 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--timesteps", type=int, default=10_000_000)
+    parser.add_argument(
+        "--timesteps-are-target",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "interpret --timesteps as the desired final model timestep when "
+            "resuming, rather than as additional training"
+        ),
+    )
     parser.add_argument("--resume")
     parser.add_argument("--checkpoint")
     parser.add_argument("--num-envs", type=int, default=4)
@@ -441,6 +676,17 @@ def parse_args():
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--max-steps", type=int)
+    parser.add_argument(
+        "--offer-timing",
+        choices=["immediate", "bernoulli"],
+        default="immediate",
+    )
+    parser.add_argument("--offer-probability", type=float, default=0.04)
+    parser.add_argument(
+        "--actor-economic-context",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument("--price-min", type=float, default=0.0)
     parser.add_argument("--price-max", type=float, default=1.0)
     parser.add_argument("--fixed-price", type=float, default=0.0)
@@ -470,6 +716,14 @@ def validate_args(args):
         raise ValueError("timesteps must be positive")
     if args.num_envs <= 0:
         raise ValueError("num_envs must be positive")
+    if not 0.0 <= args.offer_probability <= 1.0:
+        raise ValueError("offer_probability must lie in [0, 1]")
+    if args.actor_economic_context and args.max_steps is None:
+        args.max_steps = 125
+    if args.actor_economic_context and args.stage not in {"priced", "joint"}:
+        raise ValueError(
+            "actor economic context is intended for priced or joint training"
+        )
     if args.n_steps <= 0 or args.batch_size <= 1 or args.n_epochs <= 0:
         raise ValueError("invalid PPO batch geometry")
     if (
@@ -511,8 +765,14 @@ def main():
     args = parse_args()
     validate_args(args)
     if args.wandb_name is None:
+        variant = (
+            "_stochastic_context"
+            if args.actor_economic_context
+            and args.offer_timing == "bernoulli"
+            else ""
+        )
         args.wandb_name = (
-            f"sb3_{args.stage}_five_bullet_ppo_seed{args.seed}_"
+            f"sb3_{args.stage}_five_bullet_ppo{variant}_seed{args.seed}_"
             f"{args.timesteps // 1_000_000}m_local"
         )
     checkpoint_path = checkpoint_with_zip(
@@ -531,25 +791,52 @@ def main():
         model = build_or_load_model(args, vec_env)
         run = init_wandb(args, checkpoint_path)
         callback = AtariTrainingCallback(args, checkpoint_path, run)
+        learn_timesteps = int(args.timesteps)
+        if args.timesteps_are_target:
+            learn_timesteps = max(
+                int(args.timesteps) - int(model.num_timesteps), 0
+            )
+            if learn_timesteps == 0:
+                raise ValueError(
+                    "checkpoint has already reached --timesteps target"
+                )
         model.learn(
-            total_timesteps=args.timesteps,
+            total_timesteps=learn_timesteps,
             callback=callback,
             reset_num_timesteps=args.resume is None,
         )
         if run is not None:
+            artifact_variant = (
+                "-stochastic-context"
+                if args.actor_economic_context
+                and args.offer_timing == "bernoulli"
+                else ""
+            )
             artifact = __import__("wandb").Artifact(
-                f"sb3-atari-{args.stage}-seed{args.seed}",
+                f"sb3-atari-{args.stage}{artifact_variant}-seed{args.seed}",
                 type="model",
                 metadata={
                     "stage": args.stage,
                     "seed": args.seed,
                     "timesteps": int(model.num_timesteps),
+                    "offer_timing": args.offer_timing,
+                    "actor_economic_context": args.actor_economic_context,
                 },
             )
             artifact.add_file(str(checkpoint_path))
             evaluation_path = checkpoint_path.with_suffix(".evaluation.json")
             if evaluation_path.exists():
                 artifact.add_file(str(evaluation_path))
+            fixed_price_path = evaluation_path.with_suffix(
+                ".fixed_prices.csv"
+            )
+            if fixed_price_path.exists():
+                artifact.add_file(str(fixed_price_path))
+            trade_events_path = evaluation_path.with_suffix(
+                ".trade_events.csv"
+            )
+            if trade_events_path.exists():
+                artifact.add_file(str(trade_events_path))
             run.log_artifact(artifact)
     finally:
         if run is not None:

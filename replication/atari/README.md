@@ -157,6 +157,73 @@ random pass conditions both pass. Full artifacts are:
 - `checkpoints/sb3/space_invaders_e1_ppo_seed1_1m_best.full_fixed_prices.csv`
 - W&B artifact `sb3-atari-e1-selected-seed1`
 
+#### Stochastic-timing E1 treatment
+
+The completed E1 above presents its five offers immediately and remains the
+predictable-timing control. A separate stochastic-timing treatment tests
+whether the buyer learns that a bullet offered near the end of an episode is
+less useful than the same bullet offered early. The seed-1 one-million-step
+local run started on 2026-07-25 and is visible at
+[`sb3_e1_stochastic_timing_context_seed1_1m_local`](https://wandb.ai/glcbrero/StackPOMDP/runs/m4vktgui).
+Its W&B group is `atari_e1_stochastic_timing` and its job type is
+`atari_sb3_e1_stochastic_timing`.
+
+The treatment uses the following protocol:
+
+- At each gameplay decision, an offer arrives independently with probability
+  `0.04`, until the episode ends or five opportunities have occurred.
+- Each opportunity is one-shot: accepting transfers one bullet and charges the
+  offered price immediately; rejecting consumes the opportunity and that offer
+  cannot be repeated.
+- Episodes are capped at 125 gameplay decisions. Thus an episode has at most
+  five offers, but stochastic timing can produce fewer than five.
+- Prices are sampled from `Uniform(0, 1)` during training.
+- The economic actor observes the current price and normalized episode time
+  (equivalently, normalized time remaining), together with ammo, offer status,
+  and remaining opportunities.
+- The selected E0 Nature CNN and Atari action head remain frozen. Gameplay
+  actions use deterministic argmax; only the economic decision head and value
+  function are trained.
+
+The threshold and gameplay actions are emitted jointly from the pre-trade
+observation. An accepted bullet is transferred before the ALE gameplay step,
+but when pre-trade ammo is zero the FIRE mask means the frozen gameplay policy
+can first select FIRE on the following decision. Consequently, a purchase on
+the final allowed decision is mechanically unusable. The timing analysis treats
+this one-decision lag as part of the current protocol; any claim that isolates
+pure remaining-game-time effects will be checked against a separate
+trade-then-game-substep control.
+
+Here, normalized time is progress toward the known 125-decision cap. It does
+not reveal when an episodic-life termination will occur, which may be earlier.
+
+Every opportunity will record its raw decision index, normalized time/time
+remaining, price, threshold or economic action, accept/reject decision, ammo,
+and opportunities remaining. Episode summaries will include offer and purchase
+decision indices, purchases and shots by time bin, final ammo, payments, game
+reward, and net reward. The primary diagnostic holds price fixed while placing
+offers in early, middle, and late time bins. Comparing acceptance at the same
+price across naturally occurring bins provides evidence about the proposed
+last-minute effect; random-price evaluation then measures the resulting overall
+economic performance. The bins are observational because surviving game state,
+ammo, and opportunity index can also differ with time. A forced-timing or
+matched-state control is required for a causal timing claim. Because price is
+actor-visible in this treatment, it is a price-and-time-conditioned economic
+policy rather than the control's price-blind scalar WTP specification.
+
+The run writes checkpoints and timing-audit outputs under:
+
+```text
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.zip
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.evaluation.json
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.evaluation.trade_events.csv
+```
+
+The complete local log is
+`Research Artifacts/experiment_logs/StackelbergPOMDP/atari/stochastic_e1_20260725/sb3_e1_stochastic_timing_context_seed1_1m_local.log`.
+No scientific result is claimed until training and the fixed-price timing audit
+finish.
+
 Joint economic/gameplay fine-tuning remains available with `--stage joint`,
 but it is run only after frozen-gameplay E1 passes. It trains both actor heads
 with the same observation/action interface and retains the price-informed

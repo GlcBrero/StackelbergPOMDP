@@ -7,11 +7,13 @@ from stackelberg_pomdp.atari.wrappers import (
     AmmoLedger,
     AsymmetricBuyerObservationWrapper,
     AtariEpisodeMetricsWrapper,
+    BernoulliOfferTimingProcess,
     BulletMarketWrapper,
     ClipGameRewardWrapper,
     EpisodicLifeWrapper,
     FixedPriceProcess,
     FrameStackWrapper,
+    ImmediateOfferTimingProcess,
     MaxAndSkipWrapper,
     NoopResetWrapper,
     NoPriceProcess,
@@ -35,6 +37,9 @@ class AtariBuyerEnvConfig:
     price_min: float = 0.0
     price_max: float = 1.0
     fixed_price: float = 0.0
+    offer_timing: str = "immediate"
+    offer_probability: float = 0.04
+    actor_economic_context: bool = False
     noop_max: int = 30
     frame_skip: int = 4
     frame_stack: int = 4
@@ -50,6 +55,16 @@ class AtariBuyerEnvConfig:
         initial = self.initial_bullets
         if initial is None:
             initial = 5 if self.stage == "gameplay" else 0
+        if self.offer_timing not in {"immediate", "bernoulli"}:
+            raise ValueError(
+                "offer_timing must be 'immediate' or 'bernoulli'"
+            )
+        if not 0.0 <= self.offer_probability <= 1.0:
+            raise ValueError("offer_probability must lie in [0, 1]")
+        if self.actor_economic_context and self.max_steps is None:
+            raise ValueError(
+                "actor_economic_context requires a finite max_steps horizon"
+            )
         return replace(self, initial_bullets=int(initial))
 
 
@@ -64,6 +79,15 @@ def _price_process(config):
         config.price_min,
         config.price_max,
         seed=config.seed + 811,
+    )
+
+
+def _timing_process(config):
+    if config.offer_timing == "immediate":
+        return ImmediateOfferTimingProcess()
+    return BernoulliOfferTimingProcess(
+        config.offer_probability,
+        seed=config.seed + 1613,
     )
 
 
@@ -100,16 +124,19 @@ def make_atari_buyer_env(config=None, **overrides):
         env,
         ledger=ledger,
         price_process=_price_process(config),
+        timing_process=_timing_process(config),
         trade_enabled=config.stage != "gameplay",
         offer_chances=config.offer_chances,
         max_purchases=config.max_purchases,
         price_max=config.price_max,
+        episode_horizon=config.max_steps,
     )
     env = AsymmetricBuyerObservationWrapper(
         market_wrapper,
         ledger=ledger,
         ammo_wrapper=ammo_wrapper,
         market_wrapper=market_wrapper,
+        actor_economic_context=config.actor_economic_context,
     )
     env = AtariEpisodeMetricsWrapper(
         env,

@@ -185,6 +185,7 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
             ammo_features=32,
             market_features=16,
             threshold_hidden=64,
+            actor_economic_context=False,
             **kwargs,
     ):
         if stage not in POLICY_STAGES:
@@ -196,6 +197,17 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
         self.ammo_features = int(ammo_features)
         self.market_features = int(market_features)
         self.threshold_hidden = int(threshold_hidden)
+        self.actor_economic_context = bool(actor_economic_context)
+        if self.actor_economic_context:
+            required_context = {
+                "price", "normalized_timestep", "time_remaining"
+            }
+            missing_context = required_context - set(observation_space.spaces)
+            if missing_context:
+                raise ValueError(
+                    "actor economic context missing observation keys: "
+                    f"{sorted(missing_context)}"
+                )
         self.game_action_count = int(round(float(action_space.high[0]))) + 1
         self.train_gameplay = stage in {"gameplay", "free_trade", "joint"}
         self.train_threshold = stage in {"priced", "joint"}
@@ -221,16 +233,22 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
 
     def _build(self, lr_schedule):
         feature_dim = self.features_extractor.features_dim
+        threshold_input_dim = feature_dim + (
+            2 if self.actor_economic_context else 0
+        )
         self.game_action_net = nn.Linear(feature_dim, self.game_action_count)
         self.threshold_net = nn.Sequential(
-            nn.Linear(feature_dim, self.threshold_hidden),
+            nn.Linear(threshold_input_dim, self.threshold_hidden),
             nn.Tanh(),
             nn.Linear(self.threshold_hidden, self.threshold_hidden),
             nn.Tanh(),
             nn.Linear(self.threshold_hidden, 2),
         )
         self.value_net = nn.Sequential(
-            nn.Linear(feature_dim + 1, 256),
+            nn.Linear(
+                feature_dim + (2 if self.actor_economic_context else 1),
+                256,
+            ),
             nn.ReLU(),
             nn.Linear(256, 1),
         )
@@ -262,6 +280,7 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
             "ammo_features": self.ammo_features,
             "market_features": self.market_features,
             "threshold_hidden": self.threshold_hidden,
+            "actor_economic_context": self.actor_economic_context,
         })
         return data
 
@@ -313,7 +332,23 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
             logits,
             th.full_like(logits, -1.0e9),
         )
-        threshold_parameters = self.threshold_net(features)
+        threshold_features = features
+        if self.actor_economic_context:
+            actor_context = th.cat(
+                [
+                    observations["price"].float().reshape(
+                        features.shape[0], 1
+                    ),
+                    observations["normalized_timestep"].float().reshape(
+                        features.shape[0], 1
+                    ),
+                ],
+                dim=1,
+            )
+            threshold_features = th.cat(
+                [features, actor_context], dim=1
+            )
+        threshold_parameters = self.threshold_net(threshold_features)
         alpha = nn.functional.softplus(threshold_parameters[:, 0]) + 1.0e-4
         beta = nn.functional.softplus(threshold_parameters[:, 1]) + 1.0e-4
         return HybridAtariBuyerDistribution(
@@ -331,7 +366,14 @@ class PriceAwareAtariPolicy(ActorCriticPolicy):
         price = observations["critic:price"].float().reshape(
             features.shape[0], 1
         )
-        return self.value_net(th.cat([features, price], dim=1))
+        value_context = [features, price]
+        if self.actor_economic_context:
+            value_context.append(
+                observations["normalized_timestep"].float().reshape(
+                    features.shape[0], 1
+                )
+            )
+        return self.value_net(th.cat(value_context, dim=1))
 
     def forward(self, obs, deterministic=False):
         features = self._features(obs)
