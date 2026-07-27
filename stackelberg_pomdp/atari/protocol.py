@@ -20,8 +20,11 @@ FULL_ACTION_DIM = 2
 IMAGE = "image"
 ACTOR_STATE = "actor_state"
 ACTION_MASK = "action_mask"
-CRITIC_STATE = "critic:state"
-ACTION_CREDIT = "critic:action_credit"
+ACTOR_OBSERVATION_FIELDS = (IMAGE, ACTOR_STATE, ACTION_MASK)
+
+CRITIC_PREFIX = "critic:"
+CRITIC_STATE = f"{CRITIC_PREFIX}state"
+ACTION_CREDIT = f"{CRITIC_PREFIX}action_credit"
 
 AMMO_INDEX = 0
 PROJECTILE_INDEX = 1
@@ -177,6 +180,21 @@ def action_space(game_action_count):
     )
 
 
+def validate_action(action, game_action_count):
+    """Return one clipped ``[game action, economic action]`` vector."""
+
+    count = int(game_action_count)
+    if count <= 0:
+        raise ValueError("game_action_count must be positive")
+    values = np.asarray(action, dtype=np.float32).reshape(-1)
+    if values.shape != (FULL_ACTION_DIM,):
+        raise ValueError("Atari action must be [game_action, economic]")
+    return np.array([
+        np.clip(values[0], 0.0, count - 1),
+        np.clip(values[1], 0.0, 1.0),
+    ], dtype=np.float32)
+
+
 def observation(
         *,
         image,
@@ -214,14 +232,14 @@ def actor_observation(values):
 
     return OrderedDict(
         (key, np.array(values[key], copy=True))
-        for key in (IMAGE, ACTOR_STATE, ACTION_MASK)
+        for key in ACTOR_OBSERVATION_FIELDS
     )
 
 
 def assert_actor_observations_equal(left, right):
     """Fail if two observations differ in any actor-visible coordinate."""
 
-    for key in (IMAGE, ACTOR_STATE, ACTION_MASK):
+    for key in ACTOR_OBSERVATION_FIELDS:
         if not np.array_equal(np.asarray(left[key]), np.asarray(right[key])):
             raise RuntimeError(
                 f"actor observations differ in {key!r}; cache hit is invalid"
@@ -231,6 +249,7 @@ def assert_actor_observations_equal(left, right):
 __all__ = [
     "ACTION_CREDIT",
     "ACTION_MASK",
+    "ACTOR_OBSERVATION_FIELDS",
     "ACTOR_STATE",
     "ACTOR_STATE_DIM",
     "AMMO_INDEX",
@@ -238,6 +257,7 @@ __all__ = [
     "CACHED_TRADE_REPLAY",
     "CRITIC_STATE",
     "CRITIC_STATE_DIM",
+    "CRITIC_PREFIX",
     "EVENT_SLICE",
     "FOLLOWER_TRADE",
     "FULL_ACTION_DIM",
@@ -259,4 +279,5 @@ __all__ = [
     "event_one_hot",
     "observation",
     "observation_space",
+    "validate_action",
 ]

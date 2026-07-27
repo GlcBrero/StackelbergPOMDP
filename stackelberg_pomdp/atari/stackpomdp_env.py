@@ -1,8 +1,9 @@
-"""Clean bilateral Atari market and full-trajectory E1 response environment."""
+"""Shared bilateral Atari game and full-trajectory E1 response adapter."""
 
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 import gym
 import numpy as np
@@ -18,8 +19,10 @@ from stackelberg_pomdp.atari.protocol import (
     actor_state,
     observation,
     observation_space,
+    validate_action,
 )
 from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
+from stackelberg_pomdp.gym_envs.envs.base_envs import BaseEnv
 
 
 SELLER = "seller"
@@ -32,7 +35,6 @@ class BilateralAtariConfig:
     seed: int = 1
     gameplay_horizon: int = 200
     event_tail_steps: int = 50
-    num_trade_events: int = NUM_TRADE_EVENTS
     seller_game_reward_scale: float = 0.1
     buyer_game_reward_scale: float = 1.0
     noop_max: int = 30
@@ -45,8 +47,6 @@ class BilateralAtariConfig:
     fixed_event_steps: Optional[Sequence[int]] = None
 
     def resolved(self):
-        if int(self.num_trade_events) != NUM_TRADE_EVENTS:
-            raise ValueError("the Atari protocol requires exactly five events")
         if float(self.seller_game_reward_scale) < 0.0:
             raise ValueError("seller_game_reward_scale must be nonnegative")
         if float(self.buyer_game_reward_scale) < 0.0:
@@ -266,21 +266,285 @@ class DualAtariTradeCore:
         self.buyer.close()
 
 
-class FrozenAtariPolicyController:
-    """Deterministic clean-policy controller for the non-learning Atari side."""
+class BilateralAtariRewardEnv(BaseEnv):
+    """Domain-specific two-player Atari game shared by E1 and E2.
 
-    def __init__(self, checkpoint, *, device="cpu"):
+    The environment owns all emulator, trade, payoff, and accounting state.
+    Like the other StackPOMDP base environments, ``step`` accepts the complete
+    leader/follower action mapping, returns the leader's scalar reward, and
+    exposes every player's reward through ``info["utilities"]``.  Response and
+    StackPOMDP phase logic belong to wrappers above this class.
+    """
+
+    metadata = {"render.modes": ["rgb_array"]}
+
+    def __init__(
+            self,
+            *,
+            leader_role,
+            config=None,
+            core_factory=DualAtariTradeCore,
+            side_factory=None,
+            env_factory=None,
+    ):
+        if leader_role not in ROLES:
+            raise ValueError(f"leader_role must be one of {sorted(ROLES)}")
+        follower_role = BUYER if leader_role == SELLER else SELLER
+        self.config = (config or BilateralAtariConfig()).resolved()
+        super().__init__(
+            leader=leader_role,
+            followers_list=[follower_role],
+            seed=self.config.seed,
+        )
+        self.leader_role = leader_role
+        self.follower_role = follower_role
+
+        core_kwargs = {}
+        if side_factory is not None:
+            core_kwargs["side_factory"] = side_factory
+        if env_factory is not None:
+            core_kwargs["env_factory"] = env_factory
+        self.core = core_factory(self.config, **core_kwargs)
+
+        role_action_space = action_space(self.core.game_action_count)
+        role_observation_space = observation_space(
+            self.core.image_space, self.core.game_action_count
+        )
+        self.action_space = role_action_space
+        self.observation_space = role_observation_space
+        self.followers_action_space = {follower_role: role_action_space}
+        self.followers_observation_space = {
+            follower_role: role_observation_space
+        }
+        self.dummy_image = np.zeros(
+            self.core.image_space.shape, dtype=self.core.image_space.dtype
+        )
+        self._done = False
+        self.gameplay_transitions = 0
+        self.trade_transitions = 0
+
+    def _validated_joint_action(self, actions):
+        if not isinstance(actions, Mapping) or set(actions) != ROLES:
+            raise ValueError("joint Atari action must contain seller and buyer")
+        return {
+            role: validate_action(actions[role], self.core.game_action_count)
+            for role in (SELLER, BUYER)
+        }
+
+    def role_observation(
+            self,
+            role,
+            *,
+            opponent_commitment=None,
+            decision_kind=None,
+            critic_state=None,
+    ):
+        """Return the current canonical observation for one Atari role."""
+
+        side = self.core.side(role)
+        trade_mode = self.core.at_event and not self._done
+        event_index = (
+            self.core.next_event
+            if self.core.next_event < NUM_TRADE_EVENTS
+            else None
+        )
+        if decision_kind is None:
+            decision_kind = (
+                TERMINAL
+                if self._done
+                else FOLLOWER_TRADE if trade_mode else GAMEPLAY
+            )
+        return observation(
+            image=self.dummy_image if trade_mode else side.image,
+            state=actor_state(
+                ammo_fraction=float(side.ammo) / NUM_TRADE_EVENTS,
+                projectile_active=float(side.projectile_active),
+                normalized_time=float(self.core.game_step)
+                / self.config.gameplay_horizon,
+                trade_mode=float(trade_mode),
+                event_index=event_index,
+                opponent_commitment=opponent_commitment,
+            ),
+            action_mask=side.action_mask,
+            decision_kind=decision_kind,
+            critic_state=critic_state,
+        )
+
+    def _observations(self):
+        return OrderedDict(
+            (role, self.role_observation(role)) for role in (SELLER, BUYER)
+        )
+
+    def leader_observation(self, follower_actions=None):
+        del follower_actions
+        return self.role_observation(self.leader_role)
+
+    def reset(self, *, seed=None, options=None):
+        del options
+        self.core.reset(seed=seed)
+        self._done = False
+        self.gameplay_transitions = 0
+        self.trade_transitions = 0
+        return self._observations()
+
+    def role_payoff(self, role):
+        if role == SELLER:
+            return float(self.core.seller_payoff)
+        if role == BUYER:
+            return float(self.core.buyer_payoff)
+        raise ValueError(f"unknown Atari role: {role!r}")
+
+    def leader_reward(self):
+        return self.role_payoff(self.leader_role)
+
+    def episode_info(self):
+        core = self.core
+        return {
+            "leader_role": self.leader_role,
+            "follower_role": self.follower_role,
+            "event_steps": tuple(int(value) for value in core.event_steps),
+            "events": tuple(dict(event) for event in core.events),
+            "gameplay_transitions": int(self.gameplay_transitions),
+            "trade_transitions": int(self.trade_transitions),
+            "reward_transition_count": int(
+                self.gameplay_transitions + self.trade_transitions
+            ),
+            "bullets_arrived": int(core.bullets_arrived),
+            "purchases": int(core.transfers),
+            "payments": float(core.payments),
+            "seller_game_reward": float(core.seller.game_reward),
+            "buyer_game_reward": float(core.buyer.game_reward),
+            "seller_reward": float(core.seller_payoff),
+            "buyer_reward": float(core.buyer_payoff),
+            "leader_reward": self.leader_reward(),
+            "seller_shots_fired": int(core.seller.shots_fired),
+            "buyer_shots_fired": int(core.buyer.shots_fired),
+            "seller_final_ammo": int(core.seller.ammo),
+            "buyer_final_ammo": int(core.buyer.ammo),
+            **core.accounting(),
+        }
+
+    def step(self, actions):
+        if self._done:
+            raise RuntimeError("reward-game step called after Atari termination")
+        values = self._validated_joint_action(actions)
+        previous = {
+            role: self.role_payoff(role) for role in (SELLER, BUYER)
+        }
+        if self.core.at_event:
+            seller_calls = self.core.seller.step_calls
+            buyer_calls = self.core.buyer.step_calls
+            event = self.core.trade(
+                price=float(values[SELLER][1]),
+                threshold=float(values[BUYER][1]),
+            )
+            if (
+                    seller_calls != self.core.seller.step_calls
+                    or buyer_calls != self.core.buyer.step_calls
+            ):
+                raise RuntimeError("an Atari emulator advanced during trade")
+            self.trade_transitions += 1
+            detail = {
+                "substep_type": "trade",
+                "trade_event": dict(event),
+                "emulator_advanced": False,
+            }
+        else:
+            transition = self.core.step_gameplay(
+                seller_action=values[SELLER][0],
+                buyer_action=values[BUYER][0],
+            )
+            self.gameplay_transitions += 1
+            detail = {
+                "substep_type": GAMEPLAY,
+                "gameplay": transition,
+                "emulator_advanced": True,
+            }
+
+        rewards = {
+            role: float(self.role_payoff(role) - previous[role])
+            for role in (SELLER, BUYER)
+        }
+        self._done = bool(self.core.done)
+        if self._done:
+            if self.core.next_event != NUM_TRADE_EVENTS:
+                raise RuntimeError("Atari horizon ended before all five trades")
+            self.core.assert_accounting()
+        leader_reward = float(rewards[self.leader_role])
+        info = {
+            **detail,
+            "reward_generated": True,
+            "utilities": dict(rewards),
+            "surplus": leader_reward,
+            "game_step": int(self.core.game_step),
+            "next_event": int(self.core.next_event),
+        }
+        if self._done:
+            info.update(self.episode_info())
+        return self._observations(), leader_reward, self._done, info
+
+    def reward_phase_length(self, default_length):
+        del default_length
+        return int(self.config.gameplay_horizon + NUM_TRADE_EVENTS)
+
+    def max_reward_phase_length(self, default_length):
+        return self.reward_phase_length(default_length)
+
+    def max_subepisode_transitions(self):
+        return 1
+
+    def render(self, mode="rgb_array"):
+        if mode != "rgb_array":
+            raise NotImplementedError("only rgb_array mode is supported")
+        seller = self.core.seller.env.render(mode=mode)
+        buyer = self.core.buyer.env.render(mode=mode)
+        return np.concatenate([seller, buyer], axis=1)
+
+    def close(self):
+        self.core.close()
+
+
+def load_frozen_atari_model(
+        checkpoint,
+        *,
+        device="cpu",
+        model_factory=None,
+        description="Atari checkpoint",
+):
+    """Load one SB3 policy in deterministic, permanently frozen mode."""
+
+    if model_factory is None:
+        if checkpoint is None:
+            raise ValueError(f"{description} is required")
         from stable_baselines3 import PPO
 
         path = Path(checkpoint).expanduser()
         if not path.is_file() and Path(f"{path}.zip").is_file():
             path = Path(f"{path}.zip")
         if not path.is_file():
-            raise FileNotFoundError(f"Atari checkpoint does not exist: {path}")
-        self.model = PPO.load(str(path), device=device)
-        self.model.policy.set_training_mode(False)
-        for parameter in self.model.policy.parameters():
-            parameter.requires_grad = False
+            raise FileNotFoundError(f"{description} does not exist: {path}")
+        model = PPO.load(str(path), device=device)
+    else:
+        model = model_factory(checkpoint, device=device)
+
+    policy = getattr(model, "policy", None)
+    if policy is None:
+        raise TypeError(f"{description} does not contain an SB3 policy")
+    policy.set_training_mode(False)
+    for parameter in policy.parameters():
+        parameter.requires_grad = False
+    return model
+
+
+class FrozenAtariPolicyController:
+    """Deterministic clean-policy controller for the non-learning Atari side."""
+
+    def __init__(self, checkpoint, *, device="cpu"):
+        self.model = load_frozen_atari_model(
+            checkpoint,
+            device=device,
+            description="Atari checkpoint",
+        )
 
     def __call__(self, values):
         action, _ = self.model.predict(values, deterministic=True)
@@ -290,44 +554,35 @@ class FrozenAtariPolicyController:
         return int(np.rint(action[0]))
 
 
-class MetaAtariResponseEnv(gym.Env):
-    """Full E1 trajectory for a buyer or seller meta-response.
+class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
+    """Expose an E1 response policy against one sampled five-action commitment.
 
-    A random opponent commitment ``omega in [0,1]^5`` is sampled at reset.
-    The controlled policy acts at all 200 gameplay steps and five paused trade
-    steps, enabling joint gameplay/economic fine-tuning.  The other Atari side
-    uses a deterministic E0b controller and never supplies an economic choice;
-    its five economic actions are exactly the sampled commitment.
+    The wrapped :class:`BilateralAtariRewardEnv` remains the sole owner of game
+    and market dynamics.  This adapter samples the opponent commitment, fills
+    in the frozen opponent's gameplay actions, and exposes only the controlled
+    role to SB3.
     """
-
-    metadata = {"render.modes": ["rgb_array"]}
 
     def __init__(
             self,
+            env,
             *,
-            controlled_role,
             e0b_checkpoint=None,
-            config=None,
             context_sampler: Optional[Callable] = None,
-            core_factory=DualAtariTradeCore,
             controller_factory=None,
-            side_factory=AtariGameplaySide,
-            env_factory=None,
             device="cpu",
     ):
-        super().__init__()
-        if controlled_role not in ROLES:
-            raise ValueError(f"controlled_role must be one of {sorted(ROLES)}")
-        self.controlled_role = controlled_role
-        self.other_role = BUYER if controlled_role == SELLER else SELLER
-        self.config = (config or BilateralAtariConfig()).resolved()
+        if not isinstance(env, BilateralAtariRewardEnv):
+            raise TypeError(
+                "AtariFixedCommitmentResponseWrapper requires "
+                "BilateralAtariRewardEnv"
+            )
+        super().__init__(env)
+        self.controlled_role = env.leader_role
+        self.other_role = env.follower_role
+        self.config = env.config
         self.context_sampler = context_sampler
         self.rng = np.random.default_rng(self.config.seed + 74_711)
-        self.core = core_factory(
-            self.config,
-            side_factory=side_factory,
-            env_factory=env_factory,
-        )
         if controller_factory is None:
             if e0b_checkpoint is None:
                 raise ValueError("e0b_checkpoint or controller_factory is required")
@@ -340,15 +595,13 @@ class MetaAtariResponseEnv(gym.Env):
         self.observation_space = observation_space(
             self.core.image_space, self.core.game_action_count
         )
-        self.dummy_image = np.zeros(
-            self.core.image_space.shape, dtype=self.core.image_space.dtype
-        )
         self.opponent_commitment = np.zeros(
             NUM_TRADE_EVENTS, dtype=np.float32
         )
-        self._done = False
-        self.gameplay_transitions = 0
-        self.trade_transitions = 0
+
+    @property
+    def core(self):
+        return self.env.core
 
     def seed(self, seed=None):
         seed = self.config.seed if seed is None else int(seed)
@@ -383,8 +636,8 @@ class MetaAtariResponseEnv(gym.Env):
             float(core.buyer_payoff),
             float(core.bullets_arrived) / NUM_TRADE_EVENTS,
             float(self.controlled_role == SELLER),
-            float(self.gameplay_transitions) / self.config.gameplay_horizon,
-            float(self.trade_transitions) / NUM_TRADE_EVENTS,
+            float(self.env.gameplay_transitions) / self.config.gameplay_horizon,
+            float(self.env.trade_transitions) / NUM_TRADE_EVENTS,
         )
         values[15:20] = (
             np.asarray(core.event_steps, dtype=np.float32)
@@ -393,46 +646,30 @@ class MetaAtariResponseEnv(gym.Env):
         values[20:25] = self.opponent_commitment
         return values
 
-    def _side_observation(self, role, *, controlled, decision_kind):
-        side = self.core.side(role)
-        trade_mode = self.core.at_event and not self._done
-        event_index = (
-            self.core.next_event
-            if self.core.next_event < NUM_TRADE_EVENTS
-            else None
-        )
+    def _role_observation(self, role, *, controlled, decision_kind):
         context = (
             self.opponent_commitment
             if controlled
             else np.zeros(NUM_TRADE_EVENTS, dtype=np.float32)
         )
-        return observation(
-            image=self.dummy_image if trade_mode else side.image,
-            state=actor_state(
-                ammo_fraction=float(side.ammo) / NUM_TRADE_EVENTS,
-                projectile_active=float(side.projectile_active),
-                normalized_time=float(self.core.game_step)
-                / self.config.gameplay_horizon,
-                trade_mode=float(trade_mode),
-                event_index=event_index,
-                opponent_commitment=context,
-            ),
-            action_mask=side.action_mask,
+        return self.env.role_observation(
+            role,
+            opponent_commitment=context,
             decision_kind=decision_kind,
             critic_state=self._critic_state(),
         )
 
     def _controlled_observation(self):
-        if self._done:
+        if self.env._done:
             kind = TERMINAL
         else:
             kind = FOLLOWER_TRADE if self.core.at_event else GAMEPLAY
-        return self._side_observation(
+        return self._role_observation(
             self.controlled_role, controlled=True, decision_kind=kind
         )
 
     def _other_game_action(self):
-        values = self._side_observation(
+        values = self._role_observation(
             self.other_role, controlled=False, decision_kind=GAMEPLAY
         )
         result = self.other_controller(values)
@@ -443,135 +680,97 @@ class MetaAtariResponseEnv(gym.Env):
         if seed is not None:
             self.seed(seed)
         self.opponent_commitment = self._sample_context()
-        self.core.reset(seed=int(self.rng.integers(0, 2 ** 31 - 1)))
-        self._done = False
-        self.gameplay_transitions = 0
-        self.trade_transitions = 0
+        self.env.reset(seed=int(self.rng.integers(0, 2 ** 31 - 1)))
         return self._controlled_observation()
 
-    @staticmethod
-    def _validated_action(action, game_action_count):
-        values = np.asarray(action, dtype=np.float32).reshape(-1)
-        if values.shape != (2,):
-            raise ValueError("action must be [game_action, economic_action]")
-        return np.array([
-            np.clip(values[0], 0.0, game_action_count - 1),
-            np.clip(values[1], 0.0, 1.0),
-        ], dtype=np.float32)
-
-    def _controlled_payoff(self):
-        return float(
-            self.core.seller_payoff
-            if self.controlled_role == SELLER
-            else self.core.buyer_payoff
-        )
+    def _joint_action(self, values, *, trade):
+        if trade:
+            event_index = self.core.next_event
+            opponent_action = np.array(
+                [0.0, self.opponent_commitment[event_index]], dtype=np.float32
+            )
+        else:
+            opponent_action = np.array(
+                [self._other_game_action(), 0.0], dtype=np.float32
+            )
+        return {
+            self.controlled_role: values,
+            self.other_role: opponent_action,
+        }
 
     def _episode_info(self):
-        core = self.core
+        base = self.env.episode_info()
         return {
+            **base,
             "controlled_role": self.controlled_role,
             "opponent_commitment": tuple(
                 float(value) for value in self.opponent_commitment
             ),
-            "event_steps": tuple(int(value) for value in core.event_steps),
-            "events": tuple(dict(event) for event in core.events),
-            "gameplay_transitions": int(self.gameplay_transitions),
-            "trade_transitions": int(self.trade_transitions),
-            "outer_transition_count": int(
-                self.gameplay_transitions + self.trade_transitions
-            ),
-            "bullets_arrived": int(core.bullets_arrived),
-            "purchases": int(core.transfers),
-            "payments": float(core.payments),
-            "seller_game_reward": float(core.seller.game_reward),
-            "buyer_game_reward": float(core.buyer.game_reward),
-            "seller_reward": float(core.seller_payoff),
-            "buyer_reward": float(core.buyer_payoff),
-            "seller_shots_fired": int(core.seller.shots_fired),
-            "buyer_shots_fired": int(core.buyer.shots_fired),
-            "seller_final_ammo": int(core.seller.ammo),
-            "buyer_final_ammo": int(core.buyer.ammo),
-            **core.accounting(),
+            "outer_transition_count": int(base["reward_transition_count"]),
         }
 
     def step(self, action):
-        if self._done:
+        if self.env._done:
             raise RuntimeError("step called after E1 outer episode termination")
-        values = self._validated_action(action, self.core.game_action_count)
-        previous = self._controlled_payoff()
-        if self.core.at_event:
-            event_index = self.core.next_event
-            opponent = float(self.opponent_commitment[event_index])
-            controlled_economic = float(values[1])
-            if self.controlled_role == BUYER:
-                price, threshold = opponent, controlled_economic
-            else:
-                price, threshold = controlled_economic, opponent
-            seller_calls = self.core.seller.step_calls
-            buyer_calls = self.core.buyer.step_calls
-            event = self.core.trade(price=price, threshold=threshold)
-            if (
-                    seller_calls != self.core.seller.step_calls
-                    or buyer_calls != self.core.buyer.step_calls
-            ):
-                raise RuntimeError("an Atari emulator advanced during trade")
-            self.trade_transitions += 1
-            substep = FOLLOWER_TRADE
-            detail = {"trade_event": dict(event), "emulator_advanced": False}
-        else:
-            other_action = self._other_game_action()
-            if self.controlled_role == SELLER:
-                seller_action, buyer_action = values[0], other_action
-            else:
-                seller_action, buyer_action = other_action, values[0]
-            transition = self.core.step_gameplay(
-                seller_action=seller_action,
-                buyer_action=buyer_action,
-            )
-            self.gameplay_transitions += 1
-            substep = GAMEPLAY
-            detail = {"gameplay": transition, "emulator_advanced": True}
-
-        reward = self._controlled_payoff() - previous
-        self._done = bool(self.core.done)
-        if self._done:
-            if self.core.next_event != NUM_TRADE_EVENTS:
-                raise RuntimeError("E1 horizon ended before all five events")
-            self.core.assert_accounting()
-        info = {
-            "substep_type": substep,
+        values = validate_action(action, self.core.game_action_count)
+        trade = bool(self.core.at_event)
+        _, reward, done, info = self.env.step(
+            self._joint_action(values, trade=trade)
+        )
+        info.update({
+            "substep_type": FOLLOWER_TRADE if trade else GAMEPLAY,
             "controlled_reward_delta": float(reward),
-            "game_step": int(self.core.game_step),
-            "next_event": int(self.core.next_event),
-            **detail,
-        }
-        if self._done:
+        })
+        if done:
             episode = self._episode_info()
             info.update(episode)
             info["episode"] = {
-                "r": self._controlled_payoff(),
+                "r": self.env.role_payoff(self.controlled_role),
                 "l": episode["outer_transition_count"],
                 **episode,
             }
-        return self._controlled_observation(), float(reward), self._done, info
+        return self._controlled_observation(), float(reward), done, info
 
-    def render(self, mode="rgb_array"):
-        if mode != "rgb_array":
-            raise NotImplementedError("only rgb_array mode is supported")
-        seller = self.core.seller.env.render(mode=mode)
-        buyer = self.core.buyer.env.render(mode=mode)
-        return np.concatenate([seller, buyer], axis=1)
 
-    def close(self):
-        self.core.close()
+def make_atari_meta_response_env(
+        *,
+        controlled_role,
+        e0b_checkpoint=None,
+        config=None,
+        context_sampler=None,
+        core_factory=DualAtariTradeCore,
+        controller_factory=None,
+        side_factory=None,
+        env_factory=None,
+        device="cpu",
+):
+    """Compose the shared bilateral game with the E1 response adapter."""
+
+    reward_env = BilateralAtariRewardEnv(
+        leader_role=controlled_role,
+        config=config,
+        core_factory=core_factory,
+        side_factory=side_factory,
+        env_factory=env_factory,
+    )
+    return AtariFixedCommitmentResponseWrapper(
+        reward_env,
+        e0b_checkpoint=e0b_checkpoint,
+        context_sampler=context_sampler,
+        controller_factory=controller_factory,
+        device=device,
+    )
 
 
 __all__ = [
+    "AtariFixedCommitmentResponseWrapper",
     "BUYER",
     "BilateralAtariConfig",
+    "BilateralAtariRewardEnv",
     "DualAtariTradeCore",
     "FrozenAtariPolicyController",
-    "MetaAtariResponseEnv",
     "ROLES",
     "SELLER",
+    "load_frozen_atari_model",
+    "make_atari_meta_response_env",
 ]

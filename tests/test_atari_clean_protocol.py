@@ -8,9 +8,11 @@ import torch
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTION_MASK,
+    ACTOR_OBSERVATION_FIELDS,
     ACTOR_STATE,
     ACTOR_STATE_DIM,
     CACHED_TRADE_REPLAY,
+    CRITIC_PREFIX,
     CRITIC_STATE,
     CRITIC_STATE_DIM,
     EVENT_SLICE,
@@ -23,7 +25,10 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
     action_space,
+    actor_observation,
+    validate_action,
 )
+from stackelberg_pomdp.atari.query_trace import LeaderQuery, QueryTraceError
 from stackelberg_pomdp.atari.stackpomdp_policy import (
     GatedCompositeAtariDistribution,
     StackPOMDPAtariPolicy,
@@ -71,6 +76,41 @@ def _batch(*observations):
         )
         for key in observations[0]
     )
+
+
+def test_actor_fields_and_critic_prefix_form_one_canonical_contract():
+    assert ACTOR_OBSERVATION_FIELDS == (IMAGE, ACTOR_STATE, ACTION_MASK)
+    assert CRITIC_STATE.startswith(CRITIC_PREFIX)
+    assert ACTION_CREDIT.startswith(CRITIC_PREFIX)
+
+    state = canonical_leader_state(0)
+    complete = _observation(state=state, kind=LEADER_QUERY)
+    actor = actor_observation(complete)
+    assert tuple(actor) == ACTOR_OBSERVATION_FIELDS
+    assert not any(name.startswith(CRITIC_PREFIX) for name in actor)
+
+    query = LeaderQuery.capture(0, complete, [0.0, 0.25])
+    assert tuple(
+        field.name for field in query.observation_fields
+    ) == ACTOR_OBSERVATION_FIELDS
+    complete["undeclared_actor_field"] = np.zeros(1, dtype=np.float32)
+    with np.testing.assert_raises_regex(QueryTraceError, "canonical actor fields"):
+        LeaderQuery.capture(0, complete, [0.0, 0.25])
+
+
+def test_validate_action_clips_both_coordinates_and_checks_shape():
+    np.testing.assert_array_equal(
+        validate_action([-2.0, 1.5], game_action_count=6),
+        np.array([0.0, 1.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        validate_action([9.0, -0.5], game_action_count=6),
+        np.array([5.0, 0.0], dtype=np.float32),
+    )
+    with np.testing.assert_raises_regex(ValueError, "game_action, economic"):
+        validate_action([1.0], game_action_count=6)
+    with np.testing.assert_raises_regex(ValueError, "must be positive"):
+        validate_action([1.0, 0.5], game_action_count=0)
 
 
 def test_canonical_actor_state_is_exactly_four_plus_five_plus_five():
@@ -165,6 +205,7 @@ def test_cache_reuses_full_query_action_but_replay_has_zero_log_probability():
     state = canonical_leader_state(1)
     query = _observation(state=state, kind=LEADER_QUERY)
     replay = _observation(state=state, kind=CACHED_TRADE_REPLAY)
+    replay[CRITIC_STATE].fill(7.0)
     query_batch = _batch(query)
     replay_batch = _batch(replay)
 

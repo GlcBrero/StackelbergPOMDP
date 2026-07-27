@@ -91,8 +91,16 @@ lossless encoding of an arbitrary full trace. A per-episode action map caches
 complete actions by exact actor-visible observations and resets only the rows
 whose outer episodes end.
 
-E2 reuses the same game-agnostic `StackPOMDPWrapper` as the other
-Stackelberg experiments. Its lower layers are:
+E1 and E2 reuse one bilateral base game. E1 merely supplies a sampled fixed
+opponent commitment and frozen opponent gameplay controller:
+
+```text
+AtariFixedCommitmentResponseWrapper
+  -> BilateralAtariRewardEnv
+```
+
+E2 reuses the same game-agnostic `StackPOMDPWrapper` as the non-Atari
+Stackelberg experiments:
 
 ```text
 StackPOMDPWrapper
@@ -100,7 +108,12 @@ StackPOMDPWrapper
        -> BilateralAtariRewardEnv
 ```
 
-`BilateralAtariRewardEnv` owns only Atari, trade, and payoff dynamics.
+`BilateralAtariRewardEnv` is a standard multi-agent `BaseEnv`: it receives the
+complete leader/follower action map, returns the leader's scalar reward, and
+places both players' rewards in `info["utilities"]`. It owns only Atari, trade,
+payoff, and accounting dynamics. The two response wrappers fill in follower
+actions and expose a single controlled policy; phase management remains in the
+generic wrapper.
 `AtariMetaFollowerWrapper` implements a frozen neural PI response: it records
 the five exact leader queries, finalizes their context, and then evaluates the
 opposite-role E1 policy deterministically during the reward game. E1 is where

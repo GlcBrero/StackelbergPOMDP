@@ -18,8 +18,10 @@ from typing import Any, Mapping, Sequence, Tuple
 import numpy as np
 
 from stackelberg_pomdp.atari.protocol import (
+    ACTOR_OBSERVATION_FIELDS,
     ACTOR_STATE,
     ACTOR_STATE_DIM,
+    CRITIC_PREFIX,
     EVENT_SLICE,
     FULL_ACTION_DIM,
     NUM_TRADE_EVENTS,
@@ -27,7 +29,6 @@ from stackelberg_pomdp.atari.protocol import (
 )
 
 
-CRITIC_PREFIX = "critic:"
 TRACE_FORMAT = "stackpomdp.atari.leader_query_trace"
 TRACE_FORMAT_VERSION = 2
 
@@ -100,7 +101,7 @@ class ObservationField:
     value: ArrayPayload
 
     def __post_init__(self):
-        if not self.name or self.name.startswith(CRITIC_PREFIX):
+        if self.name not in ACTOR_OBSERVATION_FIELDS:
             raise QueryTraceError(
                 f"invalid actor-visible observation field {self.name!r}"
             )
@@ -128,12 +129,21 @@ class LeaderQuery:
     def capture(cls, event_index, observation, full_action):
         if not isinstance(observation, Mapping):
             raise QueryTraceError("leader observation must be a mapping")
+        actor_names = tuple(
+            str(name)
+            for name in observation
+            if not str(name).startswith(CRITIC_PREFIX)
+        )
+        if set(actor_names) != set(ACTOR_OBSERVATION_FIELDS):
+            raise QueryTraceError(
+                "leader observation must contain exactly the canonical "
+                f"actor fields {ACTOR_OBSERVATION_FIELDS!r}"
+            )
         return cls(
             event_index=int(event_index),
             observation_fields=tuple(
-                ObservationField(str(name), ArrayPayload.capture(value))
-                for name, value in observation.items()
-                if not str(name).startswith(CRITIC_PREFIX)
+                ObservationField(name, ArrayPayload.capture(observation[name]))
+                for name in ACTOR_OBSERVATION_FIELDS
             ),
             full_action=ArrayPayload.capture(full_action),
         )
@@ -202,8 +212,11 @@ class LeaderQueryTrace:
         first_names = tuple(
             field.name for field in self.queries[0].observation_fields
         )
-        if ACTOR_STATE not in first_names:
-            raise QueryTraceError(f"canonical trace requires {ACTOR_STATE!r}")
+        if first_names != ACTOR_OBSERVATION_FIELDS:
+            raise QueryTraceError(
+                "canonical trace requires the ordered actor fields "
+                f"{ACTOR_OBSERVATION_FIELDS!r}"
+            )
         schema = tuple(
             (field.name, field.value.dtype, field.value.shape)
             for field in self.queries[0].observation_fields

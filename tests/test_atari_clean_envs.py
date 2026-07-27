@@ -22,10 +22,12 @@ from stackelberg_pomdp.atari.meta_response import (
     make_stackpomdp_atari_leader_env,
 )
 from stackelberg_pomdp.atari.stackpomdp_env import (
+    AtariFixedCommitmentResponseWrapper,
     BUYER,
     SELLER,
     BilateralAtariConfig,
-    MetaAtariResponseEnv,
+    BilateralAtariRewardEnv,
+    make_atari_meta_response_env,
 )
 from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
 
@@ -204,7 +206,7 @@ def test_e0a_and_e0b_use_one_interface_and_exact_branch_credit():
 
 def test_e1_exposes_all_gameplay_and_trade_steps_with_common_reward():
     prices = np.full(5, 0.2, dtype=np.float32)
-    env = MetaAtariResponseEnv(
+    env = make_atari_meta_response_env(
         controlled_role=BUYER,
         config=_bilateral_config(),
         context_sampler=lambda rng: prices,
@@ -212,6 +214,10 @@ def test_e1_exposes_all_gameplay_and_trade_steps_with_common_reward():
         side_factory=_FakeSide,
     )
     try:
+        assert isinstance(env, AtariFixedCommitmentResponseWrapper)
+        assert isinstance(env.env, BilateralAtariRewardEnv)
+        assert env.env.leader == BUYER
+        assert env.env.followers_list == [SELLER]
         observation = env.reset()
         rewards = []
         substeps = []
@@ -230,6 +236,63 @@ def test_e1_exposes_all_gameplay_and_trade_steps_with_common_reward():
         assert np.isclose(sum(rewards), 4.0)
         assert info["outer_transition_count"] == 12
         assert info["buyer_payoff_error"] == 0.0
+    finally:
+        env.close()
+
+
+def test_bilateral_base_uses_the_common_leader_follower_contract():
+    env = BilateralAtariRewardEnv(
+        leader_role=SELLER,
+        config=_bilateral_config(),
+        side_factory=_FakeSide,
+    )
+    try:
+        observations = env.reset(seed=123)
+        assert tuple(observations) == (SELLER, BUYER)
+        assert env.leader == SELLER
+        assert env.followers_list == [BUYER]
+        assert env.action_space == env.followers_action_space[BUYER]
+
+        _, reward, done, info = env.step({
+            SELLER: np.array([0.0, 0.4], dtype=np.float32),
+            BUYER: np.array([0.0, 0.6], dtype=np.float32),
+        })
+        assert not done
+        assert np.isclose(reward, 0.4)
+        assert np.isclose(info["surplus"], reward)
+        assert np.isclose(info["utilities"][SELLER], 0.4)
+        assert np.isclose(info["utilities"][BUYER], -0.4)
+        assert info["reward_generated"]
+        assert not info["emulator_advanced"]
+    finally:
+        env.close()
+
+
+def test_e1_seller_response_preserves_role_reversal_and_reward_owner():
+    thresholds = np.full(5, 0.3, dtype=np.float32)
+    env = make_atari_meta_response_env(
+        controlled_role=SELLER,
+        config=_bilateral_config(),
+        context_sampler=lambda rng: thresholds,
+        controller_factory=_ZeroGameController,
+        side_factory=_FakeSide,
+    )
+    try:
+        observation = env.reset()
+        total_reward = 0.0
+        done = False
+        while not done:
+            observation, reward, done, info = env.step([FIRE, 0.8])
+            total_reward += reward
+
+        assert info["controlled_role"] == SELLER
+        assert info["leader_role"] == SELLER
+        assert info["follower_role"] == BUYER
+        assert info["purchases"] == 0
+        assert info["seller_shots_fired"] == 5
+        assert np.isclose(total_reward, 0.5)
+        assert np.isclose(info["seller_reward"], total_reward)
+        assert info["seller_payoff_error"] == 0.0
     finally:
         env.close()
 
@@ -291,6 +354,45 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
             env.follower_wrapper.leader_query_trace.to_json_bytes()
         )
         assert restored.sha256 == env.follower_wrapper.leader_query_trace.sha256
+        assert len(follower.observations) == 12
+    finally:
+        env.close()
+
+
+def test_e2_buyer_leader_uses_seller_response_and_buyer_reward():
+    follower = _FrozenFollower(SELLER, economic_action=0.0)
+    env = make_stackpomdp_atari_leader_env(
+        leader_role=BUYER,
+        response_checkpoint="unused.zip",
+        config=_bilateral_config(),
+        response_model_factory=lambda path, device: follower,
+        side_factory=_FakeSide,
+    )
+    try:
+        observation = env.reset()
+        query_action = np.array([0.0, 1.0], dtype=np.float32)
+        for _ in range(5):
+            observation, reward, done, _ = env.step(query_action)
+            assert reward == 0.0 and not done
+
+        total_reward = 0.0
+        done = False
+        while not done:
+            action = (
+                query_action
+                if np.array_equal(observation[ACTION_CREDIT], [0, 0])
+                else np.array([FIRE, 0.5], dtype=np.float32)
+            )
+            observation, reward, done, info = env.step(action)
+            total_reward += reward
+
+        assert info["leader_role"] == BUYER
+        assert info["follower_role"] == SELLER
+        assert info["purchases"] == 5
+        assert info["buyer_shots_fired"] == 5
+        assert np.isclose(total_reward, 5.0)
+        assert np.isclose(info["leader_reward"], total_reward)
+        assert info["cache_hits"] == 5
         assert len(follower.observations) == 12
     finally:
         env.close()

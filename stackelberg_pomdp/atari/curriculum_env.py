@@ -16,6 +16,7 @@ from stackelberg_pomdp.atari.protocol import (
     actor_state,
     observation,
     observation_space,
+    validate_action,
 )
 from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
 
@@ -173,16 +174,6 @@ class AtariCurriculumEnv(gym.Env):
         )
         return self._observation()
 
-    @staticmethod
-    def _validated_action(action, game_action_count):
-        values = np.asarray(action, dtype=np.float32).reshape(-1)
-        if values.shape != (2,):
-            raise ValueError("Atari action must be [game_action, economic]")
-        return np.array([
-            np.clip(values[0], 0.0, game_action_count - 1),
-            np.clip(values[1], 0.0, 1.0),
-        ], dtype=np.float32)
-
     def _episode_info(self):
         expected = (
             NUM_TRADE_EVENTS
@@ -215,7 +206,7 @@ class AtariCurriculumEnv(gym.Env):
     def step(self, action):
         if self._done:
             raise RuntimeError("step called after E0 outer episode termination")
-        values = self._validated_action(action, self.side.game_action_count)
+        values = validate_action(action, self.side.game_action_count)
         if self.at_event:
             calls_before = self.side.step_calls
             granted = self.side.grant(1)

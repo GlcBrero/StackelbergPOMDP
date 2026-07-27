@@ -24,10 +24,12 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureC
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTION_MASK,
+    ACTOR_OBSERVATION_FIELDS,
     ACTOR_STATE,
     ACTOR_STATE_DIM,
     CRITIC_STATE,
     CRITIC_STATE_DIM,
+    CRITIC_PREFIX,
     EVENT_SLICE,
     FULL_ACTION_DIM,
     IMAGE,
@@ -50,7 +52,10 @@ class CompositeAtariFeaturesExtractor(BaseFeaturesExtractor):
     ):
         if not isinstance(observation_space, gym.spaces.Dict):
             raise TypeError("composite Atari policy requires Dict observations")
-        required = {IMAGE, ACTOR_STATE, ACTION_MASK, CRITIC_STATE, ACTION_CREDIT}
+        required = set(ACTOR_OBSERVATION_FIELDS) | {
+            CRITIC_STATE,
+            ACTION_CREDIT,
+        }
         missing = required - set(observation_space.spaces)
         if missing:
             raise ValueError(f"Atari observation missing keys: {sorted(missing)}")
@@ -276,10 +281,24 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
     @staticmethod
     def _validate_spaces(observation_space, action_space):
-        required = {IMAGE, ACTOR_STATE, ACTION_MASK, CRITIC_STATE, ACTION_CREDIT}
+        required = set(ACTOR_OBSERVATION_FIELDS) | {
+            CRITIC_STATE,
+            ACTION_CREDIT,
+        }
         missing = required - set(observation_space.spaces)
         if missing:
             raise ValueError(f"Atari observation missing keys: {sorted(missing)}")
+        unexpected_actor_fields = {
+            name
+            for name in observation_space.spaces
+            if name not in ACTOR_OBSERVATION_FIELDS
+            and not name.startswith(CRITIC_PREFIX)
+        }
+        if unexpected_actor_fields:
+            raise ValueError(
+                "Atari observation has undeclared actor-visible keys: "
+                f"{sorted(unexpected_actor_fields)}"
+            )
         expected = {
             ACTOR_STATE: ACTOR_STATE_DIM,
             CRITIC_STATE: CRITIC_STATE_DIM,
@@ -530,9 +549,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         """Hash one actor observation; omit all ``critic:*`` bookkeeping."""
 
         digest = hashlib.sha256()
-        for name in self.observation_space.spaces:
-            if name.startswith("critic:"):
-                continue
+        for name in ACTOR_OBSERVATION_FIELDS:
             values = observations[name][row].detach().cpu()
             array = values.contiguous().numpy()
             digest.update(name.encode("utf-8"))

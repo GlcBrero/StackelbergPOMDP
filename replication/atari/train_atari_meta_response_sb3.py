@@ -34,7 +34,7 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
-    MetaAtariResponseEnv,
+    make_atari_meta_response_env,
 )
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
@@ -73,7 +73,7 @@ def bilateral_config(args, *, seed):
 
 
 def make_env(args, *, seed, context_sampler=None):
-    return MetaAtariResponseEnv(
+    return make_atari_meta_response_env(
         controlled_role=args.role,
         e0b_checkpoint=args.e0b_checkpoint,
         config=bilateral_config(args, seed=seed),
