@@ -1,10 +1,8 @@
-"""Native Gym/SB3 components for the Atari replication.
+"""Clean Gym/SB3 implementation of the Atari Stackelberg curriculum.
 
-The legacy RLlib replication remains under :mod:`stackelberg_pomdp.atari_models`
-and :mod:`stackelberg_pomdp.gym_envs.envs.atari_envs`.  This package is the
-framework-independent environment path used by the native SB3 experiments.
+The package deliberately has no eager imports.  Environment, protocol, and
+policy classes live in focused modules so importing the raw ALE environment
+does not also initialize Stable-Baselines3.
 """
 
-from stackelberg_pomdp.atari.factory import AtariBuyerEnvConfig, make_atari_buyer_env
-
-__all__ = ["AtariBuyerEnvConfig", "make_atari_buyer_env"]
+__all__ = []

@@ -1,7 +1,6 @@
-"""Composable Gym wrappers for scarce-ammo and priced Atari gameplay."""
+"""Composable preprocessing and scarce-ammunition wrappers for Atari."""
 
-from collections import deque, OrderedDict
-from dataclasses import dataclass
+from collections import deque
 
 import cv2
 import gym
@@ -13,7 +12,7 @@ cv2.ocl.setUseOpenCL(False)
 
 
 class AmmoLedger:
-    """Shared, explicit bullet inventory used by ammo and market wrappers."""
+    """Shared, explicit bullet inventory for gameplay and trade ledgers."""
 
     def __init__(self, *, initial_ammo, capacity):
         self.initial_ammo = int(initial_ammo)
@@ -130,7 +129,9 @@ class ScarceAmmoWrapper(gym.Wrapper):
             mask[list(self.fire_action_indices)] = 0.0
         return mask
 
-    def _remove_fire(self, action):
+    def without_fire(self, action):
+        """Return the movement-only form of an Atari action."""
+
         meaning = self.action_meanings[action]
         if "FIRE" not in meaning:
             return action
@@ -153,9 +154,12 @@ class ScarceAmmoWrapper(gym.Wrapper):
         blocked_fire = False
         if (
                 "FIRE" in self.action_meanings[action]
-                and not self.ledger.available(1)
+                and (
+                    self.projectile_active()
+                    or not self.ledger.available(1)
+                )
         ):
-            action = self._remove_fire(action)
+            action = self.without_fire(action)
             blocked_fire = True
 
         observation, reward, done, info = self.env.step(action)
@@ -217,9 +221,7 @@ class MaxAndSkipWrapper(gym.Wrapper):
         return merged
 
     def reset(self):
-        # Preserve the historical DeepMind/StackeRLberg buffer semantics.  In
-        # particular, an episodic-life termination before the final two raw
-        # frames leaves the corresponding prior buffer entry intact.
+        # Match the historical DeepMind/StackeRLberg frame-buffer semantics.
         return self.env.reset()
 
     def step(self, action):
@@ -228,7 +230,14 @@ class MaxAndSkipWrapper(gym.Wrapper):
         info = {}
         observation = None
         for index in range(self.skip):
-            observation, reward, done, frame_info = self.env.step(action)
+            # FIRE is one policy command, not four fire presses. Repeating the
+            # movement component is safe; later raw frames remove FIRE.
+            frame_action = action
+            if index > 0 and hasattr(self.env, "without_fire"):
+                frame_action = self.env.without_fire(
+                    int(np.asarray(action).reshape(-1)[0])
+                )
+            observation, reward, done, frame_info = self.env.step(frame_action)
             total_reward += float(reward)
             info = self._merge_info(info, frame_info)
             if index >= self.skip - 2:
@@ -293,574 +302,13 @@ class FrameStackWrapper(gym.Wrapper):
         return self._observation(), reward, done, info
 
 
-class PriceProcess:
-    def reset(self, seed=None):
-        return
-
-    def sample(self):
-        raise NotImplementedError
-
-
-class NoPriceProcess(PriceProcess):
-    def sample(self):
-        return 0.0
-
-
-class FixedPriceProcess(PriceProcess):
-    def __init__(self, price):
-        self.price = float(price)
-
-    def sample(self):
-        return self.price
-
-
-class UniformPriceProcess(PriceProcess):
-    def __init__(self, low=0.0, high=1.0, *, seed=1):
-        self.low = float(low)
-        self.high = float(high)
-        if not 0.0 <= self.low <= self.high:
-            raise ValueError("uniform prices require 0 <= low <= high")
-        self.seed_value = int(seed)
-        self.rng = np.random.default_rng(self.seed_value)
-
-    def reset(self, seed=None):
-        if seed is not None:
-            self.seed_value = int(seed)
-            self.rng = np.random.default_rng(self.seed_value)
-
-    def sample(self):
-        return float(self.rng.uniform(self.low, self.high))
-
-
-class OfferTimingProcess:
-    """Decide whether the seller makes its one-shot offer this decision."""
-
-    def reset(self, seed=None):
-        return
-
-    def should_offer(self, decision_step):
-        raise NotImplementedError
-
-
-class ImmediateOfferTimingProcess(OfferTimingProcess):
-    """Historical control: use the next opportunity immediately."""
-
-    def should_offer(self, decision_step):
-        del decision_step
-        return True
-
-
-class BernoulliOfferTimingProcess(OfferTimingProcess):
-    """Independent stochastic seller wait/offer decisions."""
-
-    def __init__(self, probability=0.04, *, seed=1):
-        self.probability = float(probability)
-        if not 0.0 <= self.probability <= 1.0:
-            raise ValueError("offer probability must lie in [0, 1]")
-        self.seed_value = int(seed)
-        self.rng = np.random.default_rng(self.seed_value)
-
-    def reset(self, seed=None):
-        if seed is not None:
-            self.seed_value = int(seed)
-            self.rng = np.random.default_rng(self.seed_value)
-
-    def should_offer(self, decision_step):
-        del decision_step
-        return bool(self.rng.random() < self.probability)
-
-
-@dataclass
-class MarketState:
-    offer_active: bool = False
-    current_price: float = 0.0
-    opportunities_used: int = 0
-    accepted_trades: int = 0
-    decision_step: int = 0
-
-
-class BulletMarketWrapper(gym.Wrapper):
-    """Add finite one-bullet offers around otherwise ordinary gameplay."""
-
-    def __init__(
-            self,
-            env,
-            *,
-            ledger,
-            price_process,
-            timing_process=None,
-            trade_enabled,
-            offer_chances=5,
-            max_purchases=5,
-            price_max=1.0,
-            episode_horizon=None,
-    ):
-        super().__init__(env)
-        self.ledger = ledger
-        self.price_process = price_process
-        self.timing_process = timing_process or ImmediateOfferTimingProcess()
-        self.trade_enabled = bool(trade_enabled)
-        self.offer_chances = int(offer_chances)
-        self.max_purchases = int(max_purchases)
-        self.price_max = float(price_max)
-        self.episode_horizon = (
-            None if episode_horizon is None else int(episode_horizon)
-        )
-        if self.offer_chances < 0 or self.max_purchases < 0:
-            raise ValueError("offer and purchase limits must be nonnegative")
-        if self.max_purchases > self.offer_chances:
-            raise ValueError("max_purchases cannot exceed offer_chances")
-        if self.price_max <= 0:
-            raise ValueError("price_max must be positive")
-        if self.episode_horizon is not None and self.episode_horizon <= 0:
-            raise ValueError("episode_horizon must be positive")
-        self.game_action_count = int(self.env.action_space.n)
-        self.action_space = spaces.Box(
-            low=np.array([0.0, 0.0], dtype=np.float32),
-            high=np.array(
-                [float(self.game_action_count - 1), self.price_max],
-                dtype=np.float32,
-            ),
-            dtype=np.float32,
-        )
-        self.state = MarketState()
-
-    @property
-    def remaining_opportunities(self):
-        return max(self.offer_chances - self.state.opportunities_used, 0)
-
-    @property
-    def normalized_timestep(self):
-        if self.episode_horizon is None:
-            return 0.0
-        return float(np.clip(
-            self.state.decision_step / float(self.episode_horizon),
-            0.0,
-            1.0,
-        ))
-
-    @property
-    def time_remaining(self):
-        return 1.0 - self.normalized_timestep
-
-    @staticmethod
-    def time_bin(normalized_timestep):
-        value = float(normalized_timestep)
-        if value < 1.0 / 3.0:
-            return "early"
-        if value < 2.0 / 3.0:
-            return "middle"
-        return "late"
-
-    def _can_offer(self):
-        return bool(
-            self.trade_enabled
-            and self.state.opportunities_used < self.offer_chances
-            and self.state.accepted_trades < self.max_purchases
-            and (
-                self.episode_horizon is None
-                or self.state.decision_step < self.episode_horizon
-            )
-        )
-
-    def _prepare_offer(self):
-        self.state.offer_active = bool(
-            self._can_offer()
-            and self.timing_process.should_offer(self.state.decision_step)
-        )
-        self.state.current_price = (
-            float(np.clip(self.price_process.sample(), 0.0, self.price_max))
-            if self.state.offer_active
-            else 0.0
-        )
-
-    def reset(self):
-        observation = self.env.reset()
-        self.state = MarketState()
-        self.price_process.reset()
-        self.timing_process.reset()
-        self._prepare_offer()
-        return observation
-
-    def step(self, action):
-        values = np.asarray(action, dtype=np.float32).reshape(-1)
-        if len(values) != 2:
-            raise ValueError("Atari buyer action must be [game_action, threshold]")
-        game_action = int(
-            np.clip(np.rint(values[0]), 0, self.game_action_count - 1)
-        )
-        threshold = float(np.clip(values[1], 0.0, self.price_max))
-
-        trade_event = bool(self.state.offer_active)
-        offered_price = self.state.current_price if trade_event else 0.0
-        offer_step = int(self.state.decision_step)
-        normalized_timestep = float(self.normalized_timestep)
-        time_remaining = float(self.time_remaining)
-        time_bin = self.time_bin(normalized_timestep)
-        opportunities_remaining_before = int(self.remaining_opportunities)
-        ammo_before_trade = int(self.ledger.value)
-        traded = False
-        payment = 0.0
-        if trade_event:
-            self.state.opportunities_used += 1
-            if offered_price <= threshold:
-                granted = self.ledger.grant(1)
-                if granted != 1:
-                    raise RuntimeError("accepted trade could not transfer one bullet")
-                self.state.accepted_trades += 1
-                traded = True
-                payment = offered_price
-        ammo_after_trade = int(self.ledger.value)
-        opportunities_remaining_after = int(self.remaining_opportunities)
-
-        observation, game_reward, done, info = self.env.step(game_action)
-        net_reward = float(game_reward) - payment
-        info = dict(info)
-        info.update({
-            "game_reward": float(game_reward),
-            "payment": float(payment),
-            "net_reward": float(net_reward),
-            "trade_event": trade_event,
-            "trade_this_step": traded,
-            "price_offered": float(offered_price),
-            "threshold": threshold,
-            "offer_step": offer_step,
-            "normalized_timestep": normalized_timestep,
-            "time_remaining": time_remaining,
-            "time_bin": time_bin,
-            "ammo_before_trade": ammo_before_trade,
-            "ammo_after_trade": ammo_after_trade,
-            "opportunities_remaining_before": opportunities_remaining_before,
-            "opportunities_remaining_after": opportunities_remaining_after,
-            "offer_events_used": int(self.state.opportunities_used),
-            "accepted_trades": int(self.state.accepted_trades),
-            "ammo_remaining": int(self.ledger.value),
-        })
-
-        self.state.decision_step += 1
-        if done:
-            self.state.offer_active = False
-            self.state.current_price = 0.0
-        else:
-            self._prepare_offer()
-        return observation, net_reward, done, info
-
-
-class AsymmetricBuyerObservationWrapper(gym.ObservationWrapper):
-    """Keep gameplay inputs stable while optionally exposing economic context."""
-
-    def __init__(
-            self,
-            env,
-            *,
-            ledger,
-            ammo_wrapper,
-            market_wrapper,
-            actor_economic_context=False,
-    ):
-        super().__init__(env)
-        self.ledger = ledger
-        self.ammo_wrapper = ammo_wrapper
-        self.market_wrapper = market_wrapper
-        self.actor_economic_context = bool(actor_economic_context)
-        if (
-                self.actor_economic_context
-                and self.market_wrapper.episode_horizon is None
-        ):
-            raise ValueError(
-                "actor economic context requires a finite episode horizon"
-            )
-        game_actions = self.ammo_wrapper.action_space.n
-        observation_spaces = OrderedDict([
-            ("image", self.env.observation_space),
-            (
-                "ammo_fraction",
-                spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-            ),
-            (
-                "projectile_active",
-                spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-            ),
-            (
-                "action_mask",
-                spaces.Box(
-                    0.0, 1.0, shape=(game_actions,), dtype=np.float32
-                ),
-            ),
-            (
-                "offer_active",
-                spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-            ),
-            (
-                "opportunities_remaining",
-                spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-            ),
-        ])
-        if self.actor_economic_context:
-            observation_spaces.update([
-                (
-                    "price",
-                    spaces.Box(
-                        0.0,
-                        self.market_wrapper.price_max,
-                        shape=(1,),
-                        dtype=np.float32,
-                    ),
-                ),
-                (
-                    "normalized_timestep",
-                    spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-                ),
-                (
-                    "time_remaining",
-                    spaces.Box(0.0, 1.0, shape=(1,), dtype=np.float32),
-                ),
-            ])
-        observation_spaces["critic:price"] = spaces.Box(
-            0.0,
-            self.market_wrapper.price_max,
-            shape=(1,),
-            dtype=np.float32,
-        )
-        self.observation_space = spaces.Dict(observation_spaces)
-
-    def observation(self, observation):
-        market = self.market_wrapper
-        remaining_fraction = (
-            float(market.remaining_opportunities) / float(market.offer_chances)
-            if market.offer_chances
-            else 0.0
-        )
-        result = OrderedDict([
-            ("image", observation),
-            (
-                "ammo_fraction",
-                np.array([self.ledger.fraction], dtype=np.float32),
-            ),
-            (
-                "projectile_active",
-                np.array(
-                    [float(self.ammo_wrapper.projectile_active())],
-                    dtype=np.float32,
-                ),
-            ),
-            ("action_mask", self.ammo_wrapper.action_mask()),
-            (
-                "offer_active",
-                np.array(
-                    [float(market.state.offer_active)], dtype=np.float32
-                ),
-            ),
-            (
-                "opportunities_remaining",
-                np.array([remaining_fraction], dtype=np.float32),
-            ),
-        ])
-        visible_price = (
-            market.state.current_price if market.state.offer_active else 0.0
-        )
-        if self.actor_economic_context:
-            result.update([
-                (
-                    "price",
-                    np.array([visible_price], dtype=np.float32),
-                ),
-                (
-                    "normalized_timestep",
-                    np.array(
-                        [market.normalized_timestep], dtype=np.float32
-                    ),
-                ),
-                (
-                    "time_remaining",
-                    np.array([market.time_remaining], dtype=np.float32),
-                ),
-            ])
-        result["critic:price"] = np.array(
-            [visible_price], dtype=np.float32
-        )
-        return result
-
-
-class AtariEpisodeMetricsWrapper(gym.Wrapper):
-    def __init__(self, env, *, ledger, max_steps=None):
-        super().__init__(env)
-        self.ledger = ledger
-        self.max_steps = None if max_steps is None else int(max_steps)
-        if self.max_steps is not None and self.max_steps <= 0:
-            raise ValueError("max_steps must be positive")
-        self._reset_metrics()
-
-    def _reset_metrics(self):
-        self.episode_reward = 0.0
-        self.episode_game_reward = 0.0
-        self.episode_payments = 0.0
-        self.episode_steps = 0
-        self.episode_shots = 0
-        self.episode_purchases = 0
-        self.episode_opportunities = 0
-        self.trade_events = []
-        self.offer_counts_by_time = {
-            name: 0 for name in ("early", "middle", "late")
-        }
-        self.purchase_counts_by_time = {
-            name: 0 for name in ("early", "middle", "late")
-        }
-
-    def _timing_metrics(self):
-        offer_steps = [event["offer_step"] for event in self.trade_events]
-        offer_times = [
-            event["normalized_timestep"] for event in self.trade_events
-        ]
-        purchases = [event for event in self.trade_events if event["accepted"]]
-        purchase_steps = [event["offer_step"] for event in purchases]
-        purchase_times = [
-            event["normalized_timestep"] for event in purchases
-        ]
-        result = {
-            "offer_step_sum": float(sum(offer_steps)),
-            "offer_normalized_timestep_sum": float(sum(offer_times)),
-            "purchase_step_sum": float(sum(purchase_steps)),
-            "purchase_normalized_timestep_sum": float(sum(purchase_times)),
-            "mean_offer_step": (
-                float(np.mean(offer_steps)) if offer_steps else 0.0
-            ),
-            "mean_offer_normalized_timestep": (
-                float(np.mean(offer_times)) if offer_times else 0.0
-            ),
-            "mean_purchase_step": (
-                float(np.mean(purchase_steps)) if purchase_steps else 0.0
-            ),
-            "mean_purchase_normalized_timestep": (
-                float(np.mean(purchase_times)) if purchase_times else 0.0
-            ),
-            "last_offer_accepted": (
-                float(self.trade_events[-1]["accepted"])
-                if self.trade_events
-                else 0.0
-            ),
-        }
-        for name in ("early", "middle", "late"):
-            offers = int(self.offer_counts_by_time[name])
-            accepted = int(self.purchase_counts_by_time[name])
-            result[f"offer_count_{name}"] = offers
-            result[f"purchase_count_{name}"] = accepted
-            result[f"rejection_count_{name}"] = offers - accepted
-            result[f"acceptance_rate_{name}"] = (
-                float(accepted) / float(offers) if offers else 0.0
-            )
-        late_offers = result["offer_count_late"]
-        result["late_rejection_rate"] = (
-            float(result["rejection_count_late"]) / float(late_offers)
-            if late_offers
-            else 0.0
-        )
-        return result
-
-    def reset(self):
-        self._reset_metrics()
-        return self.env.reset()
-
-    def step(self, action):
-        observation, reward, done, info = self.env.step(action)
-        info = dict(info)
-        self.episode_reward += float(reward)
-        self.episode_game_reward += float(info.get("game_reward", reward))
-        self.episode_payments += float(info.get("payment", 0.0))
-        self.episode_steps += 1
-        self.episode_shots += int(info.get("shots_fired_this_step", 0))
-        self.episode_purchases += int(bool(info.get("trade_this_step", False)))
-        self.episode_opportunities += int(bool(info.get("trade_event", False)))
-        if info.get("trade_event", False):
-            time_bin = str(info["time_bin"])
-            if time_bin not in self.offer_counts_by_time:
-                raise RuntimeError(f"unknown trade time bin: {time_bin}")
-            accepted = bool(info.get("trade_this_step", False))
-            event = {
-                "opportunity_index": int(self.episode_opportunities - 1),
-                "offer_step": int(info["offer_step"]),
-                "normalized_timestep": float(info["normalized_timestep"]),
-                "time_remaining": float(info["time_remaining"]),
-                "time_bin": time_bin,
-                "price": float(info["price_offered"]),
-                "threshold": float(info["threshold"]),
-                "accepted": accepted,
-                "ammo_before_trade": int(info["ammo_before_trade"]),
-                "ammo_after_trade": int(info["ammo_after_trade"]),
-                "ammo_end_step": int(info.get("ammo_remaining", 0)),
-                "shot_this_step": bool(info.get("shot_did_fire", False)),
-                "shots_fired_this_step": int(
-                    info.get("shots_fired_this_step", 0)
-                ),
-                "opportunities_remaining_before": int(
-                    info["opportunities_remaining_before"]
-                ),
-                "opportunities_remaining_after": int(
-                    info["opportunities_remaining_after"]
-                ),
-            }
-            self.trade_events.append(event)
-            self.offer_counts_by_time[time_bin] += 1
-            self.purchase_counts_by_time[time_bin] += int(accepted)
-        if self.max_steps is not None and self.episode_steps >= self.max_steps:
-            done = True
-
-        reward_per_bullet = (
-            self.episode_game_reward / self.episode_shots
-            if self.episode_shots
-            else 0.0
-        )
-        timing_metrics = self._timing_metrics()
-        unused_purchased_bullets = max(
-            int(self.episode_purchases - self.episode_shots), 0
-        )
-        info.update({
-            "episode_reward": float(self.episode_reward),
-            "episode_game_reward": float(self.episode_game_reward),
-            "episode_payments": float(self.episode_payments),
-            "episode_length": int(self.episode_steps),
-            "shots_fired": int(self.episode_shots),
-            "purchases": int(self.episode_purchases),
-            "trade_opportunities": int(self.episode_opportunities),
-            "final_ammo": int(self.ledger.value),
-            "reward_per_bullet": float(reward_per_bullet),
-            "fired_fraction_of_purchases": (
-                float(self.episode_shots) / float(self.episode_purchases)
-                if self.episode_purchases
-                else 0.0
-            ),
-            "unused_purchased_bullets": unused_purchased_bullets,
-            **timing_metrics,
-        })
-        if done:
-            acceptance_rate = (
-                float(self.episode_purchases) / float(self.episode_opportunities)
-                if self.episode_opportunities
-                else 0.0
-            )
-            fired_fraction = (
-                float(self.episode_shots) / float(self.episode_purchases)
-                if self.episode_purchases
-                else 0.0
-            )
-            info["trade_events"] = list(self.trade_events)
-            info["episode"] = {
-                "r": float(self.episode_reward),
-                "l": int(self.episode_steps),
-                "game_reward": float(self.episode_game_reward),
-                "payments": float(self.episode_payments),
-                "shots_fired": int(self.episode_shots),
-                "purchases": int(self.episode_purchases),
-                "trade_opportunities": int(self.episode_opportunities),
-                "final_ammo": int(self.ledger.value),
-                "reward_per_bullet": float(reward_per_bullet),
-                "acceptance_rate": acceptance_rate,
-                "fired_fraction_of_purchases": fired_fraction,
-                "unused_purchased_bullets": unused_purchased_bullets,
-                **timing_metrics,
-            }
-            for count in range(6):
-                info["episode"][f"opportunity_count_is_{count}"] = float(
-                    self.episode_opportunities == count
-                )
-        return observation, reward, done, info
+__all__ = [
+    "AmmoLedger",
+    "ClipGameRewardWrapper",
+    "EpisodicLifeWrapper",
+    "FrameStackWrapper",
+    "MaxAndSkipWrapper",
+    "NoopResetWrapper",
+    "ScarceAmmoWrapper",
+    "WarpFrameWrapper",
+]

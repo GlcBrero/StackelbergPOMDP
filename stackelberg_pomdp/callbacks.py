@@ -41,8 +41,21 @@ class FixPolicyActionsCallback(BaseCallback):
         super(FixPolicyActionsCallback, self).__init__()
 
     def _on_step(self) -> bool:
-        if self.locals.get('dones', [False])[0]:
-            self.model.policy.clear_obs_action_map()
+        dones = np.asarray(
+            self.locals.get("dones", [False]), dtype=bool
+        ).reshape(-1)
+        completed_rows = np.flatnonzero(dones)
+        if completed_rows.size:
+            clear = self.model.policy.clear_obs_action_map
+            try:
+                # Composite Atari policies keep independent caches for each
+                # vector-environment row.  Finishing row 1 must not erase the
+                # still-active commitment sampled for row 0.
+                clear(rows=completed_rows.tolist())
+            except TypeError:
+                # Older game-agnostic policies expose only all-or-nothing
+                # clearing.  Preserve their established single-env behavior.
+                clear()
         return True
 
     def _init_callback(self):
