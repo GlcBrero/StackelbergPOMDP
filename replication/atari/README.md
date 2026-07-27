@@ -271,6 +271,101 @@ with the same observation/action interface and retains the price-informed
 critic. Because the immediate-offer frozen-gameplay E1 control passed cleanly,
 no joint fine-tuning run was started as part of that control.
 
+## Continuous Atari StackPOMDP pilots
+
+The bilateral StackPOMDP experiment builds on the canonical E0 controller
+without retraining Atari gameplay. It is distinct from the single-buyer E1
+controls above:
+
+- the seller and buyer each run an independent Space Invaders emulator;
+- five trade times are sampled exogenously before a reserved gameplay tail;
+- one bullet arrives to the seller at each event;
+- the seller receives `0.1` times its clipped game reward plus payments;
+- the buyer receives clipped game reward minus immediate payments;
+- both gameplay branches are immutable E0 deterministic-argmax policies;
+- only scalar price or threshold heads and their value functions train;
+- all returns are undiscounted (`gamma = gae_lambda = 1`).
+
+At a trade event the actor sees a dummy image, the event one-hot vector,
+ammo, and the opponent's five queried economic actions. It does not see the
+realized game clock. The complete actor output remains
+`[Atari action, economic action]`; the Atari component is irrelevant on a
+paused trade step, but retaining it makes each query a query to the full
+policy. Because the five query observations are fixed canonical trade states,
+the existing economic head's five-action context is a verified lossless
+projection of the retained full observation-action trace.
+
+The leader episode is not event-compressed. PPO stores exactly:
+
+```text
+5 zero-reward policy queries + 200 gameplay steps + 5 paused trades = 210
+```
+
+The policy caches the complete action for each complete actor-visible query
+observation and reuses it when the identical trade observation recurs. Critic
+fields are excluded from the cache key. `n_steps` is therefore exactly `210`;
+query, gameplay, and trade transitions all remain in the rollout buffer. The
+older `StackPOMDPAtariLeaderEnv` is retained only as a mechanics diagnostic;
+paper-facing leader training uses `FullTraceStackPOMDPAtariLeaderEnv`.
+
+### Validation and meta-buyer result
+
+The clean committed Atari suite contains 49 passing tests. A real-ROM, full-horizon
+seller-leader smoke retained all 210 transitions, produced five policy-cache
+hits, transferred five bullets, and the frozen buyer fired all five with zero
+bullet/payoff accounting error. A corresponding buyer-leader smoke also
+completed the full trace and exercised accepted and rejected offers.
+
+The seed-1 meta-buyer pilot completed 100,000 economic decisions at
+[`n9xx877d`](https://wandb.ai/glcbrero/StackPOMDP/runs/n9xx877d). Its frozen
+audit checkpoint is:
+
+```text
+replication/atari/checkpoints/stackpomdp/meta_buyer_response_ppo_seed1_100k_audited.zip
+```
+
+An independent finalized-source evaluation used 20 episodes for each fixed
+context and 100 `Uniform(0,1)^5` price contexts. Mean random-context net reward
+was `1.1626`; purchases/shots were `3.72/3.71`, final ammo was `0.01`, and all
+accounting errors were zero. Its mean threshold was `0.7526`. It bought all
+five bullets at fixed prices through `0.75`, rejected all at `1.00`, and fired
+all purchased bullets except one bullet across the 20 zero-price episodes.
+The realized-time acceptance rates were `72.7%`, `75.2%`, and `77.2%` in the
+early, middle, and late bins. That near-flat pattern is expected here because
+the agreed trade-only actor observes event identity, not the realized clock.
+The complete audit is
+`meta_buyer_response_ppo_seed1_100k_audited.full_evaluation_seed200101.json`.
+
+This is a seed-1 pilot, not a publication-grade multi-seed equilibrium result.
+
+### Matched overnight run
+
+`run_stackpomdp_100k_pilots_local.sh` runs the remaining matched diagnostics
+sequentially to avoid oversubscribing the local machine:
+
+1. meta-seller price response to random five-threshold contexts;
+2. seller leader against the audited meta-buyer;
+3. buyer leader against the selected meta-seller.
+
+The meta-response callback retains step-suffixed checkpoint/evaluation bundles
+and selects `*_best.zip` by paired fixed-seed random-context mean controlled
+reward. The runner then performs an independent 20-fixed/100-random audit of
+the selected meta-seller. Leader rollouts preserve complete 210-transition
+episodes and finish at 100,800 transitions when four vector environments are
+used. All runs log to project `StackPOMDP`, group `atari_stackpomdp`, with job
+types `meta_seller_response`, `seller_leader`, and `buyer_leader`.
+
+```bash
+tmux new-session -d -s atari_stackpomdp_100k_v1 \
+  "caffeinate -dimsu bash replication/atari/run_stackpomdp_100k_pilots_local.sh"
+```
+
+Local logs and `.started`/`.ok`/`.failed` sentinels are written under:
+
+```text
+Research Artifacts/experiment_logs/StackelbergPOMDP/atari/stackpomdp_20260727_100k_v1/
+```
+
 ## Legacy RLlib reference
 
 The previously protected RLlib E0 gameplay checkpoint is selected by

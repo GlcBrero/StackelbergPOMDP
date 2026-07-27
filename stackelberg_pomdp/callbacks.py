@@ -40,9 +40,10 @@ class FixPolicyActionsCallback(BaseCallback):
     def __init__(self):
         super(FixPolicyActionsCallback, self).__init__()
 
-    def _on_step(self) -> None:
+    def _on_step(self) -> bool:
         if self.locals.get('dones', [False])[0]:
             self.model.policy.clear_obs_action_map()
+        return True
 
     def _init_callback(self):
         self.model.policy.fix_policy_actions()
