@@ -466,6 +466,7 @@ def test_resumed_checkpoint_schedule_advances_past_existing_clock(tmp_path):
     callback.model = SimpleNamespace(num_timesteps=250)
     callback._init_callback()
     assert callback.next_checkpoint == 300
+    assert callback.started_timesteps == 250
 
 
 def test_e0a_validation_confirmation_and_final_seed_sets_are_disjoint():

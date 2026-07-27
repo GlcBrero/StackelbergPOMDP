@@ -227,11 +227,15 @@ class EpisodeCheckpointCallback(BaseCallback):
         self.next_checkpoint = self.checkpoint_every
         self.episode_count = 0
         self.started = None
+        self.started_timesteps = 0
         self._initialized = False
 
     def _init_callback(self):
         if not self._initialized:
             self.started = time.time()
+            self.started_timesteps = int(getattr(
+                self.model, "num_timesteps", self.num_timesteps
+            ))
             self.training_log.parent.mkdir(parents=True, exist_ok=True)
             if not self.resume:
                 self.training_log.open("w", encoding="utf-8").close()
@@ -311,7 +315,8 @@ class EpisodeCheckpointCallback(BaseCallback):
                     self.model.lr_schedule(self.model._current_progress_remaining)
                 ),
                 "train/fps_wall": float(
-                    self.num_timesteps / max(time.time() - self.started, 1.0e-9)
+                    (self.num_timesteps - self.started_timesteps)
+                    / max(time.time() - self.started, 1.0e-9)
                 ),
             }
             for key in (
