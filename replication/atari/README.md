@@ -224,7 +224,16 @@ actor transfer, and optimizer checkpoint reloadability.
 
 ## Current clean-run status
 
-As of 2026-07-27, implementation and smoke validation are complete, but no
-long clean-architecture training result has been declared. Checkpoint paths,
-W&B URLs, pass/fail decisions, and numerical results will be added only after
-the new runs finish.
+As of 2026-07-27, clean E0a seed 1 is training locally for 10M steps:
+
+- W&B: <https://wandb.ai/glcbrero/StackPOMDP/runs/dyaly9m7>
+- run name: `atari_clean_e0a_seed1_10m_local`
+- group/job type: `atari_clean_curriculum` / `atari_e0a`
+- tmux session: `atari_clean_e0a_seed1_10m`
+- checkpoint: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.zip`
+- local log: `Research Artifacts/experiment_logs/StackelbergPOMDP/atari/clean_20260727/atari_clean_e0a_seed1_10m_local.log`
+
+Startup was healthy: four environments completed full 200-step episodes, W&B
+synced online, and training reached 2,400 steps without an error. This is an
+active run, not a declared result; the deterministic 20-episode pass decision
+will be recorded only after training and evaluation finish.
