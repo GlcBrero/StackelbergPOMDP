@@ -17,15 +17,17 @@ from stackelberg_pomdp.atari.protocol import (
     actor_observation,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
+from stackelberg_pomdp.atari.meta_response import (
+    AtariMetaFollowerWrapper,
+    make_stackpomdp_atari_leader_env,
+)
 from stackelberg_pomdp.atari.stackpomdp_env import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
     MetaAtariResponseEnv,
 )
-from stackelberg_pomdp.atari.stackpomdp_full_leader_env import (
-    FullTraceStackPOMDPAtariLeaderEnv,
-)
+from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
 
 
 FIRE = 1
@@ -140,6 +142,7 @@ class _FrozenFollower:
     def __init__(self, role, economic_action=1.0):
         self.policy = SimpleNamespace(
             economic_role=role,
+            economic_input_mode="full",
             set_training_mode=lambda mode: None,
             parameters=lambda: (),
         )
@@ -233,7 +236,7 @@ def test_e1_exposes_all_gameplay_and_trade_steps_with_common_reward():
 
 def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
     follower = _FrozenFollower(BUYER, economic_action=1.0)
-    env = FullTraceStackPOMDPAtariLeaderEnv(
+    env = make_stackpomdp_atari_leader_env(
         leader_role=SELLER,
         response_checkpoint="unused.zip",
         config=_bilateral_config(),
@@ -241,7 +244,11 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
         side_factory=_FakeSide,
     )
     try:
+        assert isinstance(env, StackPOMDPWrapper)
+        assert isinstance(env.follower_wrapper, AtariMetaFollowerWrapper)
+        assert env.tot_num_response_episodes == 5
         observation = env.reset()
+        assert env.current_reward_phase_episodes == 12
         query_observations = []
         query_actions = []
         for event in range(5):
@@ -256,7 +263,7 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
         done = False
         while not done:
             if np.array_equal(observation[ACTION_CREDIT], [0, 0]):
-                event_index = env.core.next_event
+                event_index = env.follower_wrapper.core.next_event
                 current_actor = actor_observation(observation)
                 for key in current_actor:
                     np.testing.assert_array_equal(
@@ -273,15 +280,17 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
         assert info["cache_hits"] == 5
         assert info["purchases"] == 5
         assert info["outer_transition_count"] == 17
-        assert isinstance(env.leader_query_trace, LeaderQueryTrace)
+        assert isinstance(
+            env.follower_wrapper.leader_query_trace, LeaderQueryTrace
+        )
         np.testing.assert_allclose(
-            env.leader_query_trace.economic_commitment,
+            env.follower_wrapper.leader_query_trace.economic_commitment,
             [0.1, 0.2, 0.3, 0.4, 0.5],
         )
         restored = LeaderQueryTrace.from_json_bytes(
-            env.leader_query_trace.to_json_bytes()
+            env.follower_wrapper.leader_query_trace.to_json_bytes()
         )
-        assert restored.sha256 == env.leader_query_trace.sha256
+        assert restored.sha256 == env.follower_wrapper.leader_query_trace.sha256
         assert len(follower.observations) == 12
     finally:
         env.close()
@@ -289,7 +298,7 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
 
 def test_e2_rejects_a_reward_trade_cache_miss():
     follower = _FrozenFollower(BUYER, economic_action=1.0)
-    env = FullTraceStackPOMDPAtariLeaderEnv(
+    env = make_stackpomdp_atari_leader_env(
         leader_role=SELLER,
         response_checkpoint="unused.zip",
         config=_bilateral_config(),

@@ -136,7 +136,7 @@ def test_environment_uses_only_frozen_composite_response(monkeypatch, tmp_path):
         captured.update(kwargs)
         return "leader-env"
 
-    monkeypatch.setattr(trainer, "FullTraceStackPOMDPAtariLeaderEnv", fake_env)
+    monkeypatch.setattr(trainer, "make_stackpomdp_atari_leader_env", fake_env)
     result = trainer.make_env(args, seed=37)
 
     assert result == "leader-env"

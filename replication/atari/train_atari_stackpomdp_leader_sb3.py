@@ -36,13 +36,13 @@ from replication.atari.sb3_common import (
     make_vec_env,
 )
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
+from stackelberg_pomdp.atari.meta_response import (
+    make_stackpomdp_atari_leader_env,
+)
 from stackelberg_pomdp.atari.stackpomdp_env import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
-)
-from stackelberg_pomdp.atari.stackpomdp_full_leader_env import (
-    FullTraceStackPOMDPAtariLeaderEnv,
 )
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
@@ -159,7 +159,7 @@ def bilateral_config(args, *, seed):
 
 
 def make_env(args, *, seed):
-    return FullTraceStackPOMDPAtariLeaderEnv(
+    return make_stackpomdp_atari_leader_env(
         leader_role=args.leader_role,
         response_checkpoint=args.response_checkpoint,
         config=bilateral_config(args, seed=seed),
@@ -390,6 +390,8 @@ def main(argv=None):
             "gameplay_transitions_per_episode": args.gameplay_horizon,
             "cached_trade_replays_per_episode": NUM_TRADE_EVENTS,
             "policy_action_cache": True,
+            "phase_wrapper": "StackPOMDPWrapper",
+            "response_algorithm": "frozen_meta_policy",
             "leader_economic_input": "event_only",
             "response_economic_input": "full",
         }, allow_val_change=True)

@@ -91,6 +91,21 @@ lossless encoding of an arbitrary full trace. A per-episode action map caches
 complete actions by exact actor-visible observations and resets only the rows
 whose outer episodes end.
 
+E2 reuses the same game-agnostic `StackPOMDPWrapper` as the other
+Stackelberg experiments. Its lower layers are:
+
+```text
+StackPOMDPWrapper
+  -> AtariMetaFollowerWrapper
+       -> BilateralAtariRewardEnv
+```
+
+`BilateralAtariRewardEnv` owns only Atari, trade, and payoff dynamics.
+`AtariMetaFollowerWrapper` implements a frozen neural PI response: it records
+the five exact leader queries, finalizes their context, and then evaluates the
+opposite-role E1 policy deterministically during the reward game. E1 is where
+that meta-policy is learned; the response does not update online during E2.
+
 ## Setup
 
 From `Code/StackelbergPOMDP`:
@@ -195,7 +210,9 @@ python -u -m replication.atari.train_atari_stackpomdp_leader_sb3 \
 
 For a buyer leader, swap the roles of the two E1 checkpoints. E2 rollouts are
 exactly `5 + 200 + 5 = 210` transitions and always enable the full-action
-cache callback.
+cache callback. The generic wrapper is configured for five response
+transitions and 205 reward transitions, with all five zero-reward queries kept
+in PPO's rollout.
 
 ## Resume and deterministic evaluation
 
