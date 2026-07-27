@@ -62,6 +62,21 @@ def training_log_path(path):
     return path.with_name(f"{path.stem}.training.jsonl")
 
 
+def validation_log_path(path):
+    path = checkpoint_path(path)
+    return path.with_name(f"{path.stem}.validation.jsonl")
+
+
+def target_checkpoint_path(path):
+    path = checkpoint_path(path)
+    return path.with_name(f"{path.stem}_target.zip")
+
+
+def target_selection_path(path):
+    path = checkpoint_path(path)
+    return path.with_name(f"{path.stem}.target_selection.json")
+
+
 def fixed_context_csv_path(path):
     path = checkpoint_path(path)
     return path.with_name(f"{path.stem}.fixed_contexts.csv")
@@ -161,11 +176,16 @@ def init_wandb(args, *, stage, checkpoint):
         return None
     import wandb
 
-    return wandb.init(
+    run_id = getattr(args, "wandb_id", None)
+    resume = getattr(args, "wandb_resume", None) if run_id else None
+    run = wandb.init(
         project=getattr(args, "wandb_project", WANDB_PROJECT),
         group=getattr(args, "wandb_group", WANDB_GROUP),
         job_type=f"atari_{stage}",
         name=getattr(args, "wandb_name", None) or f"atari_{stage}_seed{args.seed}",
+        id=run_id,
+        resume=resume,
+        allow_val_change=bool(run_id),
         config={
             **vars(args),
             "algorithm": "PPO",
@@ -176,6 +196,13 @@ def init_wandb(args, *, stage, checkpoint):
             "architecture": "clean_composite_atari_v2",
         },
     )
+    for namespace in ("train", "validation", "confirmation", "eval"):
+        run.define_metric(f"{namespace}/total_timesteps")
+        run.define_metric(
+            f"{namespace}/*",
+            step_metric=f"{namespace}/total_timesteps",
+        )
+    return run
 
 
 class EpisodeCheckpointCallback(BaseCallback):
@@ -200,16 +227,48 @@ class EpisodeCheckpointCallback(BaseCallback):
         self.next_checkpoint = self.checkpoint_every
         self.episode_count = 0
         self.started = None
+        self._initialized = False
 
     def _init_callback(self):
-        self.started = time.time()
-        self.training_log.parent.mkdir(parents=True, exist_ok=True)
-        if not self.resume:
-            self.training_log.open("w", encoding="utf-8").close()
+        if not self._initialized:
+            self.started = time.time()
+            self.training_log.parent.mkdir(parents=True, exist_ok=True)
+            if not self.resume:
+                self.training_log.open("w", encoding="utf-8").close()
+            elif self.training_log.is_file():
+                # A process can advance beyond its last durable checkpoint before
+                # it is interrupted.  Keep only rows represented by the resumed
+                # checkpoint so the local trace remains monotone and auditable.
+                current_step = int(getattr(
+                    self.model, "num_timesteps", self.num_timesteps
+                ))
+                retained = []
+                with self.training_log.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        row = json.loads(line)
+                        if int(row.get("train/total_timesteps", 0)) <= current_step:
+                            retained.append(line)
+                temporary = self.training_log.with_suffix(
+                    self.training_log.suffix + ".tmp"
+                )
+                with temporary.open("w", encoding="utf-8") as handle:
+                    handle.writelines(retained)
+                temporary.replace(self.training_log)
+                self.episode_count = len(retained)
+            self._initialized = True
+        current_step = int(getattr(
+            self.model, "num_timesteps", self.num_timesteps
+        ))
+        self.next_checkpoint = (
+            (current_step // self.checkpoint_every) + 1
+        ) * self.checkpoint_every
 
     def _on_step(self):
         dones = np.asarray(self.locals.get("dones", []), dtype=bool).reshape(-1)
         infos = self.locals.get("infos", [])
+        wandb_payloads = []
         for row, done in enumerate(dones):
             if not done:
                 continue
@@ -284,8 +343,7 @@ class EpisodeCheckpointCallback(BaseCallback):
                         payload[
                             f"train/event_{event_index}/{key}"
                         ] = float(event[key])
-            if self.wandb_run is not None:
-                self.wandb_run.log(payload, step=int(self.num_timesteps))
+            wandb_payloads.append(payload)
             local_payload = {
                 **payload,
                 "seed": self.seed,
@@ -294,6 +352,25 @@ class EpisodeCheckpointCallback(BaseCallback):
             }
             with self.training_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(local_payload, sort_keys=True) + "\n")
+
+        if self.wandb_run is not None and wandb_payloads:
+            keys = {
+                key
+                for payload in wandb_payloads
+                for key, value in payload.items()
+                if isinstance(value, (bool, int, float, np.number))
+            }
+            aggregate = {
+                key: float(np.mean([
+                    payload[key]
+                    for payload in wandb_payloads
+                    if key in payload
+                ]))
+                for key in keys
+            }
+            aggregate["train/episode"] = int(self.episode_count)
+            aggregate["train/vector_episodes"] = len(wandb_payloads)
+            self.wandb_run.log(aggregate, step=int(self.num_timesteps))
 
         if np.any(dones) and self.num_timesteps >= self.next_checkpoint:
             path = step_checkpoint_path(self.checkpoint, self.num_timesteps)
@@ -321,7 +398,10 @@ def finish_run(run, *, checkpoint, evaluation, total_timesteps):
                     summary[
                         f"eval/fixed_{value:.2f}/{key}"
                     ] = float(item)
-        run.log(summary, step=int(total_timesteps))
+        # The last episode, validation, and final evaluation can share one
+        # training clock.  Let W&B advance its internal history row while the
+        # explicit eval/total_timesteps metric remains the scientific x-axis.
+        run.log(summary)
         run.finish()
 
 
@@ -356,7 +436,10 @@ __all__ = [
     "init_wandb",
     "json_path",
     "make_vec_env",
+    "target_checkpoint_path",
+    "target_selection_path",
     "training_log_path",
+    "validation_log_path",
     "write_csv",
     "write_json",
 ]

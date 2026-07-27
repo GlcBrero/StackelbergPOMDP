@@ -114,14 +114,29 @@ All runs default to W&B project `StackPOMDP`, group
 python -u -m replication.atari.train_atari_curriculum_sb3 \
   --stage e0a \
   --seed 1 \
-  --timesteps 10000000 \
+  --timesteps 50000000 \
   --num-envs 4 \
   --checkpoint replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.zip \
-  --wandb-name atari_clean_e0a_seed1_10m_local
+  --wandb-name atari_clean_e0a_seed1_targetstop_50mcap_local
 ```
 
-The initial pass gate is a deterministic 20-episode mean near five, five shots
-per episode, and terminal ammo near zero.
+The timestep argument is an absolute safety cap, not a required training
+length. E0a writes a post-update checkpoint and evaluates it every 400,000
+steps. It stops early only after two consecutive deterministic 20-episode
+screens pass and the same checkpoint passes a fresh 100-episode confirmation.
+The reliable-five gate requires mean clipped game reward at least 4.8, reward
+at least 5 in at least 90% of episodes, all five bullets fired in at least 95%
+of episodes, mean shots at least 4.95, and mean final ammo at most 0.05. It also
+requires complete 200-step episodes, zero payments, equality of game and total
+return, and exact bullet accounting. The reported 20-episode evaluation uses a
+third, untouched seed block.
+
+Every evaluated `..._stepN.zip` is retained. `..._best.zip` tracks the best
+screening checkpoint, while `..._target.zip` is created only after independent
+confirmation. Validation rows, seed ranges, thresholds, and selections are
+recorded in `*.validation.jsonl`, per-checkpoint `*.validation.json` /
+`*.confirmation_N.json`, and `*.target_selection.json`. This makes it safe to
+use a generous 50M ceiling without training past an already confirmed target.
 
 ## E0b: delayed free bullets
 
@@ -204,6 +219,9 @@ Each checkpoint produces:
 - E1 only, `CHECKPOINT.fixed_contexts.csv`: paired fixed-context table;
 - step checkpoints at completed outer-episode boundaries.
 
+For E0a, `--timesteps` counts the complete run clock after resume. A resumed
+run can retain the same W&B URL with `--wandb-id RUN_ID --wandb-resume must`.
+
 W&B logs episode payoff and length, role-correct game reward, shots, ammo,
 reward per bullet, payments, purchases, all five event prices/thresholds/
 acceptance times, total timesteps, learning rate, seed, algorithm, and
@@ -224,16 +242,18 @@ actor transfer, and optimizer checkpoint reloadability.
 
 ## Current clean-run status
 
-As of 2026-07-27, clean E0a seed 1 is training locally for 10M steps:
+As of 2026-07-27, clean E0a seed 1 is training locally with automatic target
+selection and a 50M-step safety cap:
 
 - W&B: <https://wandb.ai/glcbrero/StackPOMDP/runs/dyaly9m7>
-- run name: `atari_clean_e0a_seed1_10m_local`
+- run name: `atari_clean_e0a_seed1_targetstop_50mcap_local`
 - group/job type: `atari_clean_curriculum` / `atari_e0a`
-- tmux session: `atari_clean_e0a_seed1_10m`
+- tmux session: `atari_clean_e0a_seed1_target50m`
 - checkpoint: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.zip`
-- local log: `Research Artifacts/experiment_logs/StackelbergPOMDP/atari/clean_20260727/atari_clean_e0a_seed1_10m_local.log`
+- local log: `Research Artifacts/experiment_logs/StackelbergPOMDP/atari/clean_20260727/atari_clean_e0a_seed1_targetstop_50mcap_local.log`
 
-Startup was healthy: four environments completed full 200-step episodes, W&B
-synced online, and training reached 2,400 steps without an error. This is an
-active run, not a declared result; the deterministic 20-episode pass decision
-will be recorded only after training and evaluation finish.
+The original fixed-length process reached a durable 200,000-step checkpoint
+without error. The target-driven process resumes that complete model,
+optimizer, critic, and clock under the same W&B run ID. This remains an active
+run, not a declared result; only the auditable selection files above determine
+pass or failure.

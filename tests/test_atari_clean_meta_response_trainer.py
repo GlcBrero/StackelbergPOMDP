@@ -321,3 +321,55 @@ def test_episode_wandb_metrics_follow_the_controlled_seller_role(tmp_path):
     assert payload["train/shots_fired"] == 3
     assert payload["train/final_ammo"] == 2
     assert payload["train/reward_per_bullet"] == pytest.approx(0.4)
+
+
+def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):
+    class _Run:
+        def __init__(self):
+            self.rows = []
+
+        def log(self, payload, step):
+            self.rows.append((dict(payload), int(step)))
+
+    run = _Run()
+    callback = EpisodeCheckpointCallback(
+        checkpoint=tmp_path / "e0a.zip",
+        checkpoint_every=1_000_000,
+        seed=3,
+        wandb_run=run,
+    )
+    callback.model = SimpleNamespace(
+        lr_schedule=lambda _: 1.0e-4,
+        _current_progress_remaining=0.5,
+    )
+    callback.num_timesteps = 400
+    callback.locals = {
+        "dones": np.array([True, True]),
+        "infos": [
+            {"episode": {
+                "r": 4.0,
+                "l": 200,
+                "game_reward": 4.0,
+                "shots_fired": 5,
+                "final_ammo": 0,
+            }},
+            {"episode": {
+                "r": 2.0,
+                "l": 200,
+                "game_reward": 2.0,
+                "shots_fired": 3,
+                "final_ammo": 2,
+            }},
+        ],
+    }
+    callback._init_callback()
+
+    assert callback._on_step()
+    assert len(run.rows) == 1
+    payload, step = run.rows[0]
+    assert step == 400
+    assert payload["train/vector_episodes"] == 2
+    assert payload["train/episode"] == 2
+    assert payload["train/game_reward"] == pytest.approx(3.0)
+    assert payload["train/shots_fired"] == pytest.approx(4.0)
+    assert payload["train/final_ammo"] == pytest.approx(1.0)
