@@ -162,8 +162,8 @@ random pass conditions both pass. Full artifacts are:
 The completed E1 above presents its five offers immediately and remains the
 predictable-timing control. A separate stochastic-timing treatment tests
 whether the buyer learns that a bullet offered near the end of an episode is
-less useful than the same bullet offered early. The seed-1 one-million-step
-local run started on 2026-07-25 and is visible at
+less useful than the same bullet offered early. The seed-1 run completed at
+1,000,096 SB3 environment steps on 2026-07-25 and is visible at
 [`sb3_e1_stochastic_timing_context_seed1_1m_local`](https://wandb.ai/glcbrero/StackPOMDP/runs/m4vktgui).
 Its W&B group is `atari_e1_stochastic_timing` and its job type is
 `atari_sb3_e1_stochastic_timing`.
@@ -197,38 +197,79 @@ trade-then-game-substep control.
 Here, normalized time is progress toward the known 125-decision cap. It does
 not reveal when an episodic-life termination will occur, which may be earlier.
 
-Every opportunity will record its raw decision index, normalized time/time
+Every opportunity records its raw decision index, normalized time/time
 remaining, price, threshold or economic action, accept/reject decision, ammo,
 and opportunities remaining. Episode summaries will include offer and purchase
 decision indices, purchases and shots by time bin, final ammo, payments, game
-reward, and net reward. The primary diagnostic holds price fixed while placing
-offers in early, middle, and late time bins. Comparing acceptance at the same
-price across naturally occurring bins provides evidence about the proposed
-last-minute effect; random-price evaluation then measures the resulting overall
-economic performance. The bins are observational because surviving game state,
-ammo, and opportunity index can also differ with time. A forced-timing or
+reward, and net reward. The primary diagnostic holds price fixed and compares
+offers that naturally arrive in early, middle, and late time bins. This provides
+evidence about the proposed last-minute effect; random-price evaluation measures
+overall economic performance. The bins are observational because surviving game
+state, ammo, and opportunity index can also differ with time. A forced-timing or
 matched-state control is required for a causal timing claim. Because price is
 actor-visible in this treatment, it is a price-and-time-conditioned economic
 policy rather than the control's price-blind scalar WTP specification.
 
-The run writes checkpoints and timing-audit outputs under:
+All 100k monitoring checkpoints were retained and ranked lexicographically by
+Uniform-price mean net reward, positive-net episode rate, purchased-bullet use,
+and zero-price acceptance. Step 400,000 was selected (`0.99159`, `0.90`, `1.0`,
+`1.0`), narrowly ahead of the rollout-end checkpoint at step 1,000,096
+(`0.99114`, `0.90`, `1.0`, `1.0`). The canonical checkpoint and independent
+evaluation artifacts are:
 
 ```text
-replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.zip
-replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.evaluation.json
-replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m.evaluation.trade_events.csv
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m_best.zip
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m_best.full_evaluation_seed200003.json
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m_best.full_evaluation_seed200003.fixed_prices.csv
+replication/atari/checkpoints/sb3/space_invaders_e1_stochastic_context_ppo_seed1_1m_best.full_evaluation_seed200003.trade_events.csv
 ```
+
+The independent evaluation uses seed 200003, 20 episodes at each fixed price,
+and 100 Uniform-price episodes. Across the Uniform-price episodes, mean net
+reward is `1.45195`, mean game reward is `2.58`, mean payments are `1.12805`,
+mean purchases/shots are `2.89`/`2.87`, `86%` of episodes have positive net
+reward, and `99.31%` of purchased bullets are fired. Across 412 offers,
+acceptance falls from `89.50%` early to `72.86%` middle and `27.47%` late; the
+corresponding deterministic mean thresholds are `0.913`, `0.702`, and `0.295`.
+
+| Price | Early buys | Middle buys | Late buys | Mean net | Purchases / shots |
+|---:|---:|---:|---:|---:|---:|
+| 0.0 | 26/26 | 38/38 | 23/23 | 3.000 | 4.35 / 3.85 |
+| 0.1 | 26/26 | 38/38 | 21/23 | 2.525 | 4.25 / 3.80 |
+| 0.2 | 26/26 | 35/38 | 10/23 | 2.040 | 3.55 / 3.40 |
+| 0.3 | 26/26 | 31/38 | 5/23 | 1.670 | 3.10 / 3.05 |
+| 0.4 | 26/26 | 29/38 | 3/23 | 1.290 | 2.90 / 2.85 |
+| 0.5 | 26/26 | 28/38 | 3/23 | 0.975 | 2.85 / 2.80 |
+| 0.6 | 26/26 | 24/38 | 3/23 | 0.810 | 2.65 / 2.60 |
+| 0.7 | 26/26 | 21/38 | 1/23 | 0.670 | 2.40 / 2.40 |
+| 0.8 | 26/26 | 16/38 | 0/23 | 0.420 | 2.10 / 2.10 |
+| 0.9 | 20/26 | 0/38 | 0/23 | 0.100 | 1.00 / 1.00 |
+| 1.0 | 0/26 | 0/38 | 0/23 | 0.000 | 0.00 / 0.00 |
+
+The random-price pass criterion passes. The aggregate fixed-price flag is a
+documented near-miss rather than a pass: free and price-0.1 offers are accepted
+even when they arrive too late to use, so their fired fractions are `88.51%`
+and `89.41%`, just below the predeclared `90%` cutoff. Prices 0.2--0.6 have
+positive net reward and fired fractions from `95.77%` to `98.31%`. Thus the
+economics and late-rejection hypotheses are supported, while exact purchased-
+bullet use at the two cheapest prices fails the mechanical gate.
+
+The frozen-gameplay audit found that real market fields changed the masked E0
+gameplay argmax on 14 of 3,731 sampled observations (`0.375%`) and changed
+FIRE-versus-non-FIRE on only two. Thirty paired counterfactual rollouts had
+identical reward and shot totals. The effect is empirically negligible here,
+but an exact game-path clamp remains the preferred canonical control.
 
 The complete local log is
 `Research Artifacts/experiment_logs/StackelbergPOMDP/atari/stochastic_e1_20260725/sb3_e1_stochastic_timing_context_seed1_1m_local.log`.
-No scientific result is claimed until training and the fixed-price timing audit
-finish.
+W&B artifact `sb3-atari-priced-stochastic-context-seed1` stores the selected
+model and full audit under the `best` and `final` aliases.
 
 Joint economic/gameplay fine-tuning remains available with `--stage joint`,
 but it is run only after frozen-gameplay E1 passes. It trains both actor heads
 with the same observation/action interface and retains the price-informed
-critic. Because frozen-gameplay E1 passed cleanly, no joint fine-tuning run was
-started.
+critic. Because the immediate-offer frozen-gameplay E1 control passed cleanly,
+no joint fine-tuning run was started as part of that control.
 
 ## Legacy RLlib reference
 
