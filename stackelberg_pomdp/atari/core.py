@@ -129,10 +129,21 @@ class SinglePlayerSpaceInvadersEnv(gym.Env):
             raise ValueError(f"invalid Atari action index: {action}")
         reward = float(self.ale.act(np.asarray([self.action_mapping[action]])))
         self.frame += 1
-        done = bool(self.ale.game_over() or self.frame >= self.max_frames)
+        ale_game_over = bool(self.ale.game_over())
+        time_limit_reached = bool(self.frame >= self.max_frames)
+        done = bool(ale_game_over or time_limit_reached)
         observation = self.ale.getScreenRGB()
         lives = self.ale.allLives()
-        info = {"ale.lives": int(lives[0]) if len(lives) else -1}
+        info = {
+            "ale.lives": int(lives[0]) if len(lives) else -1,
+            "ale.game_over": ale_game_over,
+            "time_limit_reached": time_limit_reached,
+            "terminal_reason": (
+                "ale_game_over"
+                if ale_game_over
+                else "time_limit" if time_limit_reached else None
+            ),
+        }
         return observation, reward, done, info
 
     def render(self, mode="human", zoom_factor=4):

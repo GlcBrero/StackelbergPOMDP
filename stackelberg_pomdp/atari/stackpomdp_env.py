@@ -34,7 +34,7 @@ ROLES = {SELLER, BUYER}
 class BilateralAtariConfig:
     seed: int = 1
     gameplay_horizon: int = 200
-    event_tail_steps: int = 50
+    event_tail_steps: int = 0
     seller_game_reward_scale: float = 0.1
     buyer_game_reward_scale: float = 1.0
     noop_max: int = 30
@@ -185,6 +185,12 @@ class DualAtariTradeCore:
             "buyer_shots_fired": int(buyer_shots),
             "seller_info": dict(seller_info),
             "buyer_info": dict(buyer_info),
+            "seller_emulator_advanced": bool(
+                seller_info.get("emulator_advanced", True)
+            ),
+            "buyer_emulator_advanced": bool(
+                buyer_info.get("emulator_advanced", True)
+            ),
         }
 
     def trade(self, *, price, threshold):
@@ -217,6 +223,14 @@ class DualAtariTradeCore:
             "buyer_ammo_before": int(buyer_before),
             "seller_ammo_after": int(self.seller.ammo),
             "buyer_ammo_after": int(self.buyer.ammo),
+            "seller_true_game_over_resets": int(
+                self.seller.true_game_over_resets
+            ),
+            "buyer_true_game_over_resets": int(
+                self.buyer.true_game_over_resets
+            ),
+            "seller_time_limit_resets": int(self.seller.time_limit_resets),
+            "buyer_time_limit_resets": int(self.buyer.time_limit_resets),
         }
         self.events.append(event)
         self.next_event += 1
@@ -352,7 +366,9 @@ class BilateralAtariRewardEnv(BaseEnv):
             decision_kind = (
                 TERMINAL
                 if self._done
-                else FOLLOWER_TRADE if trade_mode else GAMEPLAY
+                else FOLLOWER_TRADE
+                if trade_mode
+                else GAMEPLAY
             )
         return observation(
             image=self.dummy_image if trade_mode else side.image,
@@ -399,6 +415,15 @@ class BilateralAtariRewardEnv(BaseEnv):
 
     def episode_info(self):
         core = self.core
+        final_event_step = int(core.event_steps[-1])
+        seller_before_fifth = bool(any(
+            step <= final_event_step
+            for step in core.seller.true_game_over_reset_steps
+        ))
+        buyer_before_fifth = bool(any(
+            step <= final_event_step
+            for step in core.buyer.true_game_over_reset_steps
+        ))
         return {
             "leader_role": self.leader_role,
             "follower_role": self.follower_role,
@@ -421,6 +446,53 @@ class BilateralAtariRewardEnv(BaseEnv):
             "buyer_shots_fired": int(core.buyer.shots_fired),
             "seller_final_ammo": int(core.seller.ammo),
             "buyer_final_ammo": int(core.buyer.ammo),
+            "seller_emulator_step_calls": int(core.seller.step_calls),
+            "buyer_emulator_step_calls": int(core.buyer.step_calls),
+            "seller_life_resets": int(core.seller.life_resets),
+            "buyer_life_resets": int(core.buyer.life_resets),
+            "seller_real_terminal_resets": int(
+                core.seller.real_terminal_resets
+            ),
+            "buyer_real_terminal_resets": int(core.buyer.real_terminal_resets),
+            "seller_real_terminal_reset_steps": tuple(
+                int(step) for step in core.seller.real_terminal_reset_steps
+            ),
+            "buyer_real_terminal_reset_steps": tuple(
+                int(step) for step in core.buyer.real_terminal_reset_steps
+            ),
+            "seller_true_game_over_resets": int(
+                core.seller.true_game_over_resets
+            ),
+            "buyer_true_game_over_resets": int(
+                core.buyer.true_game_over_resets
+            ),
+            "seller_true_game_over_reset_rate": float(
+                core.seller.true_game_over_resets
+                / max(core.seller.step_calls, 1)
+            ),
+            "buyer_true_game_over_reset_rate": float(
+                core.buyer.true_game_over_resets
+                / max(core.buyer.step_calls, 1)
+            ),
+            "seller_true_game_over_reset_steps": tuple(
+                int(step) for step in core.seller.true_game_over_reset_steps
+            ),
+            "buyer_true_game_over_reset_steps": tuple(
+                int(step) for step in core.buyer.true_game_over_reset_steps
+            ),
+            "seller_time_limit_resets": int(core.seller.time_limit_resets),
+            "buyer_time_limit_resets": int(core.buyer.time_limit_resets),
+            "seller_time_limit_reset_steps": tuple(
+                int(step) for step in core.seller.time_limit_reset_steps
+            ),
+            "buyer_time_limit_reset_steps": tuple(
+                int(step) for step in core.buyer.time_limit_reset_steps
+            ),
+            "seller_true_game_over_before_fifth_event": seller_before_fifth,
+            "buyer_true_game_over_before_fifth_event": buyer_before_fifth,
+            "any_true_game_over_before_fifth_event": bool(
+                seller_before_fifth or buyer_before_fifth
+            ),
             **core.accounting(),
         }
 
@@ -455,10 +527,20 @@ class BilateralAtariRewardEnv(BaseEnv):
                 buyer_action=values[BUYER][0],
             )
             self.gameplay_transitions += 1
+            both_emulators_advanced = bool(
+                transition["seller_emulator_advanced"]
+                and transition["buyer_emulator_advanced"]
+            )
             detail = {
                 "substep_type": GAMEPLAY,
                 "gameplay": transition,
-                "emulator_advanced": True,
+                "seller_emulator_advanced": bool(
+                    transition["seller_emulator_advanced"]
+                ),
+                "buyer_emulator_advanced": bool(
+                    transition["buyer_emulator_advanced"]
+                ),
+                "emulator_advanced": both_emulators_advanced,
             }
 
         rewards = {
@@ -583,6 +665,10 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
         self.config = env.config
         self.context_sampler = context_sampler
         self.rng = np.random.default_rng(self.config.seed + 74_711)
+        self.action_space = action_space(self.core.game_action_count)
+        self.observation_space = observation_space(
+            self.core.image_space, self.core.game_action_count
+        )
         if controller_factory is None:
             if e0b_checkpoint is None:
                 raise ValueError("e0b_checkpoint or controller_factory is required")
@@ -591,10 +677,6 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
             )
         else:
             self.other_controller = controller_factory()
-        self.action_space = action_space(self.core.game_action_count)
-        self.observation_space = observation_space(
-            self.core.image_space, self.core.game_action_count
-        )
         self.opponent_commitment = np.zeros(
             NUM_TRADE_EVENTS, dtype=np.float32
         )
@@ -663,14 +745,20 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
         if self.env._done:
             kind = TERMINAL
         else:
-            kind = FOLLOWER_TRADE if self.core.at_event else GAMEPLAY
+            kind = (
+                FOLLOWER_TRADE
+                if self.core.at_event
+                else GAMEPLAY
+            )
         return self._role_observation(
             self.controlled_role, controlled=True, decision_kind=kind
         )
 
     def _other_game_action(self):
         values = self._role_observation(
-            self.other_role, controlled=False, decision_kind=GAMEPLAY
+            self.other_role,
+            controlled=False,
+            decision_kind=GAMEPLAY,
         )
         result = self.other_controller(values)
         return int(np.clip(np.rint(result), 0, self.core.game_action_count - 1))
@@ -718,7 +806,11 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
             self._joint_action(values, trade=trade)
         )
         info.update({
-            "substep_type": FOLLOWER_TRADE if trade else GAMEPLAY,
+            "substep_type": (
+                FOLLOWER_TRADE
+                if trade
+                else GAMEPLAY
+            ),
             "controlled_reward_delta": float(reward),
         })
         if done:

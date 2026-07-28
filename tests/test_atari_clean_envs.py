@@ -13,10 +13,12 @@ from stackelberg_pomdp.atari.protocol import (
     CACHED_TRADE_REPLAY,
     FOLLOWER_TRADE,
     GAMEPLAY,
+    ACTOR_STATE_DIM,
     LEADER_QUERY,
     actor_observation,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
+from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
 from stackelberg_pomdp.atari.meta_response import (
     AtariMetaFollowerWrapper,
     make_stackpomdp_atari_leader_env,
@@ -54,6 +56,12 @@ class _FakeSide:
         self.shots_fired = 0
         self.life_resets = 0
         self.step_calls = 0
+        self.real_terminal_resets = 0
+        self.real_terminal_reset_steps = []
+        self.true_game_over_resets = 0
+        self.true_game_over_reset_steps = []
+        self.time_limit_resets = 0
+        self.time_limit_reset_steps = []
         self.env = SimpleNamespace(
             render=lambda mode="rgb_array": np.zeros(
                 (84, 84, 3), dtype=np.uint8
@@ -89,6 +97,12 @@ class _FakeSide:
         self.shots_fired = 0
         self.life_resets = 0
         self.step_calls = 0
+        self.real_terminal_resets = 0
+        self.real_terminal_reset_steps = []
+        self.true_game_over_resets = 0
+        self.true_game_over_reset_steps = []
+        self.time_limit_resets = 0
+        self.time_limit_reset_steps = []
 
     def grant(self, amount=1):
         amount = min(int(amount), self.capacity - self._ammo)
@@ -109,10 +123,54 @@ class _FakeSide:
         reward = float(fired)
         self.shots_fired += fired
         self.game_reward += reward
-        return reward, fired, {"shots_fired_this_step": fired}
+        return reward, fired, {
+            "shots_fired_this_step": fired,
+            "emulator_advanced": True,
+            "real_terminal_reset": False,
+            "real_game_over_reset": False,
+            "time_limit_reset": False,
+        }
 
     def close(self):
         return
+
+
+class _EarlyResetSide(_FakeSide):
+    """Fake side that locally resets on its second gameplay decision."""
+
+    def step(self, action):
+        reward, fired, info = super().step(action)
+        if self.step_calls == 2:
+            self.real_terminal_resets += 1
+            self.real_terminal_reset_steps.append(2)
+            self.true_game_over_resets += 1
+            self.true_game_over_reset_steps.append(2)
+            info.update({
+                "real_terminal_reset": True,
+                "real_game_over_reset": True,
+            })
+        return reward, fired, info
+
+
+class _SellerEarlyResetSide(_FakeSide):
+    """Only the lower-seeded seller locally resets once."""
+
+    def __init__(self, *, seed, **kwargs):
+        self._terminate_early = int(seed) < 100_000
+        super().__init__(seed=seed, **kwargs)
+
+    def step(self, action):
+        reward, fired, info = super().step(action)
+        if self._terminate_early and self.step_calls == 2:
+            self.real_terminal_resets += 1
+            self.real_terminal_reset_steps.append(2)
+            self.true_game_over_resets += 1
+            self.true_game_over_reset_steps.append(2)
+            info.update({
+                "real_terminal_reset": True,
+                "real_game_over_reset": True,
+            })
+        return reward, fired, info
 
 
 def _e0_config(stage):
@@ -120,8 +178,8 @@ def _e0_config(stage):
         stage=stage,
         seed=7,
         gameplay_horizon=7,
-        event_tail_steps=2,
-        fixed_event_steps=(0, 1, 2, 3, 4),
+        event_tail_steps=0,
+        fixed_event_steps=(0, 1, 2, 3, 6),
     )
 
 
@@ -129,14 +187,14 @@ def _bilateral_config():
     return BilateralAtariConfig(
         seed=11,
         gameplay_horizon=7,
-        event_tail_steps=2,
-        fixed_event_steps=(0, 1, 2, 3, 4),
+        event_tail_steps=0,
+        fixed_event_steps=(0, 1, 2, 3, 6),
     )
 
 
 class _ZeroGameController:
     def __call__(self, observation):
-        assert observation[ACTOR_STATE].shape == (14,)
+        assert observation[ACTOR_STATE].shape == (ACTOR_STATE_DIM,)
         return 0
 
 
@@ -160,6 +218,38 @@ class _FrozenFollower:
         return np.array([FIRE, self.economic_action], dtype=np.float32), None
 
 
+class _ChooseLastCandidates:
+    def choice(self, candidates, *, size, replace):
+        assert not replace
+        return np.asarray(candidates[-size:], dtype=np.int64)
+
+
+def test_event_schedule_default_covers_the_complete_gameplay_horizon():
+    schedule = ExactFiveEventSchedule(gameplay_horizon=200)
+    assert schedule.tail_steps == 0
+    assert schedule.event_stop == 200
+    assert schedule.sample(_ChooseLastCandidates()) == (195, 196, 197, 198, 199)
+
+    minimal = ExactFiveEventSchedule(gameplay_horizon=5)
+    assert minimal.sample(np.random.default_rng(1)) == (0, 1, 2, 3, 4)
+
+
+def test_event_schedule_fixed_override_is_sorted_distinct_and_can_be_last_step():
+    schedule = ExactFiveEventSchedule(
+        gameplay_horizon=7,
+        fixed_event_steps=(0, 1, 2, 3, 6),
+    )
+    assert schedule.sample(np.random.default_rng(1)) == (0, 1, 2, 3, 6)
+
+    with np.testing.assert_raises_regex(ValueError, "strictly increasing"):
+        ExactFiveEventSchedule(
+            gameplay_horizon=7,
+            fixed_event_steps=(0, 1, 1, 3, 6),
+        )
+    with np.testing.assert_raises_regex(ValueError, "at least five"):
+        ExactFiveEventSchedule(gameplay_horizon=4)
+
+
 def test_e0a_and_e0b_use_one_interface_and_exact_branch_credit():
     e0a = AtariCurriculumEnv(
         _e0_config("e0a"), side_factory=_FakeSide
@@ -172,7 +262,11 @@ def test_e0a_and_e0b_use_one_interface_and_exact_branch_credit():
         first_b = e0b.reset()
         assert e0a.observation_space == e0b.observation_space
         assert e0a.action_space == e0b.action_space
-        assert first_a[ACTOR_STATE].shape == first_b[ACTOR_STATE].shape == (14,)
+        assert (
+            first_a[ACTOR_STATE].shape
+            == first_b[ACTOR_STATE].shape
+            == (ACTOR_STATE_DIM,)
+        )
         np.testing.assert_array_equal(first_a[ACTION_CREDIT], [1, 0])
         np.testing.assert_array_equal(first_b[ACTION_CREDIT], [0, 0])
 
@@ -418,5 +512,146 @@ def test_e2_rejects_a_reward_trade_cache_miss():
             assert "cache miss" in str(error)
         else:
             raise AssertionError("reward trade accepted a non-cached action")
+    finally:
+        env.close()
+
+
+def test_e0b_true_game_over_resets_locally_and_horizon_transfers_continue():
+    env = AtariCurriculumEnv(
+        _e0_config("e0b"), side_factory=_EarlyResetSide
+    )
+    try:
+        env.reset()
+        gameplay_steps = 0
+        done = False
+        while not done:
+            _, reward, done, info = env.step([0.0, 0.5])
+            assert reward == 0.0
+            if info["substep_type"] == GAMEPLAY:
+                gameplay_steps += 1
+                assert info["emulator_advanced"]
+
+        assert info["gameplay_steps"] == 7
+        assert gameplay_steps == 7
+        assert info["trade_transitions"] == 5
+        assert info["outer_transition_count"] == 12
+        assert info["free_transfers"] == 5
+        assert info["final_ammo"] == 5
+        assert info["bullet_accounting_error"] == 0
+        assert info["emulator_step_calls"] == 7
+        assert info["true_game_over_resets"] == 1
+        assert info["true_game_over_reset_steps"] == (2,)
+        assert info["true_game_over_before_fifth_event"]
+    finally:
+        env.close()
+
+
+def test_e1_asymmetric_game_over_keeps_other_game_and_all_trades_live():
+    env = make_atari_meta_response_env(
+        controlled_role=BUYER,
+        config=_bilateral_config(),
+        context_sampler=lambda rng: np.full(5, 0.2, dtype=np.float32),
+        controller_factory=_ZeroGameController,
+        side_factory=_SellerEarlyResetSide,
+    )
+    try:
+        observation = env.reset()
+        done = False
+        while not done:
+            observation, _, done, info = env.step([FIRE, 1.0])
+
+        assert info["reward_transition_count"] == 12
+        assert info["trade_transitions"] == 5
+        assert info["purchases"] == 5
+        assert info["buyer_shots_fired"] == 5
+        assert info["seller_true_game_over_resets"] == 1
+        assert info["buyer_true_game_over_resets"] == 0
+        assert info["seller_true_game_over_reset_steps"] == (2,)
+        assert info["seller_true_game_over_before_fifth_event"]
+        assert info["any_true_game_over_before_fifth_event"]
+        assert info["seller_emulator_step_calls"] == 7
+        assert info["buyer_emulator_step_calls"] == 7
+        assert all(event["accepted"] for event in info["events"])
+        assert [
+            event["seller_true_game_over_resets"]
+            for event in info["events"]
+        ] == [
+            0,
+            0,
+            1,
+            1,
+            1,
+        ]
+        assert info["seller_bullet_error"] == 0
+        assert info["buyer_bullet_error"] == 0
+        assert np.isclose(info["seller_payoff_error"], 0.0)
+        assert np.isclose(info["buyer_payoff_error"], 0.0)
+    finally:
+        env.close()
+
+
+def test_e1_controlled_side_keeps_same_actor_schema_after_local_reset():
+    env = make_atari_meta_response_env(
+        controlled_role=SELLER,
+        config=_bilateral_config(),
+        context_sampler=lambda rng: np.ones(5, dtype=np.float32),
+        controller_factory=_ZeroGameController,
+        side_factory=_SellerEarlyResetSide,
+    )
+    try:
+        observation = env.reset()
+        trade_state_shapes = []
+        done = False
+        while not done:
+            if np.array_equal(observation[ACTION_CREDIT], [0, 1]):
+                trade_state_shapes.append(observation[ACTOR_STATE].shape)
+            observation, _, done, info = env.step([0.0, 0.5])
+
+        assert trade_state_shapes == [(ACTOR_STATE_DIM,)] * 5
+        assert info["trade_transitions"] == 5
+        assert info["seller_true_game_over_resets"] == 1
+        assert info["seller_emulator_step_calls"] == 7
+    finally:
+        env.close()
+
+
+def test_e2_local_leader_reset_keeps_exact_query_reward_and_cache_protocol():
+    follower = _FrozenFollower(BUYER, economic_action=1.0)
+    env = make_stackpomdp_atari_leader_env(
+        leader_role=SELLER,
+        response_checkpoint="unused.zip",
+        config=_bilateral_config(),
+        response_model_factory=lambda path, device: follower,
+        side_factory=_SellerEarlyResetSide,
+    )
+    try:
+        observation = env.reset()
+        query_action = np.array([0.0, 0.2], dtype=np.float32)
+        for _ in range(5):
+            observation, _, done, _ = env.step(query_action)
+            assert not done
+
+        transitions = 5
+        done = False
+        while not done:
+            action = (
+                query_action
+                if observation[ACTOR_STATE][3] == 1.0
+                else np.array([0.0, 0.5], dtype=np.float32)
+            )
+            observation, _, done, info = env.step(action)
+            transitions += 1
+
+        assert transitions == 17
+        assert info["outer_transition_count"] == 17
+        assert info["query_transitions"] == 5
+        assert info["reward_transition_count"] == 12
+        assert info["cache_hits"] == 5
+        assert info["purchases"] == 5
+        assert info["seller_true_game_over_resets"] == 1
+        assert info["seller_true_game_over_reset_steps"] == (2,)
+        assert info["seller_emulator_step_calls"] == 7
+        assert info["seller_bullet_error"] == 0
+        assert info["buyer_bullet_error"] == 0
     finally:
         env.close()

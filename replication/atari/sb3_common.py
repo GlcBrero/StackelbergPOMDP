@@ -294,6 +294,18 @@ class EpisodeCheckpointCallback(BaseCallback):
             game_reward = float(role_metric("game_reward"))
             shots_fired = float(role_metric("shots_fired"))
             final_ammo = float(role_metric("final_ammo"))
+            true_game_over_resets = float(role_metric(
+                "true_game_over_resets"
+            ))
+            true_game_over_reset_rate = float(role_metric(
+                "true_game_over_reset_rate"
+            ))
+            time_limit_resets = float(role_metric("time_limit_resets"))
+            real_terminal_resets = float(role_metric("real_terminal_resets"))
+            life_resets = float(role_metric("life_resets"))
+            game_over_before_fifth = float(role_metric(
+                "true_game_over_before_fifth_event"
+            ))
             payload = {
                 "train/episode": self.episode_count,
                 "train/episode_reward": float(
@@ -309,6 +321,14 @@ class EpisodeCheckpointCallback(BaseCallback):
                 "train/final_ammo": final_ammo,
                 "train/reward_per_bullet": (
                     game_reward / shots_fired if shots_fired > 0.0 else 0.0
+                ),
+                "train/life_resets": life_resets,
+                "train/real_terminal_resets": real_terminal_resets,
+                "train/true_game_over_resets": true_game_over_resets,
+                "train/true_game_over_reset_rate": true_game_over_reset_rate,
+                "train/time_limit_resets": time_limit_resets,
+                "train/true_game_over_before_fifth_event": (
+                    game_over_before_fifth
                 ),
                 "train/total_timesteps": int(self.num_timesteps),
                 "train/learning_rate": float(
@@ -328,6 +348,19 @@ class EpisodeCheckpointCallback(BaseCallback):
                 "buyer_shots_fired",
                 "seller_final_ammo",
                 "buyer_final_ammo",
+                "seller_life_resets",
+                "buyer_life_resets",
+                "seller_real_terminal_resets",
+                "buyer_real_terminal_resets",
+                "seller_true_game_over_resets",
+                "buyer_true_game_over_resets",
+                "seller_true_game_over_reset_rate",
+                "buyer_true_game_over_reset_rate",
+                "seller_time_limit_resets",
+                "buyer_time_limit_resets",
+                "seller_true_game_over_before_fifth_event",
+                "buyer_true_game_over_before_fifth_event",
+                "any_true_game_over_before_fifth_event",
                 "cache_hits",
             ):
                 if key in episode:
@@ -343,6 +376,10 @@ class EpisodeCheckpointCallback(BaseCallback):
                     "buyer_ammo_before",
                     "seller_ammo_after",
                     "buyer_ammo_after",
+                    "seller_true_game_over_resets",
+                    "buyer_true_game_over_resets",
+                    "seller_time_limit_resets",
+                    "buyer_time_limit_resets",
                 ):
                     if key in event:
                         payload[

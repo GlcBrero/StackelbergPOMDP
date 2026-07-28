@@ -72,11 +72,18 @@ class EpisodicLifeWrapper(gym.Wrapper):
 
     def step(self, action):
         observation, reward, done, info = self.env.step(action)
-        self.was_real_done = bool(done)
+        real_done = bool(done)
+        self.was_real_done = real_done
         lives = int(info.get("ale.lives", -1))
-        life_lost = lives < self.lives and lives > -1
+        life_lost = bool(lives < self.lives and lives > -1 and not real_done)
         self.lives = lives
-        return observation, reward, bool(done or life_lost), info
+        info = dict(info)
+        info.update({
+            "real_done": real_done,
+            "real_game_over": bool(info.get("ale.game_over", real_done)),
+            "life_lost": life_lost,
+        })
+        return observation, reward, bool(real_done or life_lost), info
 
     def reset(self):
         if self.was_real_done:
@@ -210,7 +217,15 @@ class MaxAndSkipWrapper(gym.Wrapper):
     def _merge_info(accumulated, current):
         merged = dict(accumulated)
         for key, value in current.items():
-            if key in ("shot_did_fire", "blocked_fire_this_step"):
+            if key in (
+                    "shot_did_fire",
+                    "blocked_fire_this_step",
+                    "ale.game_over",
+                    "time_limit_reached",
+                    "real_done",
+                    "real_game_over",
+                    "life_lost",
+            ):
                 merged[key] = bool(merged.get(key, False)) or bool(value)
             elif key in ("shots_fired_this_step", "blocked_fire_count"):
                 merged[key] = int(merged.get(key, 0)) + int(value)
@@ -221,14 +236,17 @@ class MaxAndSkipWrapper(gym.Wrapper):
         return merged
 
     def reset(self):
-        # Match the historical DeepMind/StackeRLberg frame-buffer semantics.
-        return self.env.reset()
+        observation = self.env.reset()
+        # Avoid a stale max-pool frame if the first policy decision terminates
+        # before the final two repeated raw frames.
+        self._observation_buffer[...] = observation
+        return observation
 
     def step(self, action):
         total_reward = 0.0
         done = False
         info = {}
-        observation = None
+        observations = []
         for index in range(self.skip):
             # FIRE is one policy command, not four fire presses. Repeating the
             # movement component is safe; later raw frames remove FIRE.
@@ -238,12 +256,17 @@ class MaxAndSkipWrapper(gym.Wrapper):
                     int(np.asarray(action).reshape(-1)[0])
                 )
             observation, reward, done, frame_info = self.env.step(frame_action)
+            observations.append(observation)
             total_reward += float(reward)
             info = self._merge_info(info, frame_info)
-            if index >= self.skip - 2:
-                self._observation_buffer[index - (self.skip - 2)] = observation
             if done:
                 break
+        if not observations:
+            raise RuntimeError("max-and-skip produced no raw Atari frame")
+        self._observation_buffer[1] = observations[-1]
+        self._observation_buffer[0] = (
+            observations[-2] if len(observations) >= 2 else observations[-1]
+        )
         max_frame = self._observation_buffer.max(axis=0)
         return max_frame, total_reward, done, info
 

@@ -117,6 +117,7 @@ def test_e0_parser_separates_stage_initialization_from_true_resume(tmp_path):
     assert e0a.target_eval_episodes == 20
     assert e0a.target_confirm_episodes == 100
     assert e0a.target_consecutive_passes == 2
+    assert e0a.event_tail_steps == 0
 
     with pytest.raises(SystemExit):
         trainer.parse_args(["--stage", "e0b", "--no-wandb"])
@@ -128,6 +129,7 @@ def test_e0_parser_separates_stage_initialization_from_true_resume(tmp_path):
     ])
     assert e0b.n_steps == 205
     assert e0b.batch_size == 820
+    assert e0b.event_tail_steps == 0
 
     with pytest.raises(SystemExit):
         trainer.parse_args([

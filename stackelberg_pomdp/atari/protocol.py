@@ -76,7 +76,7 @@ def actor_state(
         event_index,
         opponent_commitment=None,
 ):
-    """Build ``xi=(ammo, projectile, time, mode, event, commitment)``."""
+    """Build ``xi=(ammo, projectile, time, mode, event, context)``."""
 
     context = (
         np.zeros(NUM_TRADE_EVENTS, dtype=np.float32)

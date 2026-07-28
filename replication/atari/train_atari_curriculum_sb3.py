@@ -38,6 +38,7 @@ from stackelberg_pomdp.atari.curriculum_env import (
     AtariCurriculumConfig,
     AtariCurriculumEnv,
 )
+from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
 
@@ -278,7 +279,7 @@ def parse_args(argv=None):
         help="maximum total training timesteps, including a resumed prefix",
     )
     parser.add_argument("--gameplay-horizon", type=int, default=200)
-    parser.add_argument("--event-tail-steps", type=int, default=50)
+    parser.add_argument("--event-tail-steps", type=int, default=0)
     parser.add_argument("--fixed-event-steps", type=str)
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--start-method", default="spawn")
@@ -350,6 +351,14 @@ def parse_args(argv=None):
     args.batch_size = expected_batch if args.batch_size is None else args.batch_size
     if args.gameplay_horizon <= 0:
         parser.error("--gameplay-horizon must be positive")
+    if args.event_tail_steps < 0:
+        parser.error("--event-tail-steps must be nonnegative")
+    if (
+            args.stage == "e0b"
+            and args.gameplay_horizon - args.event_tail_steps
+            < NUM_TRADE_EVENTS
+    ):
+        parser.error("E0b event window must contain at least five steps")
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
     if args.n_steps != transitions:

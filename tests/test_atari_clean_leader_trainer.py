@@ -28,6 +28,7 @@ def test_rollout_is_exactly_queries_gameplay_and_cached_trades(tmp_path):
 
     assert args.n_steps == 5 + 200 + 5
     assert args.batch_size == args.n_steps * args.num_envs
+    assert args.event_tail_steps == 0
     assert args.wandb_project == "StackPOMDP"
 
     with pytest.raises(SystemExit):

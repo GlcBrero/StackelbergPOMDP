@@ -29,7 +29,7 @@ class AtariCurriculumConfig:
     stage: str = "e0a"
     seed: int = 1
     gameplay_horizon: int = 200
-    event_tail_steps: int = 50
+    event_tail_steps: int = 0
     noop_max: int = 30
     frame_skip: int = 4
     frame_stack: int = 4
@@ -42,8 +42,12 @@ class AtariCurriculumConfig:
     def validate(self):
         if self.stage not in E0_STAGES:
             raise ValueError(f"stage must be one of {sorted(E0_STAGES)}")
-        if int(self.gameplay_horizon) <= 0:
-            raise ValueError("gameplay_horizon must be positive")
+        minimum_horizon = NUM_TRADE_EVENTS if self.stage == "e0b" else 1
+        if int(self.gameplay_horizon) < minimum_horizon:
+            raise ValueError(
+                f"{self.stage} gameplay_horizon must be at least "
+                f"{minimum_horizon}"
+            )
         return self
 
 
@@ -143,7 +147,11 @@ class AtariCurriculumEnv(gym.Env):
             trade_mode = False
         else:
             trade_mode = self.at_event
-            kind = AUTOMATIC_TRANSFER if trade_mode else GAMEPLAY
+            kind = (
+                AUTOMATIC_TRANSFER
+                if trade_mode
+                else GAMEPLAY
+            )
         state = actor_state(
             ammo_fraction=float(self.side.ammo) / NUM_TRADE_EVENTS,
             projectile_active=float(self.side.projectile_active),
@@ -185,7 +193,7 @@ class AtariCurriculumEnv(gym.Env):
             raise RuntimeError(
                 f"E0 bullet accounting failed with error {bullet_error}"
             )
-        return {
+        result = {
             "stage": self.config.stage,
             "gameplay_steps": int(self.game_step),
             "trade_transitions": int(self.free_transfers),
@@ -201,7 +209,30 @@ class AtariCurriculumEnv(gym.Env):
             "final_ammo": int(self.side.ammo),
             "bullet_accounting_error": int(bullet_error),
             "life_resets": int(self.side.life_resets),
+            "emulator_step_calls": int(self.side.step_calls),
+            "real_terminal_resets": int(self.side.real_terminal_resets),
+            "real_terminal_reset_steps": tuple(
+                int(step) for step in self.side.real_terminal_reset_steps
+            ),
+            "true_game_over_resets": int(self.side.true_game_over_resets),
+            "true_game_over_reset_rate": float(
+                self.side.true_game_over_resets / max(self.side.step_calls, 1)
+            ),
+            "true_game_over_reset_steps": tuple(
+                int(step) for step in self.side.true_game_over_reset_steps
+            ),
+            "time_limit_resets": int(self.side.time_limit_resets),
+            "time_limit_reset_steps": tuple(
+                int(step) for step in self.side.time_limit_reset_steps
+            ),
         }
+        if self.config.stage == "e0b":
+            final_event_step = int(self.event_steps[-1])
+            result["true_game_over_before_fifth_event"] = bool(any(
+                step <= final_event_step
+                for step in self.side.true_game_over_reset_steps
+            ))
+        return result
 
     def step(self, action):
         if self._done:
@@ -233,7 +264,7 @@ class AtariCurriculumEnv(gym.Env):
         info = dict(gameplay_info)
         info.update({
             "substep_type": GAMEPLAY,
-            "emulator_advanced": True,
+            "emulator_advanced": bool(gameplay_info["emulator_advanced"]),
             "game_reward": float(reward),
             "payment": 0.0,
             "shots_fired_this_step": int(shots),

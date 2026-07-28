@@ -18,8 +18,9 @@ from stackelberg_pomdp.atari.wrappers import (
 class AtariGameplaySide:
     """One Space Invaders instance with outer-episode ammunition accounting.
 
-    Episodic-life resets restart the frame stack but preserve the market ledger.
-    Trade methods update only the ledger and never advance ALE.
+    Wrapper terminals are local to this emulator. Ordinary life losses and
+    real terminals rebuild its frame stack immediately, while the outer market
+    episode, ammunition ledger, cumulative reward, and shot count continue.
     """
 
     def __init__(
@@ -50,8 +51,10 @@ class AtariGameplaySide:
             rom_path=rom_path,
         )
         env = NoopResetWrapper(env, noop_max=int(noop_max), seed=self.seed)
+        self.episodic_life_wrapper = None
         if episodic_life:
             env = EpisodicLifeWrapper(env)
+            self.episodic_life_wrapper = env
         if clip_game_rewards:
             env = ClipGameRewardWrapper(env)
         self.ammo_wrapper = ScarceAmmoWrapper(env, ledger=self.ledger)
@@ -65,6 +68,12 @@ class AtariGameplaySide:
         self.shots_fired = 0
         self.life_resets = 0
         self.step_calls = 0
+        self.real_terminal_resets = 0
+        self.real_terminal_reset_steps = []
+        self.true_game_over_resets = 0
+        self.true_game_over_reset_steps = []
+        self.time_limit_resets = 0
+        self.time_limit_reset_steps = []
 
     def _require_observation(self):
         if self._observation is None:
@@ -97,14 +106,52 @@ class AtariGameplaySide:
         self.shots_fired = 0
         self.life_resets = 0
         self.step_calls = 0
+        self.real_terminal_resets = 0
+        self.real_terminal_reset_steps = []
+        self.true_game_over_resets = 0
+        self.true_game_over_reset_steps = []
+        self.time_limit_resets = 0
+        self.time_limit_reset_steps = []
+        # An outer-episode reset is always a fresh ALE game. EpisodicLife's
+        # normal reset path intentionally emits a single NOOP after a lost life,
+        # so force its full-reset branch here.
+        if self.episodic_life_wrapper is not None:
+            self.episodic_life_wrapper.was_real_done = True
         self._observation = np.array(self.env.reset(), copy=True)
         return self.observation
 
-    def _reset_life_preserving_ammo(self):
+    def _reset_preserving_outer_state(
+            self,
+            reset_kind,
+            *,
+            real_game_over=False,
+            time_limit_reached=False,
+    ):
+        """Reset this wrapper chain without resetting outer-episode ledgers."""
+
         ammo = self.ammo
+        wrapper_shots = int(self.ammo_wrapper.shots_fired_total)
         self._observation = np.array(self.env.reset(), copy=True)
         self.ledger.value = ammo
-        self.life_resets += 1
+        # A life-loss reset remains within the same ALE game, so retain the
+        # wrapper's reward-provenance flag. A real terminal starts a fresh game:
+        # its no-bullet reward guard must remain reset even though the side-level
+        # diagnostic shot count continues across the outer market episode.
+        if reset_kind == "life":
+            self.ammo_wrapper.shots_fired_total = wrapper_shots
+
+        step = int(self.step_calls)
+        if reset_kind == "life":
+            self.life_resets += 1
+        else:
+            self.real_terminal_resets += 1
+            self.real_terminal_reset_steps.append(step)
+            if real_game_over or reset_kind == "ale_game_over":
+                self.true_game_over_resets += 1
+                self.true_game_over_reset_steps.append(step)
+            if time_limit_reached or reset_kind == "time_limit":
+                self.time_limit_resets += 1
+                self.time_limit_reset_steps.append(step)
 
     def step(self, game_action):
         action = int(np.clip(
@@ -117,9 +164,45 @@ class AtariGameplaySide:
         self.game_reward += reward
         self.shots_fired += shots
         self.step_calls += 1
+        info = dict(info)
+        reset_kind = None
+        reset_real_game_over = False
+        reset_time_limit = False
         if done:
-            self._reset_life_preserving_ammo()
-        return reward, shots, dict(info)
+            if bool(info.get("real_done", True)):
+                reset_real_game_over = bool(
+                    info.get("real_game_over", info.get("ale.game_over", True))
+                )
+                reset_time_limit = bool(info.get("time_limit_reached", False))
+                reset_kind = info.get("terminal_reason") or (
+                    "ale_game_over"
+                    if reset_real_game_over
+                    else "time_limit" if reset_time_limit else "terminal"
+                )
+                self._reset_preserving_outer_state(
+                    reset_kind,
+                    real_game_over=reset_real_game_over,
+                    time_limit_reached=reset_time_limit,
+                )
+            else:
+                reset_kind = "life"
+                self._reset_preserving_outer_state(reset_kind)
+        info.update({
+            "emulator_advanced": True,
+            "shots_fired_total": int(self.shots_fired),
+            "shots_fired_since_emulator_reset": int(
+                self.ammo_wrapper.shots_fired_total
+            ),
+            "life_reset": reset_kind == "life",
+            "real_terminal_reset": bool(done and reset_kind != "life"),
+            "real_game_over_reset": reset_real_game_over,
+            "time_limit_reset": reset_time_limit,
+            "life_resets": int(self.life_resets),
+            "real_terminal_resets": int(self.real_terminal_resets),
+            "true_game_over_resets": int(self.true_game_over_resets),
+            "time_limit_resets": int(self.time_limit_resets),
+        })
+        return reward, shots, info
 
     def grant(self, amount=1):
         return self.ledger.grant(int(amount))

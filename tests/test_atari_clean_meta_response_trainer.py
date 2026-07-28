@@ -136,6 +136,7 @@ def test_parser_aligns_rollout_with_one_full_h_plus_five_episode(tmp_path):
     assert args.n_steps == 22
     assert args.batch_size == 66
     assert args.fixed_event_steps == (0, 2, 4, 6, 8)
+    assert args.event_tail_steps == 0
     assert args.wandb_project == "StackPOMDP"
     assert not args.wandb
 
@@ -309,6 +310,12 @@ def test_episode_wandb_metrics_follow_the_controlled_seller_role(tmp_path):
                 "buyer_shots_fired": 5,
                 "seller_final_ammo": 2,
                 "buyer_final_ammo": 0,
+                "seller_life_resets": 4,
+                "seller_real_terminal_resets": 2,
+                "seller_true_game_over_resets": 2,
+                "seller_true_game_over_reset_rate": 0.01,
+                "seller_time_limit_resets": 0,
+                "seller_true_game_over_before_fifth_event": True,
             }
         }],
     }
@@ -321,6 +328,12 @@ def test_episode_wandb_metrics_follow_the_controlled_seller_role(tmp_path):
     assert payload["train/shots_fired"] == 3
     assert payload["train/final_ammo"] == 2
     assert payload["train/reward_per_bullet"] == pytest.approx(0.4)
+    assert payload["train/life_resets"] == 4
+    assert payload["train/real_terminal_resets"] == 2
+    assert payload["train/true_game_over_resets"] == 2
+    assert payload["train/true_game_over_reset_rate"] == pytest.approx(0.01)
+    assert payload["train/time_limit_resets"] == 0
+    assert payload["train/true_game_over_before_fifth_event"] == 1
 
 
 def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):

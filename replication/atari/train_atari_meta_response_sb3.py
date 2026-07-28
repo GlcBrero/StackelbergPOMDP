@@ -36,6 +36,7 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     BilateralAtariConfig,
     make_atari_meta_response_env,
 )
+from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
 
@@ -270,7 +271,7 @@ def parse_args(argv=None):
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--timesteps", type=int, default=2_000_000)
     parser.add_argument("--gameplay-horizon", type=int, default=200)
-    parser.add_argument("--event-tail-steps", type=int, default=50)
+    parser.add_argument("--event-tail-steps", type=int, default=0)
     parser.add_argument("--fixed-event-steps", type=str)
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--start-method", default="spawn")
@@ -314,8 +315,15 @@ def parse_args(argv=None):
     args.n_steps = transitions if args.n_steps is None else args.n_steps
     buffer_size = args.n_steps * args.num_envs
     args.batch_size = buffer_size if args.batch_size is None else args.batch_size
-    if args.gameplay_horizon <= 0:
-        parser.error("--gameplay-horizon must be positive")
+    if args.gameplay_horizon < NUM_TRADE_EVENTS:
+        parser.error("--gameplay-horizon must be at least five")
+    if args.event_tail_steps < 0:
+        parser.error("--event-tail-steps must be nonnegative")
+    if (
+            args.gameplay_horizon - args.event_tail_steps
+            < NUM_TRADE_EVENTS
+    ):
+        parser.error("E1 event window must contain at least five steps")
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
     if args.n_steps != transitions:

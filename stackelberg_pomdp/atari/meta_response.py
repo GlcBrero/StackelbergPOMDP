@@ -192,6 +192,10 @@ class AtariMetaFollowerWrapper(FollowerWrapper):
         self.leader_role = env.leader_role
         self.follower_role = env.follower_role
         self.config = env.config
+        self.action_space = action_space(self.env.core.game_action_count)
+        self.observation_space = observation_space(
+            self.env.core.image_space, self.env.core.game_action_count
+        )
         self.response = FrozenMetaPolicyResponse(
             response_checkpoint,
             follower_role=self.follower_role,
@@ -200,10 +204,6 @@ class AtariMetaFollowerWrapper(FollowerWrapper):
         )
         self.rng = np.random.default_rng(
             int(self.config.seed if seed is None else seed) + 193_939
-        )
-        self.action_space = action_space(self.env.core.game_action_count)
-        self.observation_space = observation_space(
-            self.env.core.image_space, self.env.core.game_action_count
         )
         self.canonical_action_mask = np.ones(
             self.env.core.game_action_count, dtype=np.float32
@@ -308,14 +308,22 @@ class AtariMetaFollowerWrapper(FollowerWrapper):
         return self._live_observation(
             self.leader_role,
             follower=False,
-            decision_kind=TERMINAL if self.env._done else GAMEPLAY,
+            decision_kind=(
+                TERMINAL
+                if self.env._done
+                else GAMEPLAY
+            ),
         )
 
     def _follower_observation(self, *, trade):
         return self._live_observation(
             self.follower_role,
             follower=True,
-            decision_kind=FOLLOWER_TRADE if trade else GAMEPLAY,
+            decision_kind=(
+                FOLLOWER_TRADE
+                if trade
+                else GAMEPLAY
+            ),
         )
 
     def _next_leader_observation(self):
@@ -456,7 +464,11 @@ class AtariMetaFollowerWrapper(FollowerWrapper):
         }
         _, reward, inner_done, info = self.env.step(joint_actions)
         reward = float(reward)
-        substep = CACHED_TRADE_REPLAY if trade else GAMEPLAY
+        substep = (
+            CACHED_TRADE_REPLAY
+            if trade
+            else GAMEPLAY
+        )
         info.update({
             "substep_type": substep,
             "is_query": False,

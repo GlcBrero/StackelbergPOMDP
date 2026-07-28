@@ -45,9 +45,11 @@ actor_state -> shared FC 64 ReLU -----------+
 ```
 
 The economic head never consumes pixels. E1 responses use the full 14-scalar
-state. An E2 leader explicitly zeros every economic input except the five-way
-event identity. Deterministic evaluation uses masked Atari argmax and the Beta
-mean.
+live state. An E2 leader instead receives five ex-ante canonical queries; only
+the five-way event identity varies across queries, and its event-only economic
+head zeros every non-event input internally. Each cached reward-trade replay
+uses the identical canonical query observation. Deterministic evaluation uses
+masked Atari argmax and the Beta mean.
 
 Each stage creates a fresh private critic. The CNN, shared state encoder, and
 game head transfer between stages; transferred visual/game modules can use a
@@ -79,10 +81,29 @@ second policy decision.
 - E2: five zero-reward event-only leader queries, a fresh bilateral reward
   game with 200 gameplay steps, and five actor-identical cached trade replays.
 
+E0b, E1, and E2 share the same schedule: five distinct gameplay indices are
+sampled uniformly without replacement from the full `{0,...,H-1}` horizon and
+then sorted. Thus the fifth event may occur at `H-1`; no gameplay tail is
+reserved. `--fixed-event-steps` remains available for controlled diagnostics.
+
 Each bilateral event grants exactly one bullet to the seller. Acceptance is
 `price <= threshold`; an accepted trade transfers one bullet and applies the
 payment immediately. Seller payoff is `0.1 * clipped_game_reward + payments`;
 buyer payoff is `clipped_game_reward - payments`. Trades never advance ALE.
+
+An ordinary episodic-life boundary rebuilds the frame stack after one NOOP and
+preserves the outer ammunition ledger. A true ALE game-over or emulator time
+limit also resets only that player's emulator immediately and rebuilds its
+frame stack and projectile state. The reset preserves outer ammo, cumulative
+shots and reward, inventory, payments, the other emulator, the global gameplay
+clock, and all five exogenous trade events. Gameplay therefore remains alive on
+every one of the fixed `H` gameplay transitions; there is no inactive actor
+state or absorbing gameplay action.
+
+The clean 14-scalar actor and 32-scalar critic restore the schema used by the
+existing clean E0 checkpoints, so those checkpoints remain structurally
+compatible for resume, actor transfer, and frozen control. Historical
+checkpoints built with other policy classes remain rejected as described above.
 
 E2 retains the exact ordered query trace `Q`, including complete actor-visible
 observations and complete two-coordinate actions. The five economic actions
@@ -118,6 +139,8 @@ generic wrapper.
 the five exact leader queries, finalizes their context, and then evaluates the
 opposite-role E1 policy deterministically during the reward game. E1 is where
 that meta-policy is learned; the response does not update online during E2.
+The follower's in-game response sees the live 14-scalar state, while the
+leader's ex-ante commitment remains event-indexed.
 
 ## Setup
 
@@ -254,21 +277,24 @@ run can retain the same W&B URL with `--wandb-id RUN_ID --wandb-resume must`.
 
 W&B logs episode payoff and length, role-correct game reward, shots, ammo,
 reward per bullet, payments, purchases, all five event prices/thresholds/
-acceptance times, total timesteps, learning rate, seed, algorithm, and
-checkpoint path.
+acceptance times, true-game-over reset counts/rates, time-limit reset counts,
+whether a true game-over occurred before the fifth event, total timesteps,
+learning rate, seed, algorithm, and checkpoint path. Evaluation JSON rows also
+retain the exact policy-step indices at which each local reset occurred.
 
 ## Validation
 
 ```bash
 PYTHONNOUSERSITE=1 \
-python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_leader_trainer.py"]))'
+python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_leader_trainer.py"]))'
 ```
 
 The clean suite checks the stable 14D interface, branch-gradient isolation,
 event-only leader invariance, exact full-action cache reuse, zero actor credit
 on cached replays, per-vector-row cache reset, one FIRE press per max-and-skip
 decision, atomic trade accounting, complete E1/E2 horizons, fresh critics,
-actor transfer, and optimizer checkpoint reloadability.
+independent local true-game-over resets with preserved outer accounting, actor
+transfer, and optimizer checkpoint reloadability.
 
 ## Current clean-run status
 
