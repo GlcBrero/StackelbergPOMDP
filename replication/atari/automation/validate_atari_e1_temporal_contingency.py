@@ -128,19 +128,21 @@ def _uniform_sampler_contract(report):
 
 
 def validate_failed_uniform_report(path, *, actor_loss_mode, rom_sha256):
-    """Validate one final six-candidate failed uniform E1 buyer report."""
+    """Validate failure of the final uniform family's screened rank one.
+
+    Legacy selectors could continue down the ranking after rank one failed.
+    Such a report may say ``passed=true`` because a lower-ranked checkpoint
+    passed confirmation.  It is still a failure under the preregistered
+    screen-winner-only rule used by the contingency and all downstream gates.
+    """
 
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise ContingencyInactive(f"final uniform report is not available: {path}")
     report = load_json(path)
-    if report.get("passed") is not False:
-        raise ContingencyInactive(
-            f"contingency is inactive because uniform report did not fail: {path}"
-        )
+    _require(type(report.get("passed")) is bool, "uniform report has no Boolean outcome")
     _require(report.get("evaluator") == evaluator.EVALUATOR_NAME, "unknown E1 evaluator")
     _require(report.get("role") == BUYER, "uniform report is not a buyer report")
-    _require(report.get("selected_alias") is None, "failed uniform report retained an alias")
     protocol = report.get("protocol", {})
     _require(protocol.get("screen_episodes") == 20, "uniform screen is not common-20")
     _require(protocol.get("confirmation_episodes") == 100, "uniform confirmation is not fresh-100")
@@ -184,7 +186,45 @@ def validate_failed_uniform_report(path, *, actor_loss_mode, rom_sha256):
     _require(rank_one.get("mechanically_valid") is True, "uniform rank-1 checkpoint is mechanically invalid")
     attempts = report.get("confirmation_attempts", [])
     _require(bool(attempts), "failed uniform report has no fresh-seed confirmation")
-    _require(all(not row.get("behavioral_gate", {}).get("passed", False) for row in attempts), "failed uniform report contains a passing confirmation")
+    attempt_hashes = [row.get("metadata", {}).get("sha256") for row in attempts]
+    _require(
+        attempt_hashes == ranked_hashes[:len(attempt_hashes)],
+        "uniform confirmations are not a prefix of the screen ranking",
+    )
+    rank_one_passed = attempts[0].get("behavioral_gate", {}).get("passed") is True
+    if rank_one_passed:
+        raise ContingencyInactive(
+            f"contingency is inactive because the uniform screen winner passed: {path}"
+        )
+    selected_alias = report.get("selected_alias")
+    if report["passed"]:
+        _require(isinstance(selected_alias, dict), "passing legacy uniform report has no alias")
+        selected_hash = selected_alias.get("sha256")
+        _require(
+            selected_hash in ranked_hashes[1:],
+            "legacy fallback did not select a lower-ranked candidate",
+        )
+        _require(
+            attempts[-1].get("behavioral_gate", {}).get("passed") is True
+            and attempt_hashes[-1] == selected_hash,
+            "legacy uniform fallback alias is not its passing confirmation",
+        )
+        alias_path = Path(
+            selected_alias.get("pinned_path", "")
+        ).expanduser().resolve()
+        _require(
+            sha256_file(alias_path) == selected_hash,
+            "legacy uniform fallback alias bytes changed",
+        )
+    else:
+        _require(selected_alias is None, "failed uniform report retained an alias")
+        _require(
+            all(
+                row.get("behavioral_gate", {}).get("passed") is False
+                for row in attempts
+            ),
+            "failed uniform report contains a passing confirmation",
+        )
     artifacts = report.get("artifacts", {})
     _require(_same_file(artifacts.get("json", ""), path), "uniform report does not identify itself")
     e0b = report.get("e0b_source", {})
@@ -196,6 +236,9 @@ def validate_failed_uniform_report(path, *, actor_loss_mode, rom_sha256):
         "actor_loss_mode": actor_loss_mode,
         "candidate_count": NUM_CANDIDATES,
         "sampler": sampler,
+        "reported_passed": bool(report["passed"]),
+        "strict_screen_winner_passed": False,
+        "legacy_fallback_selected": bool(report["passed"]),
         "e0b": {"path": str(e0b_path), "sha256": e0b["sha256"]},
         "rank_one": {
             "path": str(Path(rank_one["checkpoint_path"]).expanduser().resolve()),
@@ -426,7 +469,13 @@ def validate_selection(args):
     if report.get("passed"):
         _require(report.get("selection", {}).get("selected_checkpoint_sha256") == winner, "temporal selected hash is not the screen winner")
         _require(selected.is_file() and sha256_file(selected) == winner, "temporal selected alias is missing or changed")
-        _require(_same_file(report.get("selected_alias", {}).get("path", ""), selected), "temporal report identifies another selected alias")
+        _require(
+            _same_file(
+                report.get("selected_alias", {}).get("pinned_path", ""),
+                selected,
+            ),
+            "temporal report identifies another selected alias",
+        )
     else:
         _require(report.get("selected_alias") is None and not selected.exists(), "failed temporal selector retained an alias")
         _require(attempts[0].get("behavioral_gate", {}).get("passed") is False, "failed temporal selector contains a passing gate")

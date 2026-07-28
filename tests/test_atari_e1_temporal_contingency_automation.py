@@ -53,7 +53,7 @@ def _write_failed_report(
         "evaluator": validator.evaluator.EVALUATOR_NAME,
         "role": "buyer",
         "passed": bool(passed),
-        "selected_alias": ({"path": "selected.zip"} if passed else None),
+        "selected_alias": ({"pinned_path": "selected.zip"} if passed else None),
         "protocol": {
             "screen_episodes": 20,
             "confirmation_episodes": 100,
@@ -85,8 +85,12 @@ def _write_failed_report(
         },
         "ranking": ranking,
         "confirmation_attempts": ([{
-            "behavioral_gate": {"passed": False}
-        }] if not passed else [{"behavioral_gate": {"passed": True}}]),
+            "metadata": {"sha256": candidates[0]},
+            "behavioral_gate": {"passed": False},
+        }] if not passed else [{
+            "metadata": {"sha256": candidates[0]},
+            "behavioral_gate": {"passed": True},
+        }]),
         "immutable_evaluation": {"candidate_sha256": candidates},
         "e0b_source": {
             "path": str(e0b),
@@ -130,7 +134,10 @@ def test_activation_is_inert_until_both_uniform_all_six_reports_fail(
     balanced["passed"] = False
     balanced["selected_alias"] = None
     balanced["confirmation_attempts"] = [{
-        "behavioral_gate": {"passed": False}
+        "metadata": {
+            "sha256": balanced["ranking"][0]["checkpoint_sha256"],
+        },
+        "behavioral_gate": {"passed": False},
     }]
     balanced_path.write_text(json.dumps(balanced), encoding="utf-8")
     activation = validator.write_or_validate_activation(args)
@@ -142,6 +149,43 @@ def test_activation_is_inert_until_both_uniform_all_six_reports_fail(
     assert activation["protocol"]["confirmation"]["fallback_allowed"] is False
     with pytest.raises(FileExistsError):
         validator.atomic_write_json(output, {"replacement": True})
+
+
+def test_legacy_lower_rank_fallback_is_a_strict_uniform_failure(tmp_path):
+    report_path, report = _write_failed_report(
+        tmp_path,
+        name="legacy_fallback",
+        actor_loss_mode="balanced",
+        passed=False,
+    )
+    winner = report["ranking"][0]["checkpoint_sha256"]
+    fallback = report["ranking"][1]["checkpoint_sha256"]
+    fallback_source = Path(report["ranking"][1]["checkpoint_path"])
+    alias = tmp_path / "legacy_fallback_selected.zip"
+    alias.write_bytes(fallback_source.read_bytes())
+    report["passed"] = True
+    report["selected_alias"] = {
+        "pinned_path": str(alias), "sha256": fallback,
+    }
+    report["confirmation_attempts"] = [
+        {
+            "metadata": {"sha256": winner},
+            "behavioral_gate": {"passed": False},
+        },
+        {
+            "metadata": {"sha256": fallback},
+            "behavioral_gate": {"passed": True},
+        },
+    ]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    validated = validator.validate_failed_uniform_report(
+        report_path,
+        actor_loss_mode="balanced",
+        rom_sha256="r" * 64,
+    )
+    assert validated["reported_passed"] is True
+    assert validated["strict_screen_winner_passed"] is False
+    assert validated["legacy_fallback_selected"] is True
 
 
 def test_sampler_preflight_checks_frequencies_support_and_independence():
@@ -304,6 +348,19 @@ def test_temporal_selector_validator_forbids_confirmation_fallback(
         selected=str(selected),
     )
     assert validator.validate_selection(args)["passed"] is False
+
+    selected.write_bytes(b"selected")
+    monkeypatch.setattr(validator, "sha256_file", lambda path: hashes[0])
+    report["passed"] = True
+    report["selection"]["selected_checkpoint_sha256"] = hashes[0]
+    report["selected_alias"] = {
+        "pinned_path": str(selected),
+        "sha256": hashes[0],
+    }
+    report["confirmation_attempts"][0]["behavioral_gate"]["passed"] = True
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert validator.validate_selection(args)["passed"] is True
+
     report["confirmation_attempts"].append(dict(attempt))
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="confirm only the screen winner"):

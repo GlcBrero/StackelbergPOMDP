@@ -485,6 +485,16 @@ def _validate_temporal_gate_support(
             item.get("actor_loss_mode"), label,
             label=f"{label} failed actor-loss mode",
         )
+        expect_equal(
+            item.get("strict_screen_winner_passed"), False,
+            label=f"{label} strict screen-winner outcome",
+        )
+        if type(item.get("reported_passed")) is not bool:
+            fail(f"{label} failed report has no recorded legacy outcome")
+        expect_equal(
+            item.get("legacy_fallback_selected"), item["reported_passed"],
+            label=f"{label} legacy fallback record",
+        )
     resume = activation.get("resume_source", {})
     temporal_source = history[1]["resume_sources"][0]
     for key in ("path", "sha256", "training_total_timesteps"):
@@ -577,7 +587,9 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     alias = report.get("selected_alias")
     if not isinstance(alias, dict):
         fail("passing E1 report has no selected_alias object")
-    same_path(alias.get("path"), checkpoint, label="E1 selected alias")
+    same_path(
+        alias.get("pinned_path"), checkpoint, label="E1 selected alias"
+    )
     digest = validate_zip(checkpoint)
     expect_equal(alias.get("sha256"), digest, label="E1 alias SHA-256")
     candidate_hashes = _strict_e1_selection(
@@ -661,6 +673,38 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     }
 
 
+def _report_selected_screen_winner(report: dict) -> bool:
+    """Return False only for a coherent legacy lower-rank fallback pass."""
+
+    ranking = report.get("ranking")
+    alias = report.get("selected_alias")
+    attempts = report.get("confirmation_attempts")
+    if (
+            not isinstance(ranking, list) or len(ranking) != 6
+            or not isinstance(alias, dict)
+            or not isinstance(attempts, list) or not attempts
+    ):
+        fail("passing E1 report lacks final selection records")
+    ranked_hashes = [row.get("checkpoint_sha256") for row in ranking]
+    selected = alias.get("sha256")
+    attempted = [row.get("metadata", {}).get("sha256") for row in attempts]
+    if selected == ranked_hashes[0]:
+        if attempted != [ranked_hashes[0]]:
+            fail("screen-winner E1 pass contains extra confirmation attempts")
+        return True
+    if selected not in ranked_hashes[1:]:
+        fail("legacy E1 fallback selected a checkpoint outside the ranking")
+    selected_rank = ranked_hashes.index(selected)
+    if attempted != ranked_hashes[:selected_rank + 1]:
+        fail("legacy E1 fallback confirmations are not a ranking prefix")
+    if any(
+            row.get("behavioral_gate", {}).get("passed") is not False
+            for row in attempts[:-1]
+    ) or attempts[-1].get("behavioral_gate", {}).get("passed") is not True:
+        fail("legacy E1 fallback outcomes are inconsistent")
+    return False
+
+
 def discover_e1_gate(args: argparse.Namespace) -> dict:
     output_dir = Path(args.output_dir).expanduser().resolve()
     if args.override_report:
@@ -694,6 +738,11 @@ def discover_e1_gate(args: argparse.Namespace) -> dict:
                 # contingency validator can publish the gate sidecar.  Treat
                 # this narrow interval as not ready, never as an eligible gate.
                 continue
+        if not _report_selected_screen_winner(report):
+            # Legacy selectors could report success after searching below the
+            # screen winner.  That immutable result is a valid negative input
+            # to the temporal contingency, but never a downstream gate.
+            continue
         config = report.get("training_family", {}).get(
             "common_training_config", {}
         )
@@ -707,9 +756,12 @@ def discover_e1_gate(args: argparse.Namespace) -> dict:
                 )
             continue
         alias = report.get("selected_alias")
-        if not isinstance(alias, dict) or not isinstance(alias.get("path"), str):
+        if (
+                not isinstance(alias, dict)
+                or not isinstance(alias.get("pinned_path"), str)
+        ):
             fail(f"passing E1 gate has no selected checkpoint: {report_path}")
-        checkpoint = Path(alias["path"]).expanduser().resolve()
+        checkpoint = Path(alias["pinned_path"]).expanduser().resolve()
         validated = validate_e1_gate(argparse.Namespace(
             report=str(report_path),
             checkpoint=str(checkpoint),

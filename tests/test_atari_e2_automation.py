@@ -201,6 +201,46 @@ def test_temporal_report_is_not_discoverable_before_gate_sidecar(
     assert result == {"kind": "e1_gate_discovery", "found": False}
 
 
+def test_legacy_lower_rank_pass_is_not_a_downstream_gate(
+        monkeypatch, tmp_path,
+):
+    report_path = tmp_path / "e1_buyer_uniform_selector_v2.json"
+    hashes = [f"{index + 1:064x}" for index in range(6)]
+    report_path.write_text(json.dumps({
+        "passed": True,
+        "role": "buyer",
+        "selected_alias": {
+            "pinned_path": "selected.zip", "sha256": hashes[1],
+        },
+        "ranking": [{"checkpoint_sha256": digest} for digest in hashes],
+        "confirmation_attempts": [
+            {
+                "metadata": {"sha256": hashes[0]},
+                "behavioral_gate": {"passed": False},
+            },
+            {
+                "metadata": {"sha256": hashes[1]},
+                "behavioral_gate": {"passed": True},
+            },
+        ],
+        "training_family": {
+            "common_training_config": {"actor_loss_mode": "balanced"},
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        validator,
+        "validate_e1_gate",
+        lambda args: pytest.fail("a lower-rank fallback was treated as a gate"),
+    )
+    result = validator.discover_e1_gate(Namespace(
+        role="buyer",
+        output_dir=str(tmp_path),
+        override_report=None,
+        require_mode=None,
+    ))
+    assert result["found"] is False
+
+
 def test_durable_seller_release_uses_only_final_strict_gate_discovery():
     root = Path(__file__).resolve().parents[1]
     launcher = (
@@ -265,6 +305,9 @@ def test_temporal_support_binds_activation_family_and_selected_bytes(
             "actor_loss_mode": mode,
             "candidate_count": 6,
             "sampler": {"mode": "uniform"},
+            "reported_passed": False,
+            "strict_screen_winner_passed": False,
+            "legacy_fallback_selected": False,
         }
     activation_path = tmp_path / "activation.json"
     activation = {
