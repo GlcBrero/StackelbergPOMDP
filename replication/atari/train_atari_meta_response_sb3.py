@@ -1,6 +1,7 @@
 """Train a clean full-trajectory E1 Atari buyer or seller meta-response."""
 
 import argparse
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -53,6 +54,27 @@ def _validate_e0b_source(provenance):
         )
     if provenance["source_economic_input_mode"] != "full":
         raise ValueError("E1 actor sources must use economic_input_mode='full'")
+    if not math.isclose(
+            float(provenance["source_pretrained_lr_scale"]),
+            0.1,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+    ):
+        raise ValueError(
+            "E1 requires an E0b checkpoint with pretrained_lr_scale=0.1; "
+            f"got {provenance['source_pretrained_lr_scale']!r}"
+        )
+
+
+def _checkpoint_sha256(raw):
+    path = Path(raw).expanduser()
+    if not path.is_file() and Path(f"{path}.zip").is_file():
+        path = Path(f"{path}.zip")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def bilateral_config(args, *, seed):
@@ -116,6 +138,11 @@ def _new_model(args, vec_env):
         device=args.device,
     )
     _validate_e0b_source(provenance)
+    provenance = {
+        **provenance,
+        "modules": list(provenance["modules"]),
+    }
+    model.atari_e1_source_provenance = dict(provenance)
     if args.role == BUYER:
         model.policy.reset_economic_head(mean=0.95, concentration=10.0)
     else:
@@ -156,6 +183,16 @@ def _resumed_model(args, vec_env):
         raise ValueError(
             "--pretrained-lr-scale must match the saved E1 checkpoint "
             f"({policy.pretrained_lr_scale})"
+        )
+    provenance = getattr(model, "atari_e1_source_provenance", None)
+    if provenance is None:
+        raise ValueError("E1 resume is missing its E0b source provenance")
+    _validate_e0b_source(provenance)
+    current_sha256 = _checkpoint_sha256(args.e0b_checkpoint)
+    if current_sha256 != provenance["sha256"]:
+        raise ValueError(
+            "--e0b-checkpoint differs from the source bound into this E1 "
+            f"run ({current_sha256} != {provenance['sha256']})"
         )
     return model
 
@@ -372,6 +409,12 @@ def main(argv=None):
     run = init_wandb(args, stage=f"e1_{args.role}", checkpoint=args.checkpoint)
     try:
         model = build_model(args, vec_env)
+        source_provenance = dict(model.atari_e1_source_provenance)
+        if run is not None:
+            run.config.update(
+                {"e0b_source_provenance": source_provenance},
+                allow_val_change=True,
+            )
         if not args.eval_only:
             callback = EpisodeCheckpointCallback(
                 checkpoint=args.checkpoint,
@@ -387,6 +430,9 @@ def main(argv=None):
             )
             model.save(args.checkpoint)
         evaluation = evaluate_response(model, args)
+        evaluation["provenance"] = {
+            "e0b_source": source_provenance,
+        }
         write_csv(
             fixed_context_csv_path(args.checkpoint),
             evaluation["fixed_contexts"],

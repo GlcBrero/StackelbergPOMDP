@@ -160,11 +160,16 @@ def test_actor_source_role_requires_gameplay_e0b():
     base = {
         "source_economic_role": "gameplay",
         "source_economic_input_mode": "full",
+        "source_pretrained_lr_scale": 0.1,
     }
     trainer._validate_e0b_source(base)
     with pytest.raises(ValueError, match="E0b checkpoint"):
         trainer._validate_e0b_source(
             {**base, "source_economic_role": SELLER}
+        )
+    with pytest.raises(ValueError, match="pretrained_lr_scale=0.1"):
+        trainer._validate_e0b_source(
+            {**base, "source_pretrained_lr_scale": 1.0}
         )
 
 
@@ -185,6 +190,9 @@ def test_e1_build_transfers_only_actor_and_uses_role_specific_economic_start(
         assert isinstance(model.policy, StackPOMDPAtariPolicy)
         assert model.policy.economic_role == role
         assert model.policy.economic_input_mode == "full"
+        assert model.atari_e1_source_provenance["sha256"] == (
+            trainer._checkpoint_sha256(checkpoint)
+        )
         assert model.policy.observation_space["actor_state"].shape == (
             ACTOR_STATE_DIM,
         )
@@ -227,11 +235,15 @@ def test_e1_build_transfers_only_actor_and_uses_role_specific_economic_start(
         saved = tmp_path / f"e1_{role}.zip"
         model.save(saved)
         restored = PPO.load(saved, env=vec_env, device="cpu")
+        assert restored.atari_e1_source_provenance == (
+            model.atari_e1_source_provenance
+        )
         assert restored.policy.pretrained_lr_scale == pytest.approx(0.1)
         assert [
             group["lr_scale"]
             for group in restored.policy.optimizer.param_groups
         ] == [0.1, 1.0]
+
     finally:
         vec_env.close()
 
@@ -332,6 +344,17 @@ def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
             group["lr_scale"]
             for group in restored.policy.optimizer.param_groups
         ] == [0.1, 1.0]
+
+        equivalent_source = tmp_path / "same_e0b_bytes.zip"
+        equivalent_source.write_bytes(e0b_checkpoint.read_bytes())
+        args.e0b_checkpoint = str(equivalent_source)
+        trainer._resumed_model(args, vec_env)
+
+        different_source = tmp_path / "different_e0b_bytes.zip"
+        different_source.write_bytes(b"different checkpoint bytes")
+        args.e0b_checkpoint = str(different_source)
+        with pytest.raises(ValueError, match="differs from the source bound"):
+            trainer._resumed_model(args, vec_env)
     finally:
         vec_env.close()
 
