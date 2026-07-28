@@ -3,6 +3,9 @@ from types import SimpleNamespace
 import gym
 import numpy as np
 
+from replication.atari.evaluate_atari_stackpomdp_leader_sb3 import (
+    apply_economic_commitment_override,
+)
 from stackelberg_pomdp.atari.curriculum_env import (
     AtariCurriculumConfig,
     AtariCurriculumEnv,
@@ -15,6 +18,7 @@ from stackelberg_pomdp.atari.protocol import (
     GAMEPLAY,
     ACTOR_STATE_DIM,
     LEADER_QUERY,
+    OPPONENT_COMMITMENT_SLICE,
     actor_observation,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
@@ -216,6 +220,22 @@ class _FrozenFollower:
             for key, value in observation.items()
         })
         return np.array([FIRE, self.economic_action], dtype=np.float32), None
+
+
+class _ContextFollower(_FrozenFollower):
+    """Make the economic response visibly depend on the delivered omega."""
+
+    def predict(self, observation, deterministic=True):
+        assert deterministic
+        self.observations.append({
+            key: np.array(value, copy=True)
+            for key, value in observation.items()
+        })
+        context = np.asarray(
+            observation[ACTOR_STATE][OPPONENT_COMMITMENT_SLICE],
+            dtype=np.float32,
+        )
+        return np.array([FIRE, context[0]], dtype=np.float32), None
 
 
 class _ChooseLastCandidates:
@@ -449,6 +469,72 @@ def test_e2_query_and_cached_trade_are_actor_identical_but_credit_differs():
         )
         assert restored.sha256 == env.follower_wrapper.leader_query_trace.sha256
         assert len(follower.observations) == 12
+    finally:
+        env.close()
+
+
+def test_e2_endpoint_override_replays_exactly_and_changes_full_response_context():
+    follower = _ContextFollower(BUYER)
+    env = make_stackpomdp_atari_leader_env(
+        leader_role=SELLER,
+        response_checkpoint="unused.zip",
+        config=_bilateral_config(),
+        response_model_factory=lambda path, device: follower,
+        side_factory=_FakeSide,
+    )
+    forced = np.asarray([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+    raw_query_action = np.asarray([0.0, 0.9], dtype=np.float32)
+    effective_queries = []
+    try:
+        observation = env.reset()
+        for event in range(5):
+            effective, tag = apply_economic_commitment_override(
+                observation, raw_query_action, forced
+            )
+            assert tag == (LEADER_QUERY, event)
+            assert effective[0] == raw_query_action[0]
+            effective_queries.append(effective)
+            observation, reward, done, _ = env.step(effective)
+            assert reward == 0.0 and not done
+
+        replay_count = 0
+        done = False
+        while not done:
+            if np.array_equal(observation[ACTION_CREDIT], [0, 0]):
+                effective, tag = apply_economic_commitment_override(
+                    observation, raw_query_action, forced
+                )
+                assert tag == (CACHED_TRADE_REPLAY, replay_count)
+                assert effective == effective_queries[replay_count]
+                replay_count += 1
+            else:
+                raw_gameplay = np.asarray([FIRE, 0.9], dtype=np.float32)
+                effective, tag = apply_economic_commitment_override(
+                    observation, raw_gameplay, forced
+                )
+                assert tag is None
+                np.testing.assert_array_equal(effective, raw_gameplay)
+            observation, _, done, info = env.step(effective)
+
+        assert replay_count == 5
+        np.testing.assert_allclose(
+            env.follower_wrapper.leader_query_trace.economic_commitment,
+            forced,
+        )
+        assert info["cache_hits"] == 5
+        # The buyer response reads omega_1=0.1 as its threshold at every
+        # trade, so only the first forced price is accepted.  This proves the
+        # altered context is not merely recorded: it recomputes behavior.
+        assert info["purchases"] == 1
+        np.testing.assert_allclose(
+            np.asarray(info["follower_actions"], dtype=np.float32)[:, 1],
+            forced[0],
+        )
+        assert follower.observations
+        for values in follower.observations:
+            np.testing.assert_allclose(
+                values[ACTOR_STATE][OPPONENT_COMMITMENT_SLICE], forced
+            )
     finally:
         env.close()
 

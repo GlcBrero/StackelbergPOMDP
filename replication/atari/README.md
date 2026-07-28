@@ -379,13 +379,17 @@ Seller leader against a frozen E1 meta-buyer:
 ```bash
 python -u -m replication.atari.train_atari_stackpomdp_leader_sb3 \
   --leader-role seller \
-  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1.zip \
-  --leader-e1-checkpoint replication/atari/checkpoints/clean/meta_seller_e1_ppo_balanced_seed1.zip \
+  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_selected.zip \
+  --leader-e1-checkpoint replication/atari/checkpoints/clean/meta_seller_e1_ppo_balanced_seed1_firefix_retrain_selected.zip \
   --actor-loss-mode balanced \
   --seed 1 \
-  --timesteps 2000000 \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1.zip \
-  --wandb-name atari_clean_e2_seller_balanced_seed1_2m_local
+  --timesteps 2000040 \
+  --num-envs 4 \
+  --n-steps 210 \
+  --batch-size 840 \
+  --checkpoint-every 400000 \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain.zip \
+  --wandb-name atari_clean_e2_seller_balanced_seed1_firefix_retrain_2m_local
 ```
 
 For a buyer leader, swap the roles of the two E1 checkpoints. E2 rollouts are
@@ -397,26 +401,53 @@ in PPO's rollout.
 Every new E2 checkpoint embeds a canonical provenance manifest that binds the
 exact frozen E1-response bytes, same-role E1 initialization bytes, ROM bytes,
 policy architecture, reward-game protocol, and PPO configuration. Resume and
-evaluation reject a missing or incompatible manifest. Select among retained
+evaluation reject a missing or incompatible manifest; selection also rehashes
+the candidate, frozen response, and ROM around evaluation so reported bytes
+cannot drift away from the in-memory rollout. Select among retained
 step checkpoints only with the deterministic selector:
 
 ```bash
 python -u -m replication.atari.evaluate_atari_stackpomdp_leader_sb3 \
   --leader-role seller \
-  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_selected.zip \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_step400000.zip \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_step800000.zip \
-  --selected-checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_selected.zip
+  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_selected.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_step400680.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_step800520.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_step1200360.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_step1600200.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_step2000040.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain.zip \
+  --selected-checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_firefix_retrain_selected.zip
 ```
 
 All candidates must share one provenance fingerprint and are screened on the
-same 20 seeds and event schedules. Any violation of the five-query, 200-game,
-five-cache-replay, action-identity, payoff, or bullet-accounting protocol makes
-a checkpoint ineligible. The highest mean leader payoff wins, with documented
-robustness and training-step tie breakers, and is then confirmed on 100
-disjoint seeds. The selector writes complete JSON and CSV audit artifacts under
-`replication/atari/results/e2_selections/` and never overwrites an existing
-selected alias or report.
+same 20 seeds and event schedules. Each factual rollout is paired with two
+fresh counterfactuals that force the complete leader commitment to `0^5` and
+`1^5`. The intervention changes only the economic coordinate at the five
+queries and their five actor-identical cache replays. It does not directly
+override gameplay actions; changed trades may causally change later gameplay
+states and actions. A fresh frozen-follower response is recomputed from the
+altered full sequence. The endpoint comparison is this five-bullet experiment's
+predeclared **interior-surplus hypothesis**, not a universal equilibrium
+condition. A candidate is eligible only if all three protocol audits pass, its
+mean payoff is at least `0.25`, the two players fire at least four bullets in
+total, and it beats each endpoint by mean payoff `0.25`, nonnegative median
+payoff, and a strict paired win rate of at least `60%`. Purchases, payments,
+accepted price, and buyer/seller bullet-utilization measures remain descriptive.
+The audit also binds every retained economic-decision row to its complete
+transition row and verifies that an accepted trade pays `+p` immediately to a
+seller leader or `-p` immediately to a buyer leader, with zero on rejection.
+
+Only the screen-preselected top candidate is confirmed on 100 disjoint matched
+seeds. If it fails, selection fails without trying another checkpoint on the
+confirmation set. The selected alias is created only after confirmation passes,
+and is rolled back if artifact writing then fails while its bytes still match
+the newly created copy. The selector writes factual and
+counterfactual condition summaries, paired seed rows, episode, transition,
+decision, and event CSVs and exact intervention/provenance hashes under
+`replication/atari/results/e2_selections/`.
+The complete set is staged privately and published without overwrite under an
+exclusive per-run lock, with the JSON report linked last as its completion
+marker. It never overwrites an existing selected alias or report.
 
 ## Resume and deterministic evaluation
 
