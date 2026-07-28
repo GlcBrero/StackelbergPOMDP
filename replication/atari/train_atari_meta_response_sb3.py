@@ -1,6 +1,7 @@
 """Train a clean full-trajectory E1 Atari buyer or seller meta-response."""
 
 import argparse
+from copy import copy, deepcopy
 import hashlib
 import math
 import os
@@ -44,6 +45,13 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     BilateralAtariConfig,
     make_atari_meta_response_env,
 )
+from stackelberg_pomdp.atari.e1_sampling import (
+    E1_SAMPLER_MODES,
+    TEMPORAL_MIX_E1_SAMPLER,
+    TEMPORAL_MIX_GAMEPLAY_HORIZON,
+    UNIFORM_E1_SAMPLER,
+    e1_sampler_provenance,
+)
 from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     OPPONENT_COMMITMENT_SLICE,
@@ -60,6 +68,10 @@ SELLER_INIT_CONCENTRATION = 2.0
 
 def _actor_loss_mode(args):
     return str(getattr(args, "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE))
+
+
+def _e1_sampler_mode(args):
+    return str(getattr(args, "e1_sampler_mode", UNIFORM_E1_SAMPLER))
 
 
 def _economic_initialization(args):
@@ -96,6 +108,8 @@ def _run_variant_suffix(args):
         )
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
+    if _e1_sampler_mode(args) != UNIFORM_E1_SAMPLER:
+        parts.append("temporal_mix_v1")
     return "" if not parts else "_" + "_".join(parts)
 
 
@@ -132,6 +146,80 @@ def _checkpoint_sha256(raw):
     return digest.hexdigest()
 
 
+def _checkpoint_identity(raw, *, label):
+    path = Path(raw).expanduser()
+    if not path.is_file() and Path(f"{path}.zip").is_file():
+        path = Path(f"{path}.zip")
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} does not exist: {path}")
+    return {"path": str(path), "sha256": _checkpoint_sha256(path)}
+
+
+def _sampler_provenance(args):
+    return e1_sampler_provenance(
+        _e1_sampler_mode(args),
+        gameplay_horizon=int(getattr(args, "gameplay_horizon", 200)),
+        event_tail_steps=int(getattr(args, "event_tail_steps", 0)),
+    )
+
+
+def _attach_sampler_contract(
+        model,
+        args,
+        *,
+        resume_source=None,
+        preserve_existing_sampler=False,
+):
+    """Persist the current sampler stage and its byte-bound parent."""
+
+    saved_current = getattr(model, "atari_e1_sampler_provenance", None)
+    current = (
+        deepcopy(saved_current)
+        if preserve_existing_sampler and saved_current is not None
+        else _sampler_provenance(args)
+    )
+    existing = getattr(model, "atari_e1_sampler_history", None)
+    if existing is None:
+        parent = e1_sampler_provenance(
+            UNIFORM_E1_SAMPLER,
+            gameplay_horizon=int(getattr(args, "gameplay_horizon", 200)),
+            event_tail_steps=int(getattr(args, "event_tail_steps", 0)),
+        )
+        history = [{
+            "start_total_timesteps": 0,
+            "sampler": parent,
+            "inferred_for_legacy_checkpoint": resume_source is not None,
+            "resume_sources": [],
+        }]
+    elif not isinstance(existing, list):
+        raise ValueError("E1 sampler history must be a list")
+    else:
+        history = deepcopy(existing)
+
+    if resume_source is not None:
+        source_record = {
+            **resume_source,
+            "resume_total_timesteps": int(model.num_timesteps),
+        }
+        if history[-1].get("sampler") == current:
+            history[-1].setdefault("resume_sources", []).append(source_record)
+        else:
+            history.append({
+                "start_total_timesteps": int(model.num_timesteps),
+                "sampler": current,
+                "inferred_for_legacy_checkpoint": False,
+                "resume_sources": [source_record],
+            })
+    else:
+        history[0]["sampler"] = current
+    model.atari_e1_sampler_provenance = dict(current)
+    model.atari_e1_sampler_history = history
+    model.atari_e1_resume_source_provenance = (
+        None if resume_source is None else dict(resume_source)
+    )
+
+
 def bilateral_config(args, *, seed):
     return BilateralAtariConfig(
         seed=int(seed),
@@ -156,6 +244,7 @@ def make_env(args, *, seed, context_sampler=None):
         e0b_checkpoint=args.e0b_checkpoint,
         config=bilateral_config(args, seed=seed),
         context_sampler=context_sampler,
+        e1_sampler_mode=_e1_sampler_mode(args),
         device=args.device,
     )
 
@@ -222,6 +311,7 @@ def _new_model(args, vec_env):
         economic_init_mean=initialization["mean"],
         economic_init_concentration=initialization["concentration"],
     )
+    _attach_sampler_contract(model, args)
     print({"actor_transfer": provenance}, flush=True)
     return model
 
@@ -229,8 +319,11 @@ def _new_model(args, vec_env):
 def _resumed_model(args, vec_env):
     actor_loss_mode = _actor_loss_mode(args)
     algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    resume_source = _checkpoint_identity(
+        args.resume, label="E1 resume checkpoint"
+    )
     model = algorithm_class.load(
-        args.resume,
+        resume_source["path"],
         env=vec_env,
         device=args.device,
         learning_rate=args.learning_rate,
@@ -323,6 +416,15 @@ def _resumed_model(args, vec_env):
         economic_init_mean=expected_initialization["mean"],
         economic_init_concentration=expected_initialization["concentration"],
     )
+    if _checkpoint_sha256(resume_source["path"]) != resume_source["sha256"]:
+        raise RuntimeError("E1 resume checkpoint changed while it was loaded")
+    resume_source["training_total_timesteps"] = int(model.num_timesteps)
+    _attach_sampler_contract(
+        model,
+        args,
+        resume_source=resume_source,
+        preserve_existing_sampler=bool(getattr(args, "eval_only", False)),
+    )
     return model
 
 
@@ -380,10 +482,12 @@ def _trade_diagnostics(episode_rows, *, gameplay_horizon):
 def evaluate_response(model, args):
     """Evaluate random commitments and a paired fixed-context grid."""
 
+    evaluation_args = copy(args)
+    evaluation_args.e1_sampler_mode = UNIFORM_E1_SAMPLER
     random_evaluation = evaluate_model(
         model,
         lambda episode: make_env(
-            args, seed=args.seed + 300_000 + episode
+            evaluation_args, seed=args.seed + 300_000 + episode
         ),
         episodes=args.eval_episodes,
     )
@@ -399,7 +503,7 @@ def evaluate_response(model, args):
         result = evaluate_model(
             model,
             lambda episode, context=context: make_env(
-                args,
+                evaluation_args,
                 # Reuse the same ALE/no-op and event-schedule seeds at every
                 # opponent value.  The fixed grid is therefore genuinely
                 # paired; only the commitment changes across rows.
@@ -452,6 +556,15 @@ def parse_args(argv=None):
     parser.add_argument("--gameplay-horizon", type=int, default=200)
     parser.add_argument("--event-tail-steps", type=int, default=0)
     parser.add_argument("--fixed-event-steps", type=str)
+    parser.add_argument(
+        "--e1-sampler-mode",
+        choices=E1_SAMPLER_MODES,
+        default=UNIFORM_E1_SAMPLER,
+        help=(
+            "episode sampler used only for training; evaluation always uses "
+            "the canonical uniform sampler"
+        ),
+    )
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--start-method", default="spawn")
     parser.add_argument("--n-steps", type=int)
@@ -515,6 +628,27 @@ def parse_args(argv=None):
             < NUM_TRADE_EVENTS
     ):
         parser.error("E1 event window must contain at least five steps")
+    if args.e1_sampler_mode == TEMPORAL_MIX_E1_SAMPLER:
+        if args.gameplay_horizon != TEMPORAL_MIX_GAMEPLAY_HORIZON:
+            parser.error(
+                f"--e1-sampler-mode {TEMPORAL_MIX_E1_SAMPLER} requires "
+                f"--gameplay-horizon {TEMPORAL_MIX_GAMEPLAY_HORIZON}"
+            )
+        if args.event_tail_steps != 0:
+            parser.error(
+                f"--e1-sampler-mode {TEMPORAL_MIX_E1_SAMPLER} requires "
+                "--event-tail-steps 0"
+            )
+        if args.fixed_event_steps is not None:
+            parser.error(
+                f"--e1-sampler-mode {TEMPORAL_MIX_E1_SAMPLER} cannot be "
+                "combined with --fixed-event-steps"
+            )
+        if args.eval_only:
+            parser.error(
+                "--eval-only always uses canonical uniform sampling; omit "
+                "the temporal sampler flag"
+            )
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
     if args.n_steps != transitions:
@@ -578,7 +712,18 @@ def main(argv=None):
         source_provenance = dict(model.atari_e1_source_provenance)
         if run is not None:
             run.config.update(
-                {"e0b_source_provenance": source_provenance},
+                {
+                    "e0b_source_provenance": source_provenance,
+                    "e1_sampler_provenance": dict(
+                        model.atari_e1_sampler_provenance
+                    ),
+                    "e1_sampler_history": list(
+                        model.atari_e1_sampler_history
+                    ),
+                    "e1_resume_source_provenance": getattr(
+                        model, "atari_e1_resume_source_provenance", None
+                    ),
+                },
                 allow_val_change=True,
             )
         if not args.eval_only:
@@ -598,6 +743,16 @@ def main(argv=None):
         evaluation = evaluate_response(model, args)
         evaluation["provenance"] = {
             "e0b_source": source_provenance,
+            "training_sampler": dict(model.atari_e1_sampler_provenance),
+            "training_sampler_history": list(model.atari_e1_sampler_history),
+            "resume_source": getattr(
+                model, "atari_e1_resume_source_provenance", None
+            ),
+            "evaluation_sampler": e1_sampler_provenance(
+                UNIFORM_E1_SAMPLER,
+                gameplay_horizon=args.gameplay_horizon,
+                event_tail_steps=args.event_tail_steps,
+            ),
             "actor_loss_mode": model_actor_loss_mode(model),
             "target_kl": getattr(model, "target_kl", None),
             "economic_head_initialization": model_economic_initialization(

@@ -840,6 +840,12 @@ class EpisodeCheckpointCallback(BaseCallback):
                 f"train/{key}": value
                 for key, value in _episode_trade_time_metrics(episode).items()
             })
+            payload.update({
+                f"train/{key}": float(value)
+                for key, value in episode.items()
+                if key.startswith("e1_")
+                and isinstance(value, (bool, int, float, np.number))
+            })
             wandb_payloads.append(payload)
             local_payload = {
                 **payload,
@@ -848,6 +854,13 @@ class EpisodeCheckpointCallback(BaseCallback):
                 "algorithm": "PPO",
                 "checkpoint_path": str(self.checkpoint),
             }
+            for key in (
+                    "e1_sampler_mode",
+                    "e1_schedule_stratum",
+                    "e1_context_stratum",
+            ):
+                if key in episode:
+                    local_payload[f"train/{key}"] = str(episode[key])
             with self.training_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(local_payload, sort_keys=True) + "\n")
 
@@ -868,6 +881,17 @@ class EpisodeCheckpointCallback(BaseCallback):
             }
             aggregate["train/episode"] = int(self.episode_count)
             aggregate["train/vector_episodes"] = len(wandb_payloads)
+            one_hot_prefixes = (
+                "train/e1_schedule_stratum_one_hot_",
+                "train/e1_context_stratum_one_hot_",
+            )
+            for key in sorted(keys):
+                if not key.startswith(one_hot_prefixes):
+                    continue
+                count_key = key.replace("_one_hot_", "_vector_count_", 1)
+                aggregate[count_key] = float(sum(
+                    payload.get(key, 0.0) for payload in wandb_payloads
+                ))
             self.wandb_run.log(aggregate, step=int(self.num_timesteps))
 
         if np.any(dones) and self.num_timesteps >= self.next_checkpoint:

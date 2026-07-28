@@ -149,6 +149,35 @@ def test_parser_aligns_rollout_with_one_full_h_plus_five_episode(tmp_path):
     assert args.buyer_init_concentration == pytest.approx(10.0)
     assert args.wandb_project == "StackPOMDP"
     assert not args.wandb
+    assert args.e1_sampler_mode == trainer.UNIFORM_E1_SAMPLER
+
+
+def test_temporal_sampler_parser_is_explicit_and_horizon_bound(tmp_path):
+    common = [
+        "--role",
+        BUYER,
+        "--e0b-checkpoint",
+        str(tmp_path / "e0b.zip"),
+        "--e1-sampler-mode",
+        trainer.TEMPORAL_MIX_E1_SAMPLER,
+        "--no-wandb",
+    ]
+    args = trainer.parse_args(common)
+    assert args.e1_sampler_mode == trainer.TEMPORAL_MIX_E1_SAMPLER
+    assert args.gameplay_horizon == 200
+    assert args.event_tail_steps == 0
+    assert args.fixed_event_steps is None
+    assert args.n_steps == 205
+    assert "_temporal_mix_v1_seed1.zip" in args.checkpoint
+
+    for incompatible in (
+            ["--gameplay-horizon", "199"],
+            ["--event-tail-steps", "1"],
+            ["--fixed-event-steps", "0,1,2,3,4"],
+            ["--eval-only", "--resume", str(tmp_path / "e1.zip")],
+    ):
+        with pytest.raises(SystemExit):
+            trainer.parse_args([*common, *incompatible])
 
 
 def test_phase_balanced_parser_requires_a_full_rollout_batch(tmp_path):
@@ -355,8 +384,10 @@ def test_eval_only_requires_an_e1_actor_checkpoint(tmp_path):
 
 def test_fixed_context_evaluation_is_paired_and_retains_event_rows(monkeypatch):
     seeds_by_value = {}
+    sampler_modes = []
 
     def fake_make_env(args, *, seed, context_sampler=None):
+        sampler_modes.append(args.e1_sampler_mode)
         if context_sampler is None:
             value = -1.0
         else:
@@ -394,6 +425,8 @@ def test_fixed_context_evaluation_is_paired_and_retains_event_rows(monkeypatch):
         fixed_eval_episodes=3,
         fixed_eval_values=(0.0, 0.5, 1.0),
         gameplay_horizon=200,
+        event_tail_steps=0,
+        e1_sampler_mode=trainer.TEMPORAL_MIX_E1_SAMPLER,
     )
 
     evaluation = trainer.evaluate_response(object(), args)
@@ -410,6 +443,8 @@ def test_fixed_context_evaluation_is_paired_and_retains_event_rows(monkeypatch):
         assert len(fixed["episode_rows"]) == 3
         assert all(len(row["events"]) == 5 for row in fixed["episode_rows"])
         assert fixed["summary"]["trade_events"] == 15
+    assert sampler_modes
+    assert set(sampler_modes) == {trainer.UNIFORM_E1_SAMPLER}
 
 
 def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
@@ -423,10 +458,19 @@ def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
                 parameter.fill_(0.123456)
             for parameter in source.policy.value_net.parameters():
                 parameter.fill_(-0.654321)
+        source.num_timesteps = 205
+        # Model an E1 checkpoint produced before sampler provenance existed.
+        # It is conservatively treated as canonical uniform training.
+        del source.atari_e1_sampler_provenance
+        del source.atari_e1_sampler_history
+        del source.atari_e1_resume_source_provenance
         checkpoint = tmp_path / "buyer_e1_resume.zip"
         source.save(checkpoint)
 
         args.resume = str(checkpoint)
+        args.e1_sampler_mode = trainer.TEMPORAL_MIX_E1_SAMPLER
+        args.gameplay_horizon = 200
+        args.event_tail_steps = 0
         restored = trainer._resumed_model(args, vec_env)
         assert _module_equal(
             source.policy.economic_head,
@@ -437,6 +481,54 @@ def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
             group["lr_scale"]
             for group in restored.policy.optimizer.param_groups
         ] == [0.1, 1.0]
+        history = restored.atari_e1_sampler_history
+        assert len(history) == 2
+        assert history[0]["sampler"]["mode"] == trainer.UNIFORM_E1_SAMPLER
+        assert history[0]["inferred_for_legacy_checkpoint"]
+        assert history[1]["sampler"]["mode"] == (
+            trainer.TEMPORAL_MIX_E1_SAMPLER
+        )
+        assert history[1]["start_total_timesteps"] == 205
+        assert len(history[1]["resume_sources"]) == 1
+        resume_record = history[1]["resume_sources"][0]
+        assert resume_record["path"] == str(checkpoint.resolve())
+        assert resume_record["sha256"] == trainer._checkpoint_sha256(checkpoint)
+        assert resume_record["resume_total_timesteps"] == 205
+
+        # An interrupted temporal run resumes under the same sampler stage;
+        # it records a new byte-bound parent without pretending that the
+        # scientific sampling regime changed.
+        interrupted = tmp_path / "buyer_e1_temporal_interrupted.zip"
+        restored.save(interrupted)
+        args.resume = str(interrupted)
+        resumed_again = trainer._resumed_model(args, vec_env)
+        repeated_history = resumed_again.atari_e1_sampler_history
+        assert len(repeated_history) == 2
+        assert len(repeated_history[1]["resume_sources"]) == 2
+        assert repeated_history[1]["resume_sources"][-1]["path"] == (
+            str(interrupted.resolve())
+        )
+        assert repeated_history[1]["resume_sources"][-1]["sha256"] == (
+            trainer._checkpoint_sha256(interrupted)
+        )
+
+        # Eval-only loads use canonical uniform environments, but that must
+        # not rewrite a temporal checkpoint's training history as though a
+        # new uniform training stage occurred.
+        args.eval_only = True
+        args.e1_sampler_mode = trainer.UNIFORM_E1_SAMPLER
+        evaluated = trainer._resumed_model(args, vec_env)
+        assert len(evaluated.atari_e1_sampler_history) == 2
+        assert evaluated.atari_e1_sampler_provenance["mode"] == (
+            trainer.TEMPORAL_MIX_E1_SAMPLER
+        )
+        assert evaluated.atari_e1_sampler_history[-1]["sampler"]["mode"] == (
+            trainer.TEMPORAL_MIX_E1_SAMPLER
+        )
+        args.eval_only = False
+        args.e1_sampler_mode = trainer.TEMPORAL_MIX_E1_SAMPLER
+
+        args.resume = str(checkpoint)
 
         args.actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
         with pytest.raises(ValueError, match="must match the saved E1"):
@@ -614,6 +706,14 @@ def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):
                 "game_reward": 4.0,
                 "shots_fired": 5,
                 "final_ammo": 0,
+                "e1_sampler_mode": trainer.TEMPORAL_MIX_E1_SAMPLER,
+                "e1_schedule_stratum": "unconditional",
+                "e1_context_stratum": "uniform",
+                "e1_schedule_stratum_one_hot_unconditional": 1,
+                "e1_schedule_stratum_one_hot_late_fifth": 0,
+                "e1_context_stratum_one_hot_uniform": 1,
+                "e1_context_stratum_one_hot_low_prefix": 0,
+                "e1_schedule_stratum_per_env_count_unconditional": 3,
             }},
             {"episode": {
                 "r": 2.0,
@@ -621,6 +721,14 @@ def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):
                 "game_reward": 2.0,
                 "shots_fired": 3,
                 "final_ammo": 2,
+                "e1_sampler_mode": trainer.TEMPORAL_MIX_E1_SAMPLER,
+                "e1_schedule_stratum": "late_fifth",
+                "e1_context_stratum": "low_prefix",
+                "e1_schedule_stratum_one_hot_unconditional": 0,
+                "e1_schedule_stratum_one_hot_late_fifth": 1,
+                "e1_context_stratum_one_hot_uniform": 0,
+                "e1_context_stratum_one_hot_low_prefix": 1,
+                "e1_schedule_stratum_per_env_count_unconditional": 1,
             }},
         ],
     }
@@ -635,3 +743,25 @@ def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):
     assert payload["train/game_reward"] == pytest.approx(3.0)
     assert payload["train/shots_fired"] == pytest.approx(4.0)
     assert payload["train/final_ammo"] == pytest.approx(1.0)
+    assert payload[
+        "train/e1_schedule_stratum_one_hot_unconditional"
+    ] == pytest.approx(0.5)
+    assert payload[
+        "train/e1_schedule_stratum_vector_count_unconditional"
+    ] == pytest.approx(1.0)
+    assert payload[
+        "train/e1_context_stratum_one_hot_low_prefix"
+    ] == pytest.approx(0.5)
+    assert payload[
+        "train/e1_context_stratum_vector_count_low_prefix"
+    ] == pytest.approx(1.0)
+    assert payload[
+        "train/e1_schedule_stratum_per_env_count_unconditional"
+    ] == pytest.approx(2.0)
+    local_rows = [
+        json.loads(line)
+        for line in callback.training_log.read_text().splitlines()
+    ]
+    assert [
+        row["train/e1_schedule_stratum"] for row in local_rows
+    ] == ["unconditional", "late_fifth"]

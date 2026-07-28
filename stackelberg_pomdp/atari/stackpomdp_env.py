@@ -8,6 +8,14 @@ from typing import Callable, Mapping, Optional, Sequence
 import gym
 import numpy as np
 
+from stackelberg_pomdp.atari.e1_sampling import (
+    CONTEXT_STRATA,
+    E1_SAMPLER_MODES,
+    SCHEDULE_STRATA,
+    TEMPORAL_MIX_E1_SAMPLER,
+    UNIFORM_E1_SAMPLER,
+    TemporalMarginalE1Sampler,
+)
 from stackelberg_pomdp.atari.gameplay import AtariGameplaySide
 from stackelberg_pomdp.atari.protocol import (
     CRITIC_STATE_DIM,
@@ -115,12 +123,19 @@ class DualAtariTradeCore:
             return self.buyer
         raise ValueError(f"unknown Atari role: {role!r}")
 
-    def reset(self, *, seed=None):
+    def reset(self, *, seed=None, event_steps=None):
         if seed is not None:
             self.rng = np.random.default_rng(int(seed))
         self.seller.reset()
         self.buyer.reset()
-        self.event_steps = self.schedule.sample(self.rng)
+        if event_steps is None:
+            self.event_steps = self.schedule.sample(self.rng)
+        else:
+            self.event_steps = ExactFiveEventSchedule(
+                gameplay_horizon=self.config.gameplay_horizon,
+                tail_steps=self.config.event_tail_steps,
+                fixed_event_steps=event_steps,
+            ).sample(self.rng)
         self.game_step = 0
         self.next_event = 0
         self.bullets_arrived = 0
@@ -396,8 +411,16 @@ class BilateralAtariRewardEnv(BaseEnv):
         return self.role_observation(self.leader_role)
 
     def reset(self, *, seed=None, options=None):
-        del options
-        self.core.reset(seed=seed)
+        options = {} if options is None else dict(options)
+        unknown = set(options) - {"event_steps"}
+        if unknown:
+            raise ValueError(
+                f"unknown bilateral Atari reset options: {sorted(unknown)}"
+            )
+        if "event_steps" in options:
+            self.core.reset(seed=seed, event_steps=options["event_steps"])
+        else:
+            self.core.reset(seed=seed)
         self._done = False
         self.gameplay_transitions = 0
         self.trade_transitions = 0
@@ -651,6 +674,7 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
             *,
             e0b_checkpoint=None,
             context_sampler: Optional[Callable] = None,
+            e1_sampler_mode=UNIFORM_E1_SAMPLER,
             controller_factory=None,
             device="cpu",
     ):
@@ -664,7 +688,39 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
         self.other_role = env.follower_role
         self.config = env.config
         self.context_sampler = context_sampler
+        self.e1_sampler_mode = str(e1_sampler_mode)
+        if self.e1_sampler_mode not in E1_SAMPLER_MODES:
+            raise ValueError(
+                f"unknown E1 sampler mode: {self.e1_sampler_mode!r}"
+            )
+        if (
+                self.e1_sampler_mode == TEMPORAL_MIX_E1_SAMPLER
+                and context_sampler is not None
+        ):
+            raise ValueError(
+                f"{TEMPORAL_MIX_E1_SAMPLER} supplies its own context and is "
+                "incompatible with context_sampler"
+            )
         self.rng = np.random.default_rng(self.config.seed + 74_711)
+        self.temporal_sampler = (
+            TemporalMarginalE1Sampler(
+                seed=self.config.seed,
+                gameplay_horizon=self.config.gameplay_horizon,
+                event_tail_steps=self.config.event_tail_steps,
+                fixed_event_steps=self.config.fixed_event_steps,
+            )
+            if self.e1_sampler_mode == TEMPORAL_MIX_E1_SAMPLER
+            else None
+        )
+        self.schedule_stratum = None
+        self.context_stratum = None
+        self.schedule_stratum_counts = {
+            name: 0 for name in SCHEDULE_STRATA
+        }
+        self.context_stratum_counts = {
+            name: 0 for name in CONTEXT_STRATA
+        }
+        self.sampler_episode_count = 0
         self.action_space = action_space(self.core.game_action_count)
         self.observation_space = observation_space(
             self.core.image_space, self.core.game_action_count
@@ -688,6 +744,8 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
     def seed(self, seed=None):
         seed = self.config.seed if seed is None else int(seed)
         self.rng = np.random.default_rng(seed + 74_711)
+        if self.temporal_sampler is not None:
+            self.temporal_sampler.seed(seed)
         return [seed]
 
     def _sample_context(self):
@@ -767,8 +825,33 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
         del options
         if seed is not None:
             self.seed(seed)
-        self.opponent_commitment = self._sample_context()
-        self.env.reset(seed=int(self.rng.integers(0, 2 ** 31 - 1)))
+        reset_options = None
+        if self.temporal_sampler is None:
+            self.opponent_commitment = self._sample_context()
+            self.schedule_stratum = (
+                "fixed"
+                if self.config.fixed_event_steps is not None
+                else "unconditional"
+            )
+            self.context_stratum = (
+                "external" if self.context_sampler is not None else "uniform"
+            )
+        else:
+            draw = self.temporal_sampler.sample()
+            self.opponent_commitment = np.array(
+                draw.opponent_commitment, copy=True
+            )
+            self.schedule_stratum = draw.schedule_stratum
+            self.context_stratum = draw.context_stratum
+            reset_options = {"event_steps": draw.event_steps}
+        self.sampler_episode_count += 1
+        self.schedule_stratum_counts[self.schedule_stratum] += 1
+        self.context_stratum_counts[self.context_stratum] += 1
+        inner_seed = int(self.rng.integers(0, 2 ** 31 - 1))
+        if reset_options is None:
+            self.env.reset(seed=inner_seed)
+        else:
+            self.env.reset(seed=inner_seed, options=reset_options)
         return self._controlled_observation()
 
     def _joint_action(self, values, *, trade):
@@ -788,8 +871,37 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
 
     def _episode_info(self):
         base = self.env.episode_info()
+        sampler = {
+            "e1_sampler_mode": self.e1_sampler_mode,
+            "e1_sampler_episode_count_per_env": int(
+                self.sampler_episode_count
+            ),
+            "e1_schedule_stratum": self.schedule_stratum,
+            "e1_context_stratum": self.context_stratum,
+        }
+        sampler.update({
+            f"e1_schedule_stratum_one_hot_{name}": int(
+                self.schedule_stratum == name
+            )
+            for name in SCHEDULE_STRATA
+        })
+        sampler.update({
+            f"e1_context_stratum_one_hot_{name}": int(
+                self.context_stratum == name
+            )
+            for name in CONTEXT_STRATA
+        })
+        sampler.update({
+            f"e1_schedule_stratum_per_env_count_{name}": int(count)
+            for name, count in self.schedule_stratum_counts.items()
+        })
+        sampler.update({
+            f"e1_context_stratum_per_env_count_{name}": int(count)
+            for name, count in self.context_stratum_counts.items()
+        })
         return {
             **base,
+            **sampler,
             "controlled_role": self.controlled_role,
             "opponent_commitment": tuple(
                 float(value) for value in self.opponent_commitment
@@ -830,6 +942,7 @@ def make_atari_meta_response_env(
         e0b_checkpoint=None,
         config=None,
         context_sampler=None,
+        e1_sampler_mode=UNIFORM_E1_SAMPLER,
         core_factory=DualAtariTradeCore,
         controller_factory=None,
         side_factory=None,
@@ -849,6 +962,7 @@ def make_atari_meta_response_env(
         reward_env,
         e0b_checkpoint=e0b_checkpoint,
         context_sampler=context_sampler,
+        e1_sampler_mode=e1_sampler_mode,
         controller_factory=controller_factory,
         device=device,
     )

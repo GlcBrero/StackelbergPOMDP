@@ -10,6 +10,12 @@ from stackelberg_pomdp.atari.curriculum_env import (
     AtariCurriculumConfig,
     AtariCurriculumEnv,
 )
+from stackelberg_pomdp.atari.e1_sampling import (
+    CONTEXT_STRATA,
+    SCHEDULE_STRATA,
+    TEMPORAL_MIX_E1_SAMPLER,
+    UNIFORM_E1_SAMPLER,
+)
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTOR_STATE,
@@ -352,6 +358,110 @@ def test_e1_exposes_all_gameplay_and_trade_steps_with_common_reward():
         assert info["buyer_payoff_error"] == 0.0
     finally:
         env.close()
+
+
+def test_e1_default_sampler_preserves_legacy_rng_draw_order_exactly():
+    config = BilateralAtariConfig(
+        seed=29,
+        gameplay_horizon=7,
+        event_tail_steps=0,
+        fixed_event_steps=None,
+    )
+    legacy_rng = np.random.default_rng(config.seed + 74_711)
+    expected = []
+    for _ in range(3):
+        context = np.asarray(
+            legacy_rng.uniform(0.0, 1.0, size=5), dtype=np.float32
+        )
+        inner_seed = int(legacy_rng.integers(0, 2 ** 31 - 1))
+        steps = ExactFiveEventSchedule(
+            gameplay_horizon=config.gameplay_horizon,
+            tail_steps=config.event_tail_steps,
+        ).sample(np.random.default_rng(inner_seed))
+        expected.append((context, steps))
+
+    env = make_atari_meta_response_env(
+        controlled_role=BUYER,
+        config=config,
+        controller_factory=_ZeroGameController,
+        side_factory=_FakeSide,
+    )
+    try:
+        for expected_context, expected_steps in expected:
+            env.reset()
+            assert env.e1_sampler_mode == UNIFORM_E1_SAMPLER
+            np.testing.assert_array_equal(
+                env.opponent_commitment, expected_context
+            )
+            assert env.core.event_steps == expected_steps
+    finally:
+        env.close()
+
+
+def test_e1_temporal_sampler_reports_terminal_strata_and_per_env_counts():
+    config = BilateralAtariConfig(
+        seed=31,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+        fixed_event_steps=None,
+    )
+    env = make_atari_meta_response_env(
+        controlled_role=BUYER,
+        config=config,
+        e1_sampler_mode=TEMPORAL_MIX_E1_SAMPLER,
+        controller_factory=_ZeroGameController,
+        side_factory=_FakeSide,
+    )
+    try:
+        terminal_infos = []
+        for episode_number in (1, 2):
+            env.reset()
+            assert len(env.core.event_steps) == 5
+            assert env.core.event_steps[-1] < 200
+            done = False
+            while not done:
+                _, _, done, info = env.step([0.0, 0.5])
+            terminal_infos.append(info)
+            assert info["e1_sampler_mode"] == TEMPORAL_MIX_E1_SAMPLER
+            assert info["e1_sampler_episode_count_per_env"] == episode_number
+            assert sum(
+                info[f"e1_schedule_stratum_one_hot_{name}"]
+                for name in SCHEDULE_STRATA
+            ) == 1
+            assert sum(
+                info[f"e1_context_stratum_one_hot_{name}"]
+                for name in CONTEXT_STRATA
+            ) == 1
+            assert sum(
+                info[f"e1_schedule_stratum_per_env_count_{name}"]
+                for name in SCHEDULE_STRATA
+            ) == episode_number
+            assert sum(
+                info[f"e1_context_stratum_per_env_count_{name}"]
+                for name in CONTEXT_STRATA
+            ) == episode_number
+
+        assert terminal_infos[0]["outer_transition_count"] == 205
+        assert terminal_infos[1]["outer_transition_count"] == 205
+    finally:
+        env.close()
+
+
+def test_e1_temporal_sampler_owns_both_episode_marginals():
+    config = BilateralAtariConfig(
+        seed=31,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+    with np.testing.assert_raises_regex(ValueError, "context_sampler"):
+        make_atari_meta_response_env(
+            controlled_role=BUYER,
+            config=config,
+            context_sampler=lambda rng: np.zeros(5, dtype=np.float32),
+            e1_sampler_mode=TEMPORAL_MIX_E1_SAMPLER,
+            controller_factory=_ZeroGameController,
+            side_factory=_FakeSide,
+        )
 
 
 def test_bilateral_base_uses_the_common_leader_follower_contract():
