@@ -301,13 +301,25 @@ episodes and a paired constant-context grid on the usable schedule
 `20,50,80,110,140`. The selected alias is created only after the role-specific
 behavioral gate passes. Buyer gates require close to five purchases and shots
 through price 0.5, positive net payoff at every lower grid price, and lower
-high-price demand, together with a modest decline in willingness to pay from
-early to late random-arrival trades; seller gates require retained-bullet play
-at threshold zero and near-threshold sales throughout the upper half of the
-grid. Full
-episode/event rows, ranking and fixed-grid CSVs, acceptance by event and time
-bin, exact hashes, explicit seeds, and all failed confirmation attempts are
-written collision-safely under `replication/atari/results/e1_selections/`.
+high-price demand. Buyer selection also includes a paired timing confirmation:
+the first four free offers occur at `20,50,80,110`, the fifth occurs at either
+140 or 195, and its price is 0.5, 0.75, or 0.9. Every one of the six conditions
+uses the same 20 seeds. At price 0.75, forced fifth-buy and fifth-reject controls
+calibrate that buying is better at step 140 and rejecting is better at step
+195 by at least 0.15 mean payoff. The learned buyer must accept at least 75% of
+the early offers and at most 25% of the late offers, reduce acceptance by at
+least 50 percentage points, and remain within 0.15 mean payoff of the better
+forced control in each schedule. The override changes only the fifth economic
+coordinate; deterministic Atari actions are preserved, and every forced and
+unforced episode receives the full accounting audit. This outcome-based test
+replaces a raw early-minus-late threshold comparison because the threshold is
+conditioned on the observed price and is therefore not uniquely interpretable
+apart from its buy/reject consequence. Seller selection does not run or require
+this buyer timing panel; seller gates require retained-bullet play at threshold
+zero and near-threshold sales throughout the upper half of the grid. Full
+episode/event rows, ranking, fixed-grid CSVs, paired-timing condition/episode/
+event CSVs, exact hashes, explicit seeds, and all failed confirmation attempts
+are written collision-safely under `replication/atari/results/e1_selections/`.
 
 ## E2: Stackelberg leaders
 

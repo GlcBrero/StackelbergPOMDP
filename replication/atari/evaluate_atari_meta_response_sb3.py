@@ -20,7 +20,13 @@ from replication.atari.sb3_common import (
     write_json,
 )
 from stackelberg_pomdp.atari.core import default_rom_path
-from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
+from stackelberg_pomdp.atari.protocol import (
+    ACTOR_STATE,
+    ACTOR_STATE_DIM,
+    EVENT_SLICE,
+    NUM_TRADE_EVENTS,
+    TRADE_MODE_INDEX,
+)
 from stackelberg_pomdp.atari.stackpomdp_env import BUYER, SELLER
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
@@ -28,12 +34,22 @@ from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 SCREEN_EPISODES = 20
 CONFIRMATION_EPISODES = 100
 FIXED_EPISODES = 20
+TIMING_EPISODES = 20
 PROTOCOL_ATOL = 1.0e-6
-EVALUATOR_NAME = "clean_atari_e1_selector_v1"
+EVALUATOR_NAME = "clean_atari_e1_selector_v2"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "replication/atari/results/e1_selections"
 CANONICAL_FIXED_VALUES = tuple(value / 10.0 for value in range(11))
 CANONICAL_GRID_EVENT_STEPS = (20, 50, 80, 110, 140)
+CANONICAL_TIMING_FIRST_FOUR = (20, 50, 80, 110)
+CANONICAL_TIMING_FIFTH_STEPS = {"early": 140, "late": 195}
+CANONICAL_TIMING_PRICES = (0.5, 0.75, 0.9)
+CANONICAL_TIMING_CALIBRATION_PRICE = 0.75
+TIMING_MIN_CALIBRATION_ADVANTAGE = 0.15
+TIMING_MIN_EARLY_ACCEPTANCE = 0.75
+TIMING_MAX_LATE_ACCEPTANCE = 0.25
+TIMING_MIN_ACCEPTANCE_DROP = 0.5
+TIMING_MAX_PAYOFF_REGRET = 0.15
 
 
 def checkpoint_path(raw, *, label="checkpoint"):
@@ -232,6 +248,16 @@ def environment_config(args):
         "event_tail_steps": int(config.event_tail_steps),
         "random_event_steps": None,
         "fixed_grid_event_steps": list(args.grid_event_steps),
+        "paired_timing_first_four_event_steps": list(
+            CANONICAL_TIMING_FIRST_FOUR
+        ),
+        "paired_timing_fifth_event_steps": dict(
+            CANONICAL_TIMING_FIFTH_STEPS
+        ),
+        "paired_timing_fifth_prices": list(CANONICAL_TIMING_PRICES),
+        "paired_timing_calibration_price": (
+            CANONICAL_TIMING_CALIBRATION_PRICE
+        ),
         "seller_game_reward_scale": float(config.seller_game_reward_scale),
         "buyer_game_reward_scale": float(config.buyer_game_reward_scale),
         "noop_max": int(config.noop_max),
@@ -245,7 +271,50 @@ def environment_config(args):
     }
 
 
-def _episode(model, args, *, seed, context, checkpoint_metadata, phase):
+def apply_fifth_economic_override(observation, action, value):
+    """Override only the economic coordinate at the fifth paused trade.
+
+    The helper reads only the canonical actor state.  In particular, the
+    deterministic Atari action returned by the model is copied unchanged.
+    """
+
+    if value is None:
+        return np.array(action, dtype=np.float32, copy=True), False
+    override = float(value)
+    if not np.isfinite(override) or not 0.0 <= override <= 1.0:
+        raise ValueError("fifth economic override must lie in [0, 1]")
+    state = np.asarray(observation[ACTOR_STATE], dtype=np.float32).reshape(-1)
+    if state.shape != (ACTOR_STATE_DIM,):
+        raise ValueError(
+            "canonical Atari actor state must contain "
+            f"{ACTOR_STATE_DIM} scalars"
+        )
+    event = state[EVENT_SLICE]
+    at_fifth_trade = bool(
+        state[TRADE_MODE_INDEX] > 0.5
+        and np.isclose(event[-1], 1.0, atol=0.0, rtol=0.0)
+        and np.isclose(np.sum(event), 1.0, atol=0.0, rtol=0.0)
+    )
+    result = np.asarray(action, dtype=np.float32)
+    original_shape = result.shape
+    result = np.array(result, copy=True).reshape(-1)
+    if result.shape != (2,):
+        raise ValueError("Atari action must contain game and economic coordinates")
+    if at_fifth_trade:
+        result[1] = override
+    return result.reshape(original_shape), at_fifth_trade
+
+
+def _episode(
+        model,
+        args,
+        *,
+        seed,
+        context,
+        checkpoint_metadata,
+        phase,
+        fifth_economic_override=None,
+):
     local = copy(args)
     local.fixed_event_steps = args.fixed_event_steps
     env = trainer.make_env(
@@ -259,8 +328,13 @@ def _episode(model, args, *, seed, context, checkpoint_metadata, phase):
         total = 0.0
         steps = 0
         info = {}
+        override_applications = 0
         while not done:
             action, _ = model.predict(observation, deterministic=True)
+            action, applied = apply_fifth_economic_override(
+                observation, action, fifth_economic_override
+            )
+            override_applications += int(applied)
             observation, reward, done, info = env.step(action)
             total += float(reward)
             steps += 1
@@ -273,6 +347,12 @@ def _episode(model, args, *, seed, context, checkpoint_metadata, phase):
         "training_timesteps": checkpoint_metadata["training_timesteps"],
         "evaluation_seed": int(seed),
         "opponent_commitment": [float(value) for value in context],
+        "fifth_economic_override": (
+            None
+            if fifth_economic_override is None
+            else float(fifth_economic_override)
+        ),
+        "fifth_economic_override_applied": int(override_applications),
         "evaluation_return": float(total),
         "evaluation_steps": int(steps),
         **_jsonable(dict(info)),
@@ -405,6 +485,46 @@ def audit_episode(row, *, role):
         accepted += int(actual_acceptance)
         expected_payments += price * int(actual_acceptance)
 
+    fifth_override = row.get("fifth_economic_override")
+    override_applications = row.get("fifth_economic_override_applied")
+    if fifth_override is not None:
+        override = _finite_number(
+            row, "fifth_economic_override", violations
+        )
+        if not 0.0 <= override <= 1.0:
+            violations.append(_violation(
+                row,
+                "fifth_economic_override",
+                "finite value in [0,1]",
+                fifth_override,
+            ))
+        if override_applications != 1:
+            violations.append(_violation(
+                row,
+                "fifth_economic_override_applied",
+                1,
+                override_applications,
+            ))
+        if len(events) == NUM_TRADE_EVENTS and not np.isclose(
+                float(events[-1].get("threshold", np.nan)),
+                override,
+                atol=PROTOCOL_ATOL,
+                rtol=0.0,
+        ):
+            violations.append(_violation(
+                row,
+                "event_5_forced_threshold",
+                override,
+                events[-1].get("threshold"),
+            ))
+    elif override_applications not in (None, 0):
+        violations.append(_violation(
+            row,
+            "fifth_economic_override_applied",
+            0,
+            override_applications,
+        ))
+
     if not np.isclose(numeric["purchases"], accepted, atol=0.0, rtol=0.0):
         violations.append(_violation(row, "purchases", accepted, row.get("purchases")))
     if not np.isclose(
@@ -473,7 +593,16 @@ def _summary(rows, *, role):
     return result
 
 
-def evaluate_rows(model, args, metadata, *, seeds, contexts, phase):
+def evaluate_rows(
+        model,
+        args,
+        metadata,
+        *,
+        seeds,
+        contexts,
+        phase,
+        fifth_economic_override=None,
+):
     rows = [
         _episode(
             model,
@@ -482,6 +611,7 @@ def evaluate_rows(model, args, metadata, *, seeds, contexts, phase):
             context=context,
             checkpoint_metadata=metadata,
             phase=phase,
+            fifth_economic_override=fifth_economic_override,
         )
         for seed, context in zip(seeds, contexts)
     ]
@@ -497,6 +627,9 @@ def evaluate_rows(model, args, metadata, *, seeds, contexts, phase):
                 "checkpoint_sha256": metadata["sha256"],
                 "training_timesteps": metadata["training_timesteps"],
                 "evaluation_seed": row["evaluation_seed"],
+                "fifth_economic_override": row.get(
+                    "fifth_economic_override"
+                ),
                 **event,
             })
     return {
@@ -637,6 +770,59 @@ def fixed_grid(model, args, metadata, *, seeds):
     return evaluations
 
 
+def paired_timing_confirmation(model, args, metadata, *, seeds):
+    """Evaluate actual and calibrated fifth-trade behavior on paired seeds."""
+
+    evaluations = []
+    original_steps = args.fixed_event_steps
+    try:
+        for timing, fifth_step in CANONICAL_TIMING_FIFTH_STEPS.items():
+            event_steps = (*CANONICAL_TIMING_FIRST_FOUR, int(fifth_step))
+            args.fixed_event_steps = event_steps
+            for fifth_price in CANONICAL_TIMING_PRICES:
+                context = np.array(
+                    [0.0, 0.0, 0.0, 0.0, float(fifth_price)],
+                    dtype=np.float32,
+                )
+                modes = [("actual", None)]
+                if np.isclose(
+                        fifth_price,
+                        CANONICAL_TIMING_CALIBRATION_PRICE,
+                        atol=0.0,
+                        rtol=0.0,
+                ):
+                    modes.extend((
+                        ("forced_buy", 1.0),
+                        ("forced_reject", 0.0),
+                    ))
+                for policy_mode, override in modes:
+                    phase = (
+                        f"timing_{timing}_p{fifth_price:.2f}_{policy_mode}"
+                    )
+                    result = evaluate_rows(
+                        model,
+                        args,
+                        metadata,
+                        seeds=seeds,
+                        contexts=[context] * len(seeds),
+                        phase=phase,
+                        fifth_economic_override=override,
+                    )
+                    evaluations.append({
+                        "timing": timing,
+                        "fifth_event_step": int(fifth_step),
+                        "fifth_price": float(fifth_price),
+                        "policy_mode": policy_mode,
+                        "fifth_economic_override": override,
+                        "event_steps": list(event_steps),
+                        "opponent_commitment": context.tolist(),
+                        **result,
+                    })
+    finally:
+        args.fixed_event_steps = original_steps
+    return evaluations
+
+
 def _check(name, actual, relation, target):
     passed = {
         ">=": actual >= target,
@@ -646,7 +832,13 @@ def _check(name, actual, relation, target):
     return {"name": name, "actual": float(actual), "relation": relation, "target": float(target), "passed": bool(passed)}
 
 
-def behavioral_gate(*, role, random_result, fixed_results):
+def behavioral_gate(
+        *,
+        role,
+        random_result,
+        fixed_results,
+        timing_results=None,
+):
     by_value = {round(row["opponent_value"], 6): row["summary"] for row in fixed_results}
     required = (0.0, 0.5, 1.0)
     missing = [value for value in required if value not in by_value]
@@ -656,7 +848,49 @@ def behavioral_gate(*, role, random_result, fixed_results):
     ordered_values = sorted(by_value)
     curves = [by_value[value] for value in ordered_values]
     checks = []
+    calibration_checks = []
+    timing_behavior_checks = []
+    timing_results = [] if timing_results is None else list(timing_results)
     if role == BUYER:
+        timing_by_key = {}
+        for result in timing_results:
+            key = (
+                result.get("timing"),
+                round(float(result.get("fifth_price", np.nan)), 6),
+                result.get("policy_mode"),
+            )
+            if key in timing_by_key:
+                return {
+                    "passed": False,
+                    "mechanics_passed": False,
+                    "data_calibration_passed": False,
+                    "timing_behavior_passed": False,
+                    "checks": [],
+                    "error": f"duplicate paired timing condition {key}",
+                }
+            timing_by_key[key] = result
+        expected_timing = {
+            (timing, round(price, 6), "actual")
+            for timing in CANONICAL_TIMING_FIFTH_STEPS
+            for price in CANONICAL_TIMING_PRICES
+        } | {
+            (timing, CANONICAL_TIMING_CALIBRATION_PRICE, mode)
+            for timing in CANONICAL_TIMING_FIFTH_STEPS
+            for mode in ("forced_buy", "forced_reject")
+        }
+        missing_timing = sorted(expected_timing - set(timing_by_key))
+        if missing_timing:
+            return {
+                "passed": False,
+                "mechanics_passed": False,
+                "data_calibration_passed": False,
+                "timing_behavior_passed": False,
+                "checks": [],
+                "error": (
+                    "paired timing confirmation missing conditions "
+                    f"{missing_timing}"
+                ),
+            }
         low = [by_value[value] for value in sorted(by_value) if value <= 0.5]
         purchases = float(np.mean([row["mean_purchases"] for row in low]))
         shots = float(np.mean([row["mean_buyer_shots_fired"] for row in low]))
@@ -685,13 +919,6 @@ def behavioral_gate(*, role, random_result, fixed_results):
             _check("price 1 demand", one["mean_purchases"], "<=", 0.5),
             _check("low-to-high demand drop", zero["mean_purchases"] - one["mean_purchases"], ">=", 4.0),
             _check("largest adjacent demand reversal", max_up, "<=", 0.5),
-            _check(
-                "early-to-late willingness drop",
-                random_result["summary"]["early_mean_threshold"]
-                - random_result["summary"]["late_mean_threshold"],
-                ">=",
-                0.05,
-            ),
         ])
         checks.extend(
             _check(
@@ -703,6 +930,77 @@ def behavioral_gate(*, role, random_result, fixed_results):
             for value in ordered_values
             if value <= 0.5
         )
+        price = CANONICAL_TIMING_CALIBRATION_PRICE
+        early_actual = timing_by_key[("early", price, "actual")]["summary"]
+        late_actual = timing_by_key[("late", price, "actual")]["summary"]
+        early_buy = timing_by_key[("early", price, "forced_buy")]["summary"]
+        early_reject = timing_by_key[
+            ("early", price, "forced_reject")
+        ]["summary"]
+        late_buy = timing_by_key[("late", price, "forced_buy")]["summary"]
+        late_reject = timing_by_key[
+            ("late", price, "forced_reject")
+        ]["summary"]
+        calibration_checks.extend([
+            _check(
+                "paired timing early forced-buy payoff advantage",
+                early_buy["mean_controlled_payoff"]
+                - early_reject["mean_controlled_payoff"],
+                ">=",
+                TIMING_MIN_CALIBRATION_ADVANTAGE,
+            ),
+            _check(
+                "paired timing late forced-reject payoff advantage",
+                late_reject["mean_controlled_payoff"]
+                - late_buy["mean_controlled_payoff"],
+                ">=",
+                TIMING_MIN_CALIBRATION_ADVANTAGE,
+            ),
+        ])
+        early_acceptance = early_actual["event_5_acceptance_rate"]
+        late_acceptance = late_actual["event_5_acceptance_rate"]
+        early_best = max(
+            early_buy["mean_controlled_payoff"],
+            early_reject["mean_controlled_payoff"],
+        )
+        late_best = max(
+            late_buy["mean_controlled_payoff"],
+            late_reject["mean_controlled_payoff"],
+        )
+        timing_behavior_checks.extend([
+            _check(
+                "paired timing early price 0.75 acceptance",
+                early_acceptance,
+                ">=",
+                TIMING_MIN_EARLY_ACCEPTANCE,
+            ),
+            _check(
+                "paired timing late price 0.75 acceptance",
+                late_acceptance,
+                "<=",
+                TIMING_MAX_LATE_ACCEPTANCE,
+            ),
+            _check(
+                "paired timing price 0.75 acceptance drop",
+                early_acceptance - late_acceptance,
+                ">=",
+                TIMING_MIN_ACCEPTANCE_DROP,
+            ),
+            _check(
+                "paired timing early policy regret",
+                early_best - early_actual["mean_controlled_payoff"],
+                "<=",
+                TIMING_MAX_PAYOFF_REGRET,
+            ),
+            _check(
+                "paired timing late policy regret",
+                late_best - late_actual["mean_controlled_payoff"],
+                "<=",
+                TIMING_MAX_PAYOFF_REGRET,
+            ),
+        ])
+        checks.extend(calibration_checks)
+        checks.extend(timing_behavior_checks)
     else:
         prices = [row["mean_price"] for row in curves]
         max_down = max(earlier - later for earlier, later in zip(prices, prices[1:]))
@@ -740,7 +1038,27 @@ def behavioral_gate(*, role, random_result, fixed_results):
     mechanics = random_result["protocol"]["passed"] and all(
         result["protocol"]["passed"] for result in fixed_results
     )
-    return {"passed": bool(mechanics and all(row["passed"] for row in checks)), "mechanics_passed": bool(mechanics), "checks": checks}
+    if role == BUYER:
+        mechanics = mechanics and all(
+            result["protocol"]["passed"] for result in timing_results
+        )
+    calibration_passed = (
+        None
+        if role != BUYER
+        else all(row["passed"] for row in calibration_checks)
+    )
+    timing_behavior_passed = (
+        None
+        if role != BUYER
+        else all(row["passed"] for row in timing_behavior_checks)
+    )
+    return {
+        "passed": bool(mechanics and all(row["passed"] for row in checks)),
+        "mechanics_passed": bool(mechanics),
+        "data_calibration_passed": calibration_passed,
+        "timing_behavior_passed": timing_behavior_passed,
+        "checks": checks,
+    }
 
 
 def atomic_copy_no_overwrite(source, destination):
@@ -852,6 +1170,10 @@ def run_selection(args):
             local.fixed_seed_start,
             local.fixed_seed_start + FIXED_EPISODES,
         ))
+        timing_seeds = list(range(
+            local.timing_seed_start,
+            local.timing_seed_start + TIMING_EPISODES,
+        ))
         attempts = []
         selected = None
         selected_pin = None
@@ -879,6 +1201,13 @@ def run_selection(args):
                 fixed_results = fixed_grid(
                     model, local, metadata, seeds=fixed_seeds
                 )
+                timing_results = (
+                    paired_timing_confirmation(
+                        model, local, metadata, seeds=timing_seeds
+                    )
+                    if local.role == BUYER
+                    else []
+                )
                 if (
                         checkpoint_sha256(pinned["pinned_path"])
                         != screened_sha256
@@ -890,11 +1219,13 @@ def run_selection(args):
                     role=local.role,
                     random_result=random_result,
                     fixed_results=fixed_results,
+                    timing_results=timing_results,
                 )
                 attempt = {
                     "metadata": metadata,
                     "random": random_result,
                     "fixed_contexts": fixed_results,
+                    "paired_timing": timing_results,
                     "behavioral_gate": gate,
                 }
             except Exception as error:
@@ -914,9 +1245,12 @@ def run_selection(args):
                         "event_rows": [],
                     },
                     "fixed_contexts": [],
+                    "paired_timing": [],
                     "behavioral_gate": {
                         "passed": False,
                         "mechanics_passed": False,
+                        "data_calibration_passed": False,
+                        "timing_behavior_passed": False,
                         "error": repr(error),
                         "checks": [],
                     },
@@ -962,6 +1296,43 @@ def run_selection(args):
                 "fixed_context_episodes": FIXED_EPISODES,
                 "fixed_context_values": list(local.fixed_eval_values),
                 "fixed_context_event_steps": list(local.grid_event_steps),
+                "paired_timing_required_for_role": BUYER,
+                "paired_timing_run": bool(local.role == BUYER),
+                "paired_timing_episodes_per_condition": TIMING_EPISODES,
+                "paired_timing_actual_conditions": 6,
+                "paired_timing_forced_conditions": 4,
+                "paired_timing_seed_start": int(local.timing_seed_start),
+                "paired_timing_shared_seeds": True,
+                "paired_timing_first_four_event_steps": list(
+                    CANONICAL_TIMING_FIRST_FOUR
+                ),
+                "paired_timing_fifth_event_steps": dict(
+                    CANONICAL_TIMING_FIFTH_STEPS
+                ),
+                "paired_timing_fifth_prices": list(
+                    CANONICAL_TIMING_PRICES
+                ),
+                "paired_timing_calibration": {
+                    "fifth_price": CANONICAL_TIMING_CALIBRATION_PRICE,
+                    "forced_fifth_buy_threshold": 1.0,
+                    "forced_fifth_reject_threshold": 0.0,
+                },
+                "paired_timing_gate": {
+                    "minimum_early_forced_buy_advantage": (
+                        TIMING_MIN_CALIBRATION_ADVANTAGE
+                    ),
+                    "minimum_late_forced_reject_advantage": (
+                        TIMING_MIN_CALIBRATION_ADVANTAGE
+                    ),
+                    "minimum_actual_early_acceptance": (
+                        TIMING_MIN_EARLY_ACCEPTANCE
+                    ),
+                    "maximum_actual_late_acceptance": (
+                        TIMING_MAX_LATE_ACCEPTANCE
+                    ),
+                    "minimum_acceptance_drop": TIMING_MIN_ACCEPTANCE_DROP,
+                    "maximum_actual_payoff_regret": TIMING_MAX_PAYOFF_REGRET,
+                },
             },
             "screen": {"common_pairing": common, "results": screen},
             "ranking": ranking_rows,
@@ -980,7 +1351,7 @@ def run_selection(args):
 
 def artifact_paths(args):
     output = Path(args.output_dir).expanduser().resolve()
-    return {
+    paths = {
         "json": output / f"{args.run_name}.json",
         "ranking": output / f"{args.run_name}.ranking.csv",
         "screen_episodes": output / f"{args.run_name}.screen.episodes.csv",
@@ -989,6 +1360,19 @@ def artifact_paths(args):
         "confirmation_events": output / f"{args.run_name}.confirmation.events.csv",
         "fixed_contexts": output / f"{args.run_name}.fixed_contexts.csv",
     }
+    if args.role == BUYER:
+        paths.update({
+            "paired_timing_conditions": (
+                output / f"{args.run_name}.paired_timing.conditions.csv"
+            ),
+            "paired_timing_episodes": (
+                output / f"{args.run_name}.paired_timing.episodes.csv"
+            ),
+            "paired_timing_events": (
+                output / f"{args.run_name}.paired_timing.events.csv"
+            ),
+        })
+    return paths
 
 
 def persist_report(report, args):
@@ -1015,6 +1399,52 @@ def persist_report(report, args):
         }
         for attempt in attempts for result in attempt["fixed_contexts"]
     ])
+    if args.role == BUYER:
+        timing = [
+            (attempt, result)
+            for attempt in attempts
+            for result in attempt["paired_timing"]
+        ]
+        write_csv(paths["paired_timing_conditions"], [
+            {
+                "checkpoint_path": attempt["metadata"]["path"],
+                "checkpoint_sha256": attempt["metadata"]["sha256"],
+                "timing": result["timing"],
+                "fifth_event_step": result["fifth_event_step"],
+                "fifth_price": result["fifth_price"],
+                "policy_mode": result["policy_mode"],
+                "fifth_economic_override": result[
+                    "fifth_economic_override"
+                ],
+                "event_steps": result["event_steps"],
+                "opponent_commitment": result["opponent_commitment"],
+                "protocol_passed": result["protocol"]["passed"],
+                **result["summary"],
+            }
+            for attempt, result in timing
+        ])
+        write_csv(paths["paired_timing_episodes"], [
+            {
+                "timing": result["timing"],
+                "fifth_event_step": result["fifth_event_step"],
+                "fifth_price": result["fifth_price"],
+                "policy_mode": result["policy_mode"],
+                **row,
+            }
+            for _, result in timing
+            for row in result["episode_rows"]
+        ])
+        write_csv(paths["paired_timing_events"], [
+            {
+                "timing": result["timing"],
+                "fifth_event_step": result["fifth_event_step"],
+                "fifth_price": result["fifth_price"],
+                "policy_mode": result["policy_mode"],
+                **row,
+            }
+            for _, result in timing
+            for row in result["event_rows"]
+        ])
     return paths
 
 
@@ -1050,6 +1480,8 @@ def parse_args(argv=None):
     parser.add_argument("--confirmation-seed-start", type=int, default=3_600_001)
     parser.add_argument("--fixed-episodes", type=int, default=FIXED_EPISODES)
     parser.add_argument("--fixed-seed-start", type=int, default=3_700_001)
+    parser.add_argument("--timing-episodes", type=int, default=TIMING_EPISODES)
+    parser.add_argument("--timing-seed-start", type=int, default=3_800_001)
     parser.add_argument("--fixed-eval-values", default="0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1")
     parser.add_argument("--grid-event-steps", default="20,50,80,110,140")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
@@ -1065,6 +1497,11 @@ def parse_args(argv=None):
         parser.error(f"confirmation requires exactly {CONFIRMATION_EPISODES} episodes")
     if args.fixed_episodes != FIXED_EPISODES:
         parser.error(f"fixed grid requires exactly {FIXED_EPISODES} episodes per value")
+    if args.timing_episodes != TIMING_EPISODES:
+        parser.error(
+            "paired timing confirmation requires exactly "
+            f"{TIMING_EPISODES} episodes per condition"
+        )
     try:
         args.fixed_eval_values = _parse_floats(args.fixed_eval_values)
         args.grid_event_steps = _parse_steps(args.grid_event_steps)
@@ -1086,11 +1523,14 @@ def parse_args(argv=None):
         (args.screen_seed_start, SCREEN_EPISODES),
         (args.confirmation_seed_start, CONFIRMATION_EPISODES),
         (args.fixed_seed_start, FIXED_EPISODES),
+        (args.timing_seed_start, TIMING_EPISODES),
     )
     if any(start < 0 for start, _ in ranges):
         parser.error("evaluation seeds must be nonnegative")
     if any(_overlap(*first, *second) for index, first in enumerate(ranges) for second in ranges[index + 1:]):
-        parser.error("screen, confirmation, and fixed seed ranges must be disjoint")
+        parser.error(
+            "screen, confirmation, fixed, and timing seed ranges must be disjoint"
+        )
     args.seed = 0
     args.gameplay_horizon = 200
     args.event_tail_steps = 0

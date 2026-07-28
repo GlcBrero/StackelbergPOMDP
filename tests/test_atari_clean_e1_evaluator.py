@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
+from stackelberg_pomdp.atari.protocol import ACTOR_STATE, actor_state
 from stackelberg_pomdp.atari.stackpomdp_env import BUYER, SELLER
 
 
@@ -90,6 +91,122 @@ def test_e1_episode_audit_rejects_nonfinite_and_recomputes_bullets():
     fields = {item["field"] for item in evaluator.audit_episode(row, role=BUYER)}
     assert "seller_bullet_error" in fields
     assert "independent_buyer_bullet_conservation" in fields
+
+
+def test_fifth_economic_override_preserves_game_action_and_only_hits_trade_five():
+    action = np.array([3.0, 0.4], dtype=np.float32)
+    fifth_trade = {
+        ACTOR_STATE: actor_state(
+            ammo_fraction=0.0,
+            projectile_active=0.0,
+            normalized_time=0.975,
+            trade_mode=1.0,
+            event_index=4,
+            opponent_commitment=np.array([0, 0, 0, 0, 0.75]),
+        )
+    }
+    overridden, applied = evaluator.apply_fifth_economic_override(
+        fifth_trade, action, 1.0
+    )
+    assert applied
+    assert overridden[0] == action[0]
+    assert overridden[1] == 1.0
+    assert np.allclose(action, np.array([3.0, 0.4], dtype=np.float32))
+
+    fourth_trade = {
+        ACTOR_STATE: actor_state(
+            ammo_fraction=0.0,
+            projectile_active=0.0,
+            normalized_time=0.55,
+            trade_mode=1.0,
+            event_index=3,
+            opponent_commitment=np.array([0, 0, 0, 0, 0.75]),
+        )
+    }
+    unchanged, applied = evaluator.apply_fifth_economic_override(
+        fourth_trade, action, 0.0
+    )
+    assert not applied
+    assert np.array_equal(unchanged, action)
+
+
+def test_episode_audit_verifies_fifth_override_application():
+    row = _episode(context=[0, 0, 0, 0, 0.75])
+    row["fifth_economic_override"] = 1.0
+    row["fifth_economic_override_applied"] = 1
+    row["events"][-1]["threshold"] = 1.0
+    assert evaluator.audit_episode(row, role=BUYER) == []
+    row["fifth_economic_override_applied"] = 0
+    fields = {item["field"] for item in evaluator.audit_episode(row, role=BUYER)}
+    assert "fifth_economic_override_applied" in fields
+
+
+def test_paired_timing_confirmation_uses_six_actual_and_four_calibration_runs(
+        monkeypatch,
+):
+    args = SimpleNamespace(fixed_event_steps=None)
+    seeds = [101, 102]
+    calls = []
+
+    def fake_evaluate_rows(
+            model,
+            received_args,
+            metadata,
+            *,
+            seeds,
+            contexts,
+            phase,
+            fifth_economic_override=None,
+    ):
+        del model, metadata
+        calls.append({
+            "event_steps": tuple(received_args.fixed_event_steps),
+            "seeds": tuple(seeds),
+            "contexts": tuple(tuple(value) for value in contexts),
+            "phase": phase,
+            "override": fifth_economic_override,
+        })
+        return {
+            "summary": {
+                "mean_controlled_payoff": 1.0,
+                "event_5_acceptance_rate": 0.5,
+            },
+            "protocol": {"passed": True, "violations": []},
+            "episode_rows": [],
+            "event_rows": [],
+        }
+
+    monkeypatch.setattr(evaluator, "evaluate_rows", fake_evaluate_rows)
+    results = evaluator.paired_timing_confirmation(
+        object(), args, {"sha256": "a"}, seeds=seeds
+    )
+    assert args.fixed_event_steps is None
+    assert len(results) == 10
+    assert sum(row["policy_mode"] == "actual" for row in results) == 6
+    assert sum(row["policy_mode"] != "actual" for row in results) == 4
+    assert {call["event_steps"][-1] for call in calls} == {140, 195}
+    assert all(call["event_steps"][:4] == (20, 50, 80, 110) for call in calls)
+    assert all(call["seeds"] == tuple(seeds) for call in calls)
+    forced = [call for call in calls if call["override"] is not None]
+    assert {call["override"] for call in forced} == {0.0, 1.0}
+    assert all(np.isclose(call["contexts"][0][-1], 0.75) for call in forced)
+
+
+def test_paired_timing_csv_artifacts_are_buyer_only(tmp_path):
+    buyer = SimpleNamespace(
+        output_dir=str(tmp_path), run_name="buyer", role=BUYER
+    )
+    seller = SimpleNamespace(
+        output_dir=str(tmp_path), run_name="seller", role=SELLER
+    )
+    buyer_paths = evaluator.artifact_paths(buyer)
+    seller_paths = evaluator.artifact_paths(seller)
+    assert {
+        "paired_timing_conditions",
+        "paired_timing_episodes",
+        "paired_timing_events",
+    } <= set(buyer_paths)
+    assert not any(name.startswith("paired_timing") for name in seller_paths)
 
 
 def test_pin_file_detects_source_mutation(monkeypatch, tmp_path):
@@ -187,6 +304,51 @@ def _fixed(value, **updates):
     }
 
 
+def _timing_results():
+    rows = []
+    for timing in ("early", "late"):
+        for price in evaluator.CANONICAL_TIMING_PRICES:
+            rows.append({
+                "timing": timing,
+                "fifth_price": price,
+                "policy_mode": "actual",
+                "summary": {
+                    "mean_controlled_payoff": (
+                        1.95 if timing == "early" else 0.95
+                    ),
+                    "event_5_acceptance_rate": (
+                        1.0 if timing == "early" else 0.0
+                    ),
+                },
+                "protocol": {"passed": True, "violations": []},
+            })
+        rows.extend([
+            {
+                "timing": timing,
+                "fifth_price": 0.75,
+                "policy_mode": "forced_buy",
+                "summary": {
+                    "mean_controlled_payoff": (
+                        2.0 if timing == "early" else 0.0
+                    ),
+                    "event_5_acceptance_rate": 1.0,
+                },
+                "protocol": {"passed": True, "violations": []},
+            },
+            {
+                "timing": timing,
+                "fifth_price": 0.75,
+                "policy_mode": "forced_reject",
+                "summary": {
+                    "mean_controlled_payoff": 1.0,
+                    "event_5_acceptance_rate": 0.0,
+                },
+                "protocol": {"passed": True, "violations": []},
+            },
+        ])
+    return rows
+
+
 def test_buyer_behavior_gate_requires_low_price_use_and_high_price_rejection():
     fixed = [
         _fixed(0.0, mean_purchases=5.0, mean_buyer_shots_fired=5.0),
@@ -194,21 +356,92 @@ def test_buyer_behavior_gate_requires_low_price_use_and_high_price_rejection():
         _fixed(1.0, mean_purchases=0.0, mean_buyer_shots_fired=0.0, mean_controlled_payoff=0.0),
     ]
     random = {
-        "summary": {
-            "mean_controlled_payoff": 1.0,
-            "early_mean_threshold": 0.8,
-            "late_mean_threshold": 0.6,
-        },
+        "summary": {"mean_controlled_payoff": 1.0},
         "protocol": {"passed": True},
     }
-    assert evaluator.behavioral_gate(role=BUYER, random_result=random, fixed_results=fixed)["passed"]
-    random["summary"]["late_mean_threshold"] = 0.8
+    timing = _timing_results()
+    gate = evaluator.behavioral_gate(
+        role=BUYER,
+        random_result=random,
+        fixed_results=fixed,
+        timing_results=timing,
+    )
+    assert gate["passed"]
+    assert gate["data_calibration_passed"]
+    assert gate["timing_behavior_passed"]
+    next(
+        row for row in timing
+        if row["timing"] == "late"
+        and row["fifth_price"] == 0.75
+        and row["policy_mode"] == "actual"
+    )["summary"]["event_5_acceptance_rate"] = 1.0
     assert not evaluator.behavioral_gate(
-        role=BUYER, random_result=random, fixed_results=fixed
+        role=BUYER,
+        random_result=random,
+        fixed_results=fixed,
+        timing_results=timing,
     )["passed"]
-    random["summary"]["late_mean_threshold"] = 0.6
+    timing = _timing_results()
     fixed[-1]["summary"]["mean_purchases"] = 5.0
-    assert not evaluator.behavioral_gate(role=BUYER, random_result=random, fixed_results=fixed)["passed"]
+    assert not evaluator.behavioral_gate(
+        role=BUYER,
+        random_result=random,
+        fixed_results=fixed,
+        timing_results=timing,
+    )["passed"]
+
+
+def test_buyer_behavior_gate_requires_paired_timing_calibration_and_regret():
+    fixed = [
+        _fixed(0.0, mean_purchases=5.0, mean_buyer_shots_fired=5.0),
+        _fixed(
+            0.5,
+            mean_purchases=5.0,
+            mean_buyer_shots_fired=5.0,
+            mean_controlled_payoff=2.5,
+        ),
+        _fixed(
+            1.0,
+            mean_purchases=0.0,
+            mean_buyer_shots_fired=0.0,
+            mean_controlled_payoff=0.0,
+        ),
+    ]
+    random = {
+        "summary": {"mean_controlled_payoff": 1.0},
+        "protocol": {"passed": True},
+    }
+    timing = _timing_results()
+    forced_early_buy = next(
+        row for row in timing
+        if row["timing"] == "early" and row["policy_mode"] == "forced_buy"
+    )
+    forced_early_buy["summary"]["mean_controlled_payoff"] = 1.1
+    gate = evaluator.behavioral_gate(
+        role=BUYER,
+        random_result=random,
+        fixed_results=fixed,
+        timing_results=timing,
+    )
+    assert not gate["passed"]
+    assert not gate["data_calibration_passed"]
+
+    timing = _timing_results()
+    early_actual = next(
+        row for row in timing
+        if row["timing"] == "early"
+        and row["fifth_price"] == 0.75
+        and row["policy_mode"] == "actual"
+    )
+    early_actual["summary"]["mean_controlled_payoff"] = 1.0
+    gate = evaluator.behavioral_gate(
+        role=BUYER,
+        random_result=random,
+        fixed_results=fixed,
+        timing_results=timing,
+    )
+    assert not gate["passed"]
+    assert not gate["timing_behavior_passed"]
 
 
 def test_seller_behavior_gate_requires_retention_then_high_value_sales():
@@ -238,6 +471,7 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
         screen_seed_start=100,
         confirmation_seed_start=200,
         fixed_seed_start=400,
+        timing_seed_start=500,
         selected_checkpoint=str(tmp_path / "selected.zip"),
         fixed_eval_values=(0.0, 0.5, 1.0),
         grid_event_steps=(20, 50, 80, 110, 140),
@@ -266,6 +500,9 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
     fake_random = {"summary": {"mean_controlled_payoff": 1.0}, "protocol": {"passed": True}, "episode_rows": [], "event_rows": []}
     monkeypatch.setattr(evaluator, "evaluate_rows", lambda *a, **k: fake_random)
     monkeypatch.setattr(evaluator, "fixed_grid", lambda *a, **k: [])
+    monkeypatch.setattr(
+        evaluator, "paired_timing_confirmation", lambda *a, **k: []
+    )
     calls = iter((False, True))
     monkeypatch.setattr(evaluator, "behavioral_gate", lambda **k: {"passed": next(calls)})
     copied = []
@@ -287,6 +524,7 @@ def test_parser_enforces_exact_disjoint_screen_and_confirmation(tmp_path):
     args = evaluator.parse_args(base)
     assert args.screen_episodes == 20
     assert args.confirmation_episodes == 100
+    assert args.timing_episodes == 20
     with pytest.raises(SystemExit):
         evaluator.parse_args(base + ["--screen-episodes", "19"])
     with pytest.raises(SystemExit):
@@ -299,4 +537,9 @@ def test_parser_enforces_exact_disjoint_screen_and_confirmation(tmp_path):
     with pytest.raises(SystemExit):
         evaluator.parse_args(base + [
             "--grid-event-steps", "10,40,70,100,130",
+        ])
+    with pytest.raises(SystemExit):
+        evaluator.parse_args(base + [
+            "--fixed-seed-start", "100",
+            "--timing-seed-start", "110",
         ])
