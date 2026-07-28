@@ -685,6 +685,13 @@ def behavioral_gate(*, role, random_result, fixed_results):
             _check("price 1 demand", one["mean_purchases"], "<=", 0.5),
             _check("low-to-high demand drop", zero["mean_purchases"] - one["mean_purchases"], ">=", 4.0),
             _check("largest adjacent demand reversal", max_up, "<=", 0.5),
+            _check(
+                "early-to-late willingness drop",
+                random_result["summary"]["early_mean_threshold"]
+                - random_result["summary"]["late_mean_threshold"],
+                ">=",
+                0.05,
+            ),
         ])
         checks.extend(
             _check(

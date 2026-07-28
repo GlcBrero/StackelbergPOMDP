@@ -193,8 +193,20 @@ def test_buyer_behavior_gate_requires_low_price_use_and_high_price_rejection():
         _fixed(0.5, mean_purchases=5.0, mean_buyer_shots_fired=5.0, mean_controlled_payoff=2.5),
         _fixed(1.0, mean_purchases=0.0, mean_buyer_shots_fired=0.0, mean_controlled_payoff=0.0),
     ]
-    random = {"summary": {"mean_controlled_payoff": 1.0}, "protocol": {"passed": True}}
+    random = {
+        "summary": {
+            "mean_controlled_payoff": 1.0,
+            "early_mean_threshold": 0.8,
+            "late_mean_threshold": 0.6,
+        },
+        "protocol": {"passed": True},
+    }
     assert evaluator.behavioral_gate(role=BUYER, random_result=random, fixed_results=fixed)["passed"]
+    random["summary"]["late_mean_threshold"] = 0.8
+    assert not evaluator.behavioral_gate(
+        role=BUYER, random_result=random, fixed_results=fixed
+    )["passed"]
+    random["summary"]["late_mean_threshold"] = 0.6
     fixed[-1]["summary"]["mean_purchases"] = 5.0
     assert not evaluator.behavioral_gate(role=BUYER, random_result=random, fixed_results=fixed)["passed"]
 

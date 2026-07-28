@@ -301,8 +301,10 @@ episodes and a paired constant-context grid on the usable schedule
 `20,50,80,110,140`. The selected alias is created only after the role-specific
 behavioral gate passes. Buyer gates require close to five purchases and shots
 through price 0.5, positive net payoff at every lower grid price, and lower
-high-price demand; seller gates require retained-bullet play at threshold zero
-and near-threshold sales throughout the upper half of the grid. Full
+high-price demand, together with a modest decline in willingness to pay from
+early to late random-arrival trades; seller gates require retained-bullet play
+at threshold zero and near-threshold sales throughout the upper half of the
+grid. Full
 episode/event rows, ranking and fixed-grid CSVs, acceptance by event and time
 bin, exact hashes, explicit seeds, and all failed confirmation attempts are
 written collision-safely under `replication/atari/results/e1_selections/`.
