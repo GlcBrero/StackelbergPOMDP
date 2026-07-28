@@ -263,6 +263,18 @@ paired comparison. The JSON keeps random and fixed-context episode-level trade
 records plus acceptance-by-event/time diagnostics; the CSV contains the
 fixed-context summary table.
 
+The five opponent-commitment coordinates are identically zero in E0a and E0b,
+so their incoming state-encoder weights have never received an informative
+gradient. On the E0b-to-E1 actor transfer, only those five columns are therefore
+initialized to zero. This makes the initial gameplay action invariant to a new
+price/threshold sequence, while the columns remain trainable and can acquire
+economic effects during E1 fine-tuning. All visual, game-head, and other state
+weights transfer exactly, and the checkpoint provenance records the five reset
+indices. A no-update ALE transfer check on the usable event schedule
+`20,50,80,110,140` bought, fired, and scored all five bullets at constant
+opponent values 0, 0.25, and 0.5, with exact payment and bullet accounting; the
+diagnostic is retained under `replication/atari/results/e1_evaluations/`.
+
 ## E2: Stackelberg leaders
 
 Seller leader against a frozen E1 meta-buyer:
@@ -283,6 +295,30 @@ exactly `5 + 200 + 5 = 210` transitions and always enable the full-action
 cache callback. The generic wrapper is configured for five response
 transitions and 205 reward transitions, with all five zero-reward queries kept
 in PPO's rollout.
+
+Every new E2 checkpoint embeds a canonical provenance manifest that binds the
+exact frozen E1-response bytes, same-role E1 initialization bytes, ROM bytes,
+policy architecture, reward-game protocol, and PPO configuration. Resume and
+evaluation reject a missing or incompatible manifest. Select among retained
+step checkpoints only with the deterministic selector:
+
+```bash
+python -u -m replication.atari.evaluate_atari_stackpomdp_leader_sb3 \
+  --leader-role seller \
+  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_step400000.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_step800000.zip \
+  --selected-checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_selected.zip
+```
+
+All candidates must share one provenance fingerprint and are screened on the
+same 20 seeds and event schedules. Any violation of the five-query, 200-game,
+five-cache-replay, action-identity, payoff, or bullet-accounting protocol makes
+a checkpoint ineligible. The highest mean leader payoff wins, with documented
+robustness and training-step tie breakers, and is then confirmed on 100
+disjoint seeds. The selector writes complete JSON and CSV audit artifacts under
+`replication/atari/results/e2_selections/` and never overwrites an existing
+selected alias or report.
 
 ## Resume and deterministic evaluation
 
@@ -320,7 +356,7 @@ retain the exact policy-step indices at which each local reset occurred.
 
 ```bash
 PYTHONNOUSERSITE=1 \
-python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_leader_trainer.py"]))'
+python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_leader_trainer.py", "tests/test_atari_clean_e0b_evaluator.py", "tests/test_atari_clean_e2_evaluator.py"]))'
 ```
 
 The clean suite checks the stable 14D interface, branch-gradient isolation,
