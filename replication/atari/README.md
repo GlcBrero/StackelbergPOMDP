@@ -275,6 +275,35 @@ indices. A no-update ALE transfer check on the usable event schedule
 opponent values 0, 0.25, and 0.5, with exact payment and bullet accounting; the
 diagnostic is retained under `replication/atari/results/e1_evaluations/`.
 
+Select an E1 checkpoint only with the deterministic selector (repeat
+`--checkpoint` for every retained step checkpoint and include the final
+post-update checkpoint):
+
+```bash
+python -u -m replication.atari.evaluate_atari_meta_response_sb3 \
+  --role buyer \
+  --e0b-checkpoint replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip \
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_step400160.zip \
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_step800320.zip \
+  --selected-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_selected.zip
+```
+
+The selector binds every candidate to the exact supplied E0b bytes and rejects
+the wrong policy class, role, input mode, or 205-transition/accounting
+protocol. All candidates receive the same 20 random commitments, Atari seeds,
+and event schedules. Mechanically valid candidates are ranked by controlled
+random payoff, then median, minimum, standard deviation, training step, and
+checkpoint hash. In rank order, each candidate is tested on 100 disjoint random
+episodes and a paired constant-context grid on the usable schedule
+`20,50,80,110,140`. The selected alias is created only after the role-specific
+behavioral gate passes. Buyer gates require low-price purchases and shots,
+positive low/mid-price net payoff, and lower high-price demand; seller gates
+require retained-bullet play at threshold zero and high-price sales with an
+increasing threshold response. Full episode/event rows, ranking and fixed-grid
+CSVs, acceptance by event and time bin, exact hashes, explicit seeds, and all
+failed confirmation attempts are written collision-safely under
+`replication/atari/results/e1_selections/`.
+
 ## E2: Stackelberg leaders
 
 Seller leader against a frozen E1 meta-buyer:
@@ -356,7 +385,7 @@ retain the exact policy-step indices at which each local reset occurred.
 
 ```bash
 PYTHONNOUSERSITE=1 \
-python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_leader_trainer.py", "tests/test_atari_clean_e0b_evaluator.py", "tests/test_atari_clean_e2_evaluator.py"]))'
+python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_e1_evaluator.py", "tests/test_atari_clean_leader_trainer.py", "tests/test_atari_clean_e0b_evaluator.py", "tests/test_atari_clean_e2_evaluator.py"]))'
 ```
 
 The clean suite checks the stable 14D interface, branch-gradient isolation,
