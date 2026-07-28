@@ -226,26 +226,39 @@ def evaluate_response(model, args):
         gameplay_horizon=args.gameplay_horizon,
     ))
     fixed_rows = []
-    for value_index, value in enumerate(args.fixed_eval_values):
+    fixed_evaluations = []
+    for value in args.fixed_eval_values:
         fixed = float(value)
         context = np.full(5, fixed, dtype=np.float32)
         result = evaluate_model(
             model,
-            lambda episode, context=context, value_index=value_index: make_env(
+            lambda episode, context=context: make_env(
                 args,
-                seed=args.seed + 400_000 + 10_000 * value_index + episode,
+                # Reuse the same ALE/no-op and event-schedule seeds at every
+                # opponent value.  The fixed grid is therefore genuinely
+                # paired; only the commitment changes across rows.
+                seed=args.seed + 400_000 + episode,
                 context_sampler=lambda rng, context=context: context,
             ),
             episodes=args.fixed_eval_episodes,
         )
+        result["summary"].update(_trade_diagnostics(
+            result["episode_rows"],
+            gameplay_horizon=args.gameplay_horizon,
+        ))
         fixed_rows.append({
             "opponent_value": fixed,
             **result["summary"],
+        })
+        fixed_evaluations.append({
+            "opponent_value": fixed,
+            **result,
         })
     return {
         "summary": random_evaluation["summary"],
         "random": random_evaluation,
         "fixed_contexts": fixed_rows,
+        "fixed_context_evaluations": fixed_evaluations,
     }
 
 

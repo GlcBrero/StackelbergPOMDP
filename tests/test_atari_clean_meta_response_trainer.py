@@ -248,6 +248,65 @@ def test_eval_only_requires_an_e1_actor_checkpoint(tmp_path):
         ])
 
 
+def test_fixed_context_evaluation_is_paired_and_retains_event_rows(monkeypatch):
+    seeds_by_value = {}
+
+    def fake_make_env(args, *, seed, context_sampler=None):
+        if context_sampler is None:
+            value = -1.0
+        else:
+            context = context_sampler(np.random.default_rng(0))
+            value = float(context[0])
+            seeds_by_value.setdefault(value, []).append(int(seed))
+        return SimpleNamespace(value=value, seed=int(seed))
+
+    def fake_evaluate_model(model, env_factory, *, episodes):
+        del model
+        rows = []
+        for episode in range(episodes):
+            env = env_factory(episode)
+            rows.append({
+                "evaluation_return": env.value,
+                "evaluation_steps": 205,
+                "events": [{
+                    "event_index": event_index,
+                    "game_step": 10 * (event_index + 1),
+                    "price": env.value,
+                    "threshold": 0.5,
+                    "accepted": float(env.value <= 0.5),
+                } for event_index in range(5)],
+            })
+        return {
+            "summary": {"episodes": episodes},
+            "episode_rows": rows,
+        }
+
+    monkeypatch.setattr(trainer, "make_env", fake_make_env)
+    monkeypatch.setattr(trainer, "evaluate_model", fake_evaluate_model)
+    args = SimpleNamespace(
+        seed=17,
+        eval_episodes=2,
+        fixed_eval_episodes=3,
+        fixed_eval_values=(0.0, 0.5, 1.0),
+        gameplay_horizon=200,
+    )
+
+    evaluation = trainer.evaluate_response(object(), args)
+
+    expected_seeds = [400_017, 400_018, 400_019]
+    assert seeds_by_value == {
+        0.0: expected_seeds,
+        0.5: expected_seeds,
+        1.0: expected_seeds,
+    }
+    assert len(evaluation["fixed_contexts"]) == 3
+    assert len(evaluation["fixed_context_evaluations"]) == 3
+    for fixed in evaluation["fixed_context_evaluations"]:
+        assert len(fixed["episode_rows"]) == 3
+        assert all(len(row["events"]) == 5 for row in fixed["episode_rows"])
+        assert fixed["summary"]["trade_events"] == 15
+
+
 def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
     vec_env = DummyVecEnv([_StableProtocolEnv])
     try:
