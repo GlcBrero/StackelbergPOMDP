@@ -16,6 +16,7 @@ from replication.atari.sb3_common import (
 from stackelberg_pomdp.atari.protocol import (
     ACTOR_STATE_DIM,
     GAMEPLAY,
+    OPPONENT_COMMITMENT_SLICE,
     action_space,
     actor_state,
     observation,
@@ -199,11 +200,28 @@ def test_e1_build_transfers_only_actor_and_uses_role_specific_economic_start(
         assert model.gamma == 1.0
         assert model.gae_lambda == 1.0
 
-        # E0b visual/state/game actor modules transfer exactly.
+        # E0b visual/game modules transfer exactly.  The state encoder differs
+        # only in the five previously unseen opponent-commitment columns,
+        # which start at zero so random E1 context cannot arbitrarily perturb
+        # the certified E0b gameplay policy.
         assert _module_equal(
-            source.policy.features_extractor,
-            model.policy.features_extractor,
+            source.policy.features_extractor.visual,
+            model.policy.features_extractor.visual,
         )
+        source_state = source.policy.features_extractor.state_encoder[0]
+        e1_state = model.policy.features_extractor.state_encoder[0]
+        assert torch.equal(source_state.bias, e1_state.bias)
+        assert torch.equal(
+            source_state.weight[:, :OPPONENT_COMMITMENT_SLICE.start],
+            e1_state.weight[:, :OPPONENT_COMMITMENT_SLICE.start],
+        )
+        assert torch.count_nonzero(
+            e1_state.weight[:, OPPONENT_COMMITMENT_SLICE]
+        ) == 0
+        assert e1_state.weight.requires_grad
+        assert model.atari_e1_source_provenance[
+            "zero_initialized_actor_state_indices"
+        ] == [9, 10, 11, 12, 13]
         assert _module_equal(
             source.policy.game_action_net,
             model.policy.game_action_net,

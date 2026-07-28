@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 
 import numpy as np
+import torch as th
 
 os.environ.setdefault("PYTHONNOUSERSITE", "1")
 os.environ.setdefault(
@@ -37,7 +38,10 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     BilateralAtariConfig,
     make_atari_meta_response_env,
 )
-from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
+from stackelberg_pomdp.atari.protocol import (
+    NUM_TRADE_EVENTS,
+    OPPONENT_COMMITMENT_SLICE,
+)
 from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
 
@@ -138,9 +142,22 @@ def _new_model(args, vec_env):
         device=args.device,
     )
     _validate_e0b_source(provenance)
+    # The opponent commitment is identically zero throughout E0a/E0b, so its
+    # five input columns retain arbitrary initialization values.  Reset only
+    # those previously unseen columns before E1: gameplay therefore starts
+    # exactly invariant to price/threshold context, while ordinary PPO
+    # gradients remain free to learn economic effects during fine-tuning.
+    state_input = model.policy.features_extractor.state_encoder[0]
+    with th.no_grad():
+        state_input.weight[:, OPPONENT_COMMITMENT_SLICE].zero_()
     provenance = {
         **provenance,
         "modules": list(provenance["modules"]),
+        "zero_initialized_actor_state_inputs": ["opponent_commitment"],
+        "zero_initialized_actor_state_indices": list(range(
+            OPPONENT_COMMITMENT_SLICE.start,
+            OPPONENT_COMMITMENT_SLICE.stop,
+        )),
     }
     model.atari_e1_source_provenance = dict(provenance)
     if args.role == BUYER:
