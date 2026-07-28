@@ -154,11 +154,13 @@ function e2_resolve_e1_gate() {
           typeset -g E1_BUYER_REPORT=$(print -r -- "$choice" | jq -r '.report')
           typeset -g E1_BUYER=$(print -r -- "$choice" | jq -r '.checkpoint')
           typeset -g E1_BUYER_MODE=$(print -r -- "$choice" | jq -r '.actor_loss_mode')
+          typeset -g E1_BUYER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.source_kind')
           ;;
         seller)
           typeset -g E1_SELLER_REPORT=$(print -r -- "$choice" | jq -r '.report')
           typeset -g E1_SELLER=$(print -r -- "$choice" | jq -r '.checkpoint')
           typeset -g E1_SELLER_MODE=$(print -r -- "$choice" | jq -r '.actor_loss_mode')
+          typeset -g E1_SELLER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.source_kind')
           ;;
       esac
       print "selected strict E1 $role gate: $choice"
@@ -176,14 +178,18 @@ function e2_load_e1_cohort() {
   typeset -g E1_BUYER_REPORT=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.report')
   typeset -g E1_BUYER=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.checkpoint')
   typeset -g E1_BUYER_MODE=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.actor_loss_mode')
+  typeset -g E1_BUYER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.source_kind')
   typeset -g E1_SELLER_REPORT=$(print -r -- "$choice" | jq -r '.e1_gates.seller.report')
   typeset -g E1_SELLER=$(print -r -- "$choice" | jq -r '.e1_gates.seller.checkpoint')
   typeset -g E1_SELLER_MODE=$(print -r -- "$choice" | jq -r '.e1_gates.seller.actor_loss_mode')
+  typeset -g E1_SELLER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.seller.source_kind')
 }
 
 function e2_wait_for_both_e1_gates() {
   # One collision-safe cohort fixes both role launchers to identical E1 bytes.
   # Prefer a passing balanced buyer; accept a strictly passing standard buyer.
+  # A temporal-contingency buyer is eligible only through its immutable gate
+  # sidecar after both preregistered uniform families failed.
   # The seller is balanced-only. Intermediate-step reports are never gates.
   if [[ -f "$E1_COHORT" ]]; then
     e2_load_e1_cohort
@@ -243,7 +249,7 @@ function e2_role_paths() {
   esac
   E2_BASE="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain.zip"
   E2_INPUT_MANIFEST="${E2_BASE%.zip}.pipeline_inputs.json"
-  E2_RUN_NAME="atari_clean_e2_${role}_balanced_seed1_firefix_retrain_2m_local_e1buyer${E1_BUYER_MODE}"
+  E2_RUN_NAME="atari_clean_e2_${role}_balanced_seed1_firefix_retrain_2m_local_e1buyer${E1_BUYER_MODE}_${E1_BUYER_SOURCE_KIND}"
   E2_TRAIN_LOG="$LOG_ROOT/${E2_RUN_NAME}.log"
 }
 
@@ -267,9 +273,11 @@ function e2_load_input_manifest() {
   typeset -g E1_BUYER_REPORT=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.report')
   typeset -g E1_BUYER=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.checkpoint')
   typeset -g E1_BUYER_MODE=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.actor_loss_mode')
+  typeset -g E1_BUYER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.buyer.source_kind')
   typeset -g E1_SELLER_REPORT=$(print -r -- "$choice" | jq -r '.e1_gates.seller.report')
   typeset -g E1_SELLER=$(print -r -- "$choice" | jq -r '.e1_gates.seller.checkpoint')
   typeset -g E1_SELLER_MODE=$(print -r -- "$choice" | jq -r '.e1_gates.seller.actor_loss_mode')
+  typeset -g E1_SELLER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.seller.source_kind')
   e2_role_paths "$role"
   if [[ "$E2_INPUT_MANIFEST" != "$manifest" ]]; then
     print -u2 "E2 pipeline-input manifest path resolution is inconsistent"

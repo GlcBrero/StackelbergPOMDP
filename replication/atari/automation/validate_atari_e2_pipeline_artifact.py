@@ -21,6 +21,14 @@ REPOSITORY_ROOT = Path(os.environ.get(
 E1_EVALUATOR = "clean_atari_e1_selector_v2"
 E2_EVALUATOR = "clean_atari_e2_selector_v2"
 E2_STEPS = (400_680, 800_520, 1_200_360, 1_600_200, 2_000_040)
+E1_UNIFORM_SAMPLER = "uniform"
+E1_TEMPORAL_SAMPLER = "temporal-marginal-v1"
+E1_TEMPORAL_GATE_KIND = "atari_e1_buyer_temporal_contingency_gate"
+E1_TEMPORAL_FAMILY_KIND = "atari_e1_buyer_temporal_contingency_family"
+E1_TEMPORAL_ACTIVATION_KIND = "atari_e1_buyer_temporal_contingency_activation"
+CANONICAL_ROM_SHA256 = (
+    "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
+)
 
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
@@ -98,6 +106,464 @@ def validate_code_root() -> str:
     return head
 
 
+def _canonical_uniform_sampler() -> dict:
+    return {
+        "mode": E1_UNIFORM_SAMPLER,
+        "gameplay_horizon": 200,
+        "event_tail_steps": 0,
+        "schedule": "ExactFiveEventSchedule.sample",
+        "context": "five independent Uniform(0,1) prices",
+        "schedule_context_rngs_independent": False,
+        "legacy_sampling_path": True,
+    }
+
+
+def _canonical_temporal_sampler() -> dict:
+    return {
+        "mode": E1_TEMPORAL_SAMPLER,
+        "gameplay_horizon": 200,
+        "event_tail_steps": 0,
+        "schedule_stratum_weights": {
+            "unconditional": 0.50,
+            "early_fifth": 0.25,
+            "late_fifth": 0.25,
+        },
+        "early_fifth_interval_half_open": [120, 160],
+        "late_fifth_interval_half_open": [180, 200],
+        "conditional_schedule_method": (
+            "rejection sample from ExactFiveEventSchedule"
+        ),
+        "context_stratum_weights": {"uniform": 0.75, "low_prefix": 0.25},
+        "uniform_context": "five independent Uniform(0,1) prices",
+        "low_prefix_context": {
+            "first_four": "four independent Uniform(0,0.25) prices",
+            "fifth": "Uniform(0,1) price",
+        },
+        "schedule_context_rngs_independent": True,
+        "legacy_sampling_path": False,
+    }
+
+
+def _e1_sampler_contract(report: dict) -> dict:
+    """Classify a final E1 family without silently accepting mixed sampling."""
+
+    family = report.get("training_family", {})
+    current = family.get("common_sampler_provenance")
+    history = family.get("common_sampler_history")
+    if current is None and history is None:
+        return {
+            "source_kind": "uniform",
+            "sampler_mode": E1_UNIFORM_SAMPLER,
+            "legacy_inferred": True,
+        }
+    if not isinstance(current, dict) or not isinstance(history, list):
+        fail("E1 sampler provenance/history must be present together")
+    mode = current.get("mode")
+    if mode == E1_UNIFORM_SAMPLER:
+        expect_equal(
+            current, _canonical_uniform_sampler(), label="uniform E1 sampler"
+        )
+        if len(history) != 1:
+            fail("uniform E1 gate must have exactly one sampler stage")
+        stage = history[0]
+        if not isinstance(stage, dict):
+            fail("uniform E1 sampler stage is not an object")
+        expect_equal(stage.get("start_total_timesteps"), 0, label="uniform sampler start")
+        expect_equal(stage.get("sampler"), current, label="uniform sampler history")
+        if type(stage.get("inferred_for_legacy_checkpoint")) is not bool:
+            fail("uniform E1 sampler stage lacks a Boolean inference flag")
+        if not isinstance(stage.get("resume_sources"), list):
+            fail("uniform E1 sampler stage lacks resume-source provenance")
+        return {
+            "source_kind": "uniform",
+            "sampler_mode": mode,
+            "legacy_inferred": bool(
+                family.get("sampler_contract_inferred_for_legacy_checkpoint", False)
+            ),
+        }
+    if mode != E1_TEMPORAL_SAMPLER:
+        fail(f"E1 gate has an unsupported sampler mode: {mode!r}")
+    expect_equal(
+        current, _canonical_temporal_sampler(), label="temporal E1 sampler"
+    )
+    if len(history) != 2:
+        fail("temporal E1 gate must have exactly uniform and temporal stages")
+    uniform, temporal = history
+    if not isinstance(uniform, dict) or not isinstance(temporal, dict):
+        fail("temporal E1 sampler history contains a non-object stage")
+    expect_equal(uniform.get("start_total_timesteps"), 0, label="uniform-stage start")
+    expect_equal(
+        uniform.get("sampler"), _canonical_uniform_sampler(),
+        label="temporal lineage uniform stage",
+    )
+    expect_equal(temporal.get("sampler"), current, label="temporal sampler stage")
+    start = temporal.get("start_total_timesteps")
+    if type(start) is not int or start <= 0:
+        fail("temporal sampler stage has an invalid start timestep")
+    if temporal.get("inferred_for_legacy_checkpoint") is not False:
+        fail("temporal sampler stage cannot be legacy-inferred")
+    sources = temporal.get("resume_sources")
+    if not isinstance(sources, list) or len(sources) != 1:
+        fail("temporal sampler stage must bind exactly one resume source")
+    source = sources[0]
+    if not isinstance(source, dict):
+        fail("temporal resume source is not an object")
+    expect_equal(source.get("resume_total_timesteps"), start, label="temporal resume step")
+    expect_equal(source.get("training_total_timesteps"), start, label="temporal parent step")
+    digest = source.get("sha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        fail("temporal resume source has no valid SHA-256")
+    if not isinstance(source.get("path"), str) or not source["path"]:
+        fail("temporal resume source has no path")
+    return {
+        "source_kind": "temporal_contingency",
+        "sampler_mode": mode,
+        "legacy_inferred": False,
+    }
+
+
+def _strict_e1_selection(
+        report: dict, report_path: Path, checkpoint: Path, digest: str,
+) -> list[str]:
+    """Require one common all-six screen and confirmation of its winner only."""
+
+    protocol = report.get("protocol", {})
+    for key, expected in {
+        "screen_episodes": 20,
+        "confirmation_episodes": 100,
+        "outer_transitions": 205,
+    }.items():
+        expect_equal(protocol.get(key), expected, label=f"E1 protocol {key}")
+    if protocol.get("confirmation_policy") is not None:
+        expect_equal(
+            protocol.get("confirmation_policy"),
+            "screen_winner_only_no_fallback",
+            label="E1 confirmation policy",
+        )
+    environment = report.get("environment", {})
+    for key, expected in {
+        "gameplay_horizon": 200,
+        "event_tail_steps": 0,
+        "rom_sha256": CANONICAL_ROM_SHA256,
+    }.items():
+        expect_equal(environment.get(key), expected, label=f"E1 environment {key}")
+
+    screen = report.get("screen", {})
+    common = screen.get("common_pairing", {})
+    if common.get("passed") is not True:
+        fail("E1 final gate has no valid common screen")
+    expect_equal(common.get("candidates_checked"), 6, label="E1 screen candidates")
+    pairs = common.get("seed_context_pairs")
+    if not isinstance(pairs, list) or len(pairs) != 20:
+        fail("E1 common screen must use exactly 20 paired episodes")
+    results = screen.get("results")
+    ranking = report.get("ranking")
+    if not isinstance(results, list) or len(results) != 6:
+        fail("E1 final gate must screen exactly six candidates")
+    if not isinstance(ranking, list) or len(ranking) != 6:
+        fail("E1 final gate must rank exactly six candidates")
+    screen_hashes = []
+    for result in results:
+        metadata = result.get("metadata", {})
+        path = Path(metadata.get("path", "")).expanduser().resolve()
+        candidate_digest = metadata.get("sha256")
+        expect_equal(
+            validate_zip(path), candidate_digest, label="E1 screen candidate SHA-256"
+        )
+        if result.get("protocol", {}).get("passed") is not True:
+            fail("E1 screen candidate failed mechanics")
+        rows = result.get("episode_rows")
+        if not isinstance(rows, list) or len(rows) != 20:
+            fail("E1 screen candidate does not contain 20 episodes")
+        screen_hashes.append(candidate_digest)
+    if len(set(screen_hashes)) != 6:
+        fail("E1 final family is not byte-distinct")
+    expect_equal(
+        report.get("immutable_evaluation", {}).get("candidate_sha256"),
+        screen_hashes,
+        label="E1 immutable candidate order",
+    )
+    ranked_hashes = [row.get("checkpoint_sha256") for row in ranking]
+    if set(ranked_hashes) != set(screen_hashes):
+        fail("E1 ranking does not cover the common screen")
+    expect_equal(
+        [row.get("rank") for row in ranking], list(range(1, 7)),
+        label="E1 ranking order",
+    )
+    winner = ranking[0].get("checkpoint_sha256")
+    if ranking[0].get("mechanically_valid") is not True:
+        fail("E1 screen winner is mechanically invalid")
+    expect_equal(winner, digest, label="E1 selected screen winner")
+
+    attempts = report.get("confirmation_attempts")
+    if not isinstance(attempts, list) or len(attempts) != 1:
+        fail("E1 gate must confirm only the screen winner; fallback is forbidden")
+    attempt = attempts[0]
+    expect_equal(
+        attempt.get("metadata", {}).get("sha256"), winner,
+        label="E1 confirmed screen winner",
+    )
+    if attempt.get("behavioral_gate", {}).get("passed") is not True:
+        fail("E1 screen winner did not pass fresh confirmation")
+    random_rows = attempt.get("random", {}).get("episode_rows")
+    if not isinstance(random_rows, list) or len(random_rows) != 100:
+        fail("E1 confirmation must contain exactly 100 fresh episodes")
+
+    selection = report.get("selection")
+    if selection is not None:
+        if not isinstance(selection, dict):
+            fail("E1 selection record is malformed")
+        expect_equal(selection.get("fallback_allowed"), False, label="E1 fallback flag")
+        expect_equal(
+            selection.get("screen_selected_checkpoint_sha256"), winner,
+            label="E1 screen-selected hash",
+        )
+        expect_equal(
+            selection.get("selected_checkpoint_sha256"), winner,
+            label="E1 selected hash",
+        )
+    same_path(
+        report.get("artifacts", {}).get("json"), report_path,
+        label="E1 report self-artifact",
+    )
+    return screen_hashes
+
+
+def _validate_temporal_gate_support(
+        report_path: Path, checkpoint: Path, digest: str, report: dict,
+        candidate_hashes: list[str],
+) -> dict:
+    """Recheck the temporal gate sidecar, activation, and exact family bytes."""
+
+    gate_path = report_path.with_name(f"{report_path.stem}.gate.json")
+    gate = load_json(gate_path)
+    expect_equal(gate.get("schema_version"), 1, label="temporal gate schema")
+    expect_equal(gate.get("kind"), E1_TEMPORAL_GATE_KIND, label="temporal gate kind")
+    if gate.get("passed") is not True:
+        fail("temporal E1 support gate did not pass")
+    expect_equal(gate.get("role"), "buyer", label="temporal gate role")
+    expect_equal(gate.get("actor_loss_mode"), "balanced", label="temporal gate mode")
+    gate_report = gate.get("report", {})
+    same_path(gate_report.get("path"), report_path, label="temporal gate report")
+    expect_equal(gate_report.get("sha256"), sha256_file(report_path), label="temporal report SHA-256")
+    selected = gate.get("selected_checkpoint", {})
+    same_path(selected.get("path"), checkpoint, label="temporal selected checkpoint")
+    expect_equal(selected.get("sha256"), digest, label="temporal selected SHA-256")
+
+    family_record = gate.get("training_family", {})
+    family_path = Path(family_record.get("path", "")).expanduser().resolve()
+    expect_equal(
+        family_record.get("sha256"), sha256_file(family_path),
+        label="temporal family SHA-256",
+    )
+    family = load_json(family_path)
+    expect_equal(family.get("schema_version"), 1, label="temporal family schema")
+    expect_equal(family.get("kind"), E1_TEMPORAL_FAMILY_KIND, label="temporal family kind")
+    if family.get("passed") is not True:
+        fail("temporal training family did not pass integrity validation")
+    expect_equal(family.get("candidate_sha256"), candidate_hashes, label="temporal family candidates")
+    expect_equal(
+        family_record.get("candidate_sha256"), candidate_hashes,
+        label="temporal gate candidate hashes",
+    )
+    metadata = family.get("candidate_metadata")
+    if not isinstance(metadata, list) or len(metadata) != 6:
+        fail("temporal family must contain six candidate metadata records")
+    current = report["training_family"]["common_sampler_provenance"]
+    history = report["training_family"]["common_sampler_history"]
+    for expected_digest, item in zip(candidate_hashes, metadata):
+        expect_equal(item.get("sha256"), expected_digest, label="temporal candidate hash")
+        expect_equal(
+            validate_zip(Path(item.get("path", ""))), expected_digest,
+            label="temporal candidate bytes",
+        )
+        expect_equal(
+            item.get("atari_e1_sampler_provenance"), current,
+            label="temporal candidate sampler",
+        )
+        expect_equal(
+            item.get("atari_e1_sampler_history"), history,
+            label="temporal candidate sampler history",
+        )
+
+    activation_record = gate.get("activation", {})
+    activation_path = Path(activation_record.get("path", "")).expanduser().resolve()
+    expect_equal(
+        activation_record.get("sha256"), sha256_file(activation_path),
+        label="temporal activation SHA-256",
+    )
+    activation = load_json(activation_path)
+    expect_equal(activation.get("schema_version"), 1, label="temporal activation schema")
+    expect_equal(
+        activation.get("kind"), E1_TEMPORAL_ACTIVATION_KIND,
+        label="temporal activation kind",
+    )
+    expect_equal(
+        activation.get("activation_condition"),
+        {
+            "standard_uniform_all_six_failed": True,
+            "balanced_uniform_all_six_failed": True,
+        },
+        label="temporal activation condition",
+    )
+    revision = activation.get("code_revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        fail("temporal activation has no full code revision")
+    expect_equal(
+        activation_record.get("code_revision"), revision,
+        label="temporal gate code revision",
+    )
+    expect_equal(
+        family.get("activation", {}).get("sha256"), sha256_file(activation_path),
+        label="temporal family activation hash",
+    )
+    same_path(
+        family.get("activation", {}).get("path"), activation_path,
+        label="temporal family activation path",
+    )
+    activation_protocol = activation.get("protocol", {})
+    expect_equal(
+        activation_protocol.get("training_sampler"), current,
+        label="temporal activation training sampler",
+    )
+    expect_equal(
+        activation_protocol.get("evaluation_sampler"), _canonical_uniform_sampler(),
+        label="temporal activation evaluation sampler",
+    )
+    expect_equal(activation_protocol.get("candidate_count"), 6, label="temporal candidate count")
+    expect_equal(
+        activation_protocol.get("additional_timesteps"), 2_000_800,
+        label="temporal additional training budget",
+    )
+    expect_equal(
+        activation_protocol.get("checkpoint_interval"), 400_160,
+        label="temporal checkpoint interval",
+    )
+    expect_equal(
+        [str(Path(path).expanduser().resolve()) for path in activation_protocol.get("candidate_paths", [])],
+        [str(Path(item["path"]).expanduser().resolve()) for item in metadata],
+        label="temporal preregistered candidate paths",
+    )
+    expect_equal(
+        activation_protocol.get("confirmation", {}).get("fallback_allowed"),
+        False,
+        label="temporal activation fallback flag",
+    )
+    expect_equal(
+        activation_protocol.get("screen"),
+        {"episodes": 20, "seed_start": 6_000_001},
+        label="temporal activation screen",
+    )
+    expect_equal(
+        activation_protocol.get("confirmation"),
+        {
+            "episodes": 100,
+            "seed_start": 6_100_001,
+            "fallback_allowed": False,
+        },
+        label="temporal activation confirmation",
+    )
+    expect_equal(
+        activation_protocol.get("fixed_seed_start"), 6_200_001,
+        label="temporal fixed-grid seed",
+    )
+    expect_equal(
+        activation_protocol.get("timing_seed_start"), 6_300_001,
+        label="temporal paired-timing seed",
+    )
+    failure_reports = activation.get("uniform_failure_reports", {})
+    if not isinstance(failure_reports, dict) or set(failure_reports) != {
+        "standard", "balanced"
+    }:
+        fail("temporal activation must bind standard and balanced failures")
+    for label, item in failure_reports.items():
+        path = Path(item.get("path", "")).expanduser().resolve()
+        expect_equal(sha256_file(path), item.get("sha256"), label=f"{label} failure-report SHA-256")
+        expect_equal(item.get("candidate_count"), 6, label=f"{label} failed family size")
+        expect_equal(item.get("sampler", {}).get("mode"), E1_UNIFORM_SAMPLER, label=f"{label} failed sampler")
+        expect_equal(
+            item.get("actor_loss_mode"), label,
+            label=f"{label} failed actor-loss mode",
+        )
+    resume = activation.get("resume_source", {})
+    temporal_source = history[1]["resume_sources"][0]
+    for key in ("path", "sha256", "training_total_timesteps"):
+        expect_equal(
+            resume.get(key), temporal_source.get(key),
+            label=f"temporal activation resume {key}",
+        )
+    resume_path = Path(resume.get("path", "")).expanduser().resolve()
+    expect_equal(
+        validate_zip(resume_path), resume.get("sha256"),
+        label="temporal activation resume bytes",
+    )
+    expect_equal(
+        activation_protocol.get("expected_total_timesteps"),
+        resume.get("training_total_timesteps") + 2_000_800,
+        label="temporal expected final timestep",
+    )
+    e0b = activation.get("e0b_source", {})
+    e0b_path = Path(e0b.get("path", "")).expanduser().resolve()
+    expect_equal(
+        validate_zip(e0b_path), e0b.get("sha256"),
+        label="temporal activation E0b bytes",
+    )
+    rom = activation.get("rom", {})
+    rom_path = Path(rom.get("path", "")).expanduser().resolve()
+    expect_equal(
+        sha256_file(rom_path), CANONICAL_ROM_SHA256,
+        label="temporal activation ROM bytes",
+    )
+    expect_equal(
+        rom.get("sha256"), CANONICAL_ROM_SHA256,
+        label="temporal activation ROM record",
+    )
+    preflight_record = family.get("preflight", {})
+    preflight_path = Path(preflight_record.get("path", "")).expanduser().resolve()
+    expect_equal(
+        sha256_file(preflight_path), preflight_record.get("sha256"),
+        label="temporal preflight SHA-256",
+    )
+    preflight = load_json(preflight_path)
+    if preflight.get("passed") is not True:
+        fail("temporal preflight did not pass")
+    expect_equal(
+        preflight.get("activation_sha256"), sha256_file(activation_path),
+        label="temporal preflight activation",
+    )
+    expect_equal(gate.get("sampler", {}).get("current"), current, label="temporal gate sampler")
+    expect_equal(gate.get("sampler", {}).get("history"), history, label="temporal gate history")
+    gate_selection = gate.get("selection", {})
+    for key in (
+        "screen_selected_checkpoint_sha256",
+        "confirmed_checkpoint_sha256",
+        "selected_checkpoint_sha256",
+    ):
+        expect_equal(gate_selection.get(key), digest, label=f"temporal gate {key}")
+    expect_equal(gate_selection.get("confirmation_attempts"), 1, label="temporal confirmations")
+    expect_equal(
+        gate_selection.get("confirmation_policy"),
+        "screen_winner_only_no_fallback",
+        label="temporal confirmation policy",
+    )
+    expect_equal(gate_selection.get("fallback_allowed"), False, label="temporal fallback flag")
+    return {
+        "temporal_gate": {
+            "path": str(gate_path), "sha256": sha256_file(gate_path),
+        },
+        "training_family": {
+            "path": str(family_path), "sha256": sha256_file(family_path),
+        },
+        "activation": {
+            "path": str(activation_path), "sha256": sha256_file(activation_path),
+            "code_revision": revision,
+        },
+        "preflight": {
+            "path": str(preflight_path), "sha256": sha256_file(preflight_path),
+        },
+    }
+
+
 def validate_e1_gate(args: argparse.Namespace) -> dict:
     report_path = Path(args.report).expanduser().resolve()
     checkpoint = Path(args.checkpoint).expanduser().resolve()
@@ -114,6 +580,18 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     same_path(alias.get("path"), checkpoint, label="E1 selected alias")
     digest = validate_zip(checkpoint)
     expect_equal(alias.get("sha256"), digest, label="E1 alias SHA-256")
+    candidate_hashes = _strict_e1_selection(
+        report, report_path, checkpoint, digest
+    )
+    sampler = _e1_sampler_contract(report)
+    if sampler["source_kind"] == "temporal_contingency":
+        if args.role != "buyer" or args.actor_loss_mode != "balanced":
+            fail("temporal E1 contingency is valid only for the balanced buyer")
+        support_artifacts = _validate_temporal_gate_support(
+            report_path, checkpoint, digest, report, candidate_hashes
+        )
+    else:
+        support_artifacts = {}
 
     config = report.get("training_family", {}).get(
         "common_training_config"
@@ -176,6 +654,9 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
         "checkpoint": str(checkpoint),
         "sha256": digest,
         "actor_loss_mode": args.actor_loss_mode,
+        "source_kind": sampler["source_kind"],
+        "sampler_mode": sampler["sampler_mode"],
+        "support_artifacts": support_artifacts,
         "passed": True,
     }
 
@@ -203,6 +684,16 @@ def discover_e1_gate(args: argparse.Namespace) -> dict:
             continue
         if report.get("role") != args.role:
             fail(f"E1 gate report has the wrong role: {report_path}")
+        sampler_mode = report.get("training_family", {}).get(
+            "common_sampler_provenance", {}
+        ).get("mode")
+        if sampler_mode == E1_TEMPORAL_SAMPLER:
+            gate_path = report_path.with_name(f"{report_path.stem}.gate.json")
+            if not gate_path.is_file():
+                # The selector publishes its immutable JSON before the
+                # contingency validator can publish the gate sidecar.  Treat
+                # this narrow interval as not ready, never as an eligible gate.
+                continue
         config = report.get("training_family", {}).get(
             "common_training_config", {}
         )
@@ -252,14 +743,45 @@ def discover_e1_gate(args: argparse.Namespace) -> dict:
         "checkpoint": chosen["checkpoint"],
         "checkpoint_sha256": chosen["sha256"],
         "actor_loss_mode": chosen["actor_loss_mode"],
+        "source_kind": chosen["source_kind"],
+        "sampler_mode": chosen["sampler_mode"],
+        "support_artifacts": chosen["support_artifacts"],
     }
+
+
+def validate_e1_gate_record(gate: object, *, role: str) -> dict:
+    """Revalidate one immutable cohort record, including temporal support."""
+
+    if not isinstance(gate, dict):
+        fail(f"E1 gate cohort has no {role} record")
+    report = Path(gate.get("report", "")).expanduser().resolve()
+    checkpoint = Path(gate.get("checkpoint", "")).expanduser().resolve()
+    expect_equal(
+        sha256_file(report), gate.get("report_sha256"),
+        label=f"{role} gate-report SHA-256",
+    )
+    expect_equal(
+        validate_zip(checkpoint), gate.get("checkpoint_sha256"),
+        label=f"{role} checkpoint SHA-256",
+    )
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report),
+        checkpoint=str(checkpoint),
+        role=role,
+        actor_loss_mode=gate.get("actor_loss_mode"),
+    ))
+    for key in ("source_kind", "sampler_mode", "support_artifacts"):
+        expect_equal(
+            gate.get(key), validated[key], label=f"{role} gate {key}"
+        )
+    return validated
 
 
 def validated_pipeline_inputs(path: Path, *, role: str) -> dict:
     value = load_json(path)
     expect_equal(
         value.get("schema"),
-        "stackpomdp.atari.e2_pipeline_inputs.v1",
+        "stackpomdp.atari.e2_pipeline_inputs.v2",
         label="E2 pipeline-input schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
@@ -274,24 +796,7 @@ def validated_pipeline_inputs(path: Path, *, role: str) -> dict:
         fail("E2 pipeline-input manifest has no E1 gates")
     for gate_role in ("buyer", "seller"):
         gate = gates.get(gate_role)
-        if not isinstance(gate, dict):
-            fail(f"E2 input manifest has no {gate_role} gate")
-        report = Path(gate.get("report", "")).expanduser().resolve()
-        checkpoint = Path(gate.get("checkpoint", "")).expanduser().resolve()
-        expect_equal(
-            sha256_file(report), gate.get("report_sha256"),
-            label=f"{gate_role} gate-report SHA-256",
-        )
-        expect_equal(
-            validate_zip(checkpoint), gate.get("checkpoint_sha256"),
-            label=f"{gate_role} checkpoint SHA-256",
-        )
-        validate_e1_gate(argparse.Namespace(
-            report=str(report),
-            checkpoint=str(checkpoint),
-            role=gate_role,
-            actor_loss_mode=gate.get("actor_loss_mode"),
-        ))
+        validate_e1_gate_record(gate, role=gate_role)
     cohort_path = Path(value.get("e1_gate_cohort", "")).expanduser().resolve()
     expect_equal(
         sha256_file(cohort_path),
@@ -309,7 +814,7 @@ def validated_e1_gate_cohort(path: Path) -> dict:
     value = load_json(path)
     expect_equal(
         value.get("schema"),
-        "stackpomdp.atari.e2_e1_gate_cohort.v1",
+        "stackpomdp.atari.e2_e1_gate_cohort.v2",
         label="E1 gate-cohort schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
@@ -317,22 +822,7 @@ def validated_e1_gate_cohort(path: Path) -> dict:
     if not isinstance(gates, dict) or set(gates) != {"buyer", "seller"}:
         fail("E1 gate cohort must contain exactly buyer and seller records")
     for role, gate in gates.items():
-        if not isinstance(gate, dict):
-            fail(f"E1 gate cohort has no {role} record")
-        report = Path(gate.get("report", "")).expanduser().resolve()
-        checkpoint = Path(gate.get("checkpoint", "")).expanduser().resolve()
-        expect_equal(
-            sha256_file(report), gate.get("report_sha256"),
-            label=f"cohort {role} report SHA-256",
-        )
-        expect_equal(
-            validate_zip(checkpoint), gate.get("checkpoint_sha256"),
-            label=f"cohort {role} checkpoint SHA-256",
-        )
-        validate_e1_gate(argparse.Namespace(
-            report=str(report), checkpoint=str(checkpoint), role=role,
-            actor_loss_mode=gate.get("actor_loss_mode"),
-        ))
+        validate_e1_gate_record(gate, role=role)
     if gates["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
     return value
@@ -359,14 +849,17 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
             "checkpoint": str(checkpoint),
             "checkpoint_sha256": validated["sha256"],
             "actor_loss_mode": mode,
+            "source_kind": validated["source_kind"],
+            "sampler_mode": validated["sampler_mode"],
+            "support_artifacts": validated["support_artifacts"],
         }
     if entries["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
     result = {
-        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v1",
+        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v2",
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
-        "buyer_preference": "balanced_then_standard",
+        "buyer_preference": "balanced_then_standard_strict_no_fallback",
         "e1_gates": entries,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -382,6 +875,68 @@ def read_e1_gate_cohort(args: argparse.Namespace) -> dict:
         "kind": "e1_gate_cohort",
         "path": str(path),
         **validated_e1_gate_cohort(path),
+    }
+
+
+def write_e1_seller_release(args: argparse.Namespace) -> dict:
+    """Pin the exact strict buyer gate that authorizes E1 seller training."""
+
+    output = Path(args.output).expanduser().resolve()
+    if os.path.lexists(output):
+        fail(f"refusing to overwrite E1 seller-release manifest: {output}")
+    report = Path(args.buyer_report).expanduser().resolve()
+    checkpoint = Path(args.buyer_checkpoint).expanduser().resolve()
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report),
+        checkpoint=str(checkpoint),
+        role="buyer",
+        actor_loss_mode=args.buyer_actor_loss_mode,
+    ))
+    gate = {
+        "report": str(report),
+        "report_sha256": sha256_file(report),
+        "checkpoint": str(checkpoint),
+        "checkpoint_sha256": validated["sha256"],
+        "actor_loss_mode": args.buyer_actor_loss_mode,
+        "source_kind": validated["source_kind"],
+        "sampler_mode": validated["sampler_mode"],
+        "support_artifacts": validated["support_artifacts"],
+    }
+    result = {
+        "schema": "stackpomdp.atari.e1_seller_release.v1",
+        "code_root": str(REPOSITORY_ROOT),
+        "code_head": validate_code_root(),
+        "seller_training_actor_loss_mode": "balanced",
+        "buyer_gate": gate,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    return {"kind": "e1_seller_release", "path": str(output), **result}
+
+
+def validated_e1_seller_release(path: Path) -> dict:
+    value = load_json(path)
+    expect_equal(
+        value.get("schema"), "stackpomdp.atari.e1_seller_release.v1",
+        label="E1 seller-release schema",
+    )
+    expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
+    expect_equal(
+        value.get("seller_training_actor_loss_mode"), "balanced",
+        label="E1 seller training actor-loss mode",
+    )
+    validate_e1_gate_record(value.get("buyer_gate"), role="buyer")
+    return value
+
+
+def read_e1_seller_release(args: argparse.Namespace) -> dict:
+    path = Path(args.release_manifest).expanduser().resolve()
+    return {
+        "kind": "e1_seller_release",
+        "path": str(path),
+        **validated_e1_seller_release(path),
     }
 
 
@@ -406,7 +961,7 @@ def write_e2_input_manifest(args: argparse.Namespace) -> dict:
     entries = cohort["e1_gates"]
     response_role = "seller" if args.role == "buyer" else "buyer"
     result = {
-        "schema": "stackpomdp.atari.e2_pipeline_inputs.v1",
+        "schema": "stackpomdp.atari.e2_pipeline_inputs.v2",
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
         "leader_role": args.role,
@@ -977,6 +1532,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     read_cohort = subparsers.add_parser("read-e1-gate-cohort")
     read_cohort.add_argument("--cohort-manifest", required=True)
     read_cohort.set_defaults(handler=read_e1_gate_cohort)
+
+    release = subparsers.add_parser("write-e1-seller-release")
+    release.add_argument("--output", required=True)
+    release.add_argument("--buyer-report", required=True)
+    release.add_argument("--buyer-checkpoint", required=True)
+    release.add_argument(
+        "--buyer-actor-loss-mode",
+        choices=("balanced", "standard"),
+        required=True,
+    )
+    release.set_defaults(handler=write_e1_seller_release)
+
+    read_release = subparsers.add_parser("read-e1-seller-release")
+    read_release.add_argument("--release-manifest", required=True)
+    read_release.set_defaults(handler=read_e1_seller_release)
 
     rom = subparsers.add_parser("validate-rom")
     rom.add_argument("--rom", required=True)
