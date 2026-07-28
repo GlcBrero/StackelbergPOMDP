@@ -19,10 +19,13 @@ os.environ.setdefault("WANDB_START_METHOD", "thread")
 from stable_baselines3.common.callbacks import CallbackList
 
 from replication.atari.sb3_common import (
+    ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
-    ScaledLearningRatePPO,
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
+    STANDARD_ACTOR_LOSS_MODE,
     WANDB_GROUP,
     WANDB_PROJECT,
+    attach_atari_training_contract,
     checkpoint_path,
     e1_episode_transitions,
     evaluate_model,
@@ -30,6 +33,9 @@ from replication.atari.sb3_common import (
     finish_run,
     init_wandb,
     make_vec_env,
+    model_actor_loss_mode,
+    model_economic_initialization,
+    ppo_class_for_actor_loss_mode,
     write_csv,
 )
 from stackelberg_pomdp.atari.stackpomdp_env import (
@@ -46,6 +52,51 @@ from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+BUYER_INIT_MEAN = 0.95
+BUYER_INIT_CONCENTRATION = 10.0
+SELLER_INIT_MEAN = 0.5
+SELLER_INIT_CONCENTRATION = 2.0
+
+
+def _actor_loss_mode(args):
+    return str(getattr(args, "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE))
+
+
+def _economic_initialization(args):
+    if args.role == BUYER:
+        return {
+            "mean": float(getattr(args, "buyer_init_mean", BUYER_INIT_MEAN)),
+            "concentration": float(getattr(
+                args, "buyer_init_concentration", BUYER_INIT_CONCENTRATION
+            )),
+        }
+    return {
+        "mean": SELLER_INIT_MEAN,
+        "concentration": SELLER_INIT_CONCENTRATION,
+    }
+
+
+def _value_slug(value):
+    return format(float(value), ".6g").replace("-", "m").replace(".", "p")
+
+
+def _run_variant_suffix(args):
+    parts = []
+    if _actor_loss_mode(args) != STANDARD_ACTOR_LOSS_MODE:
+        parts.append(_actor_loss_mode(args))
+    if args.role == BUYER and (
+            not math.isclose(args.buyer_init_mean, BUYER_INIT_MEAN)
+            or not math.isclose(
+                args.buyer_init_concentration, BUYER_INIT_CONCENTRATION
+            )
+    ):
+        parts.append(
+            f"initm{_value_slug(args.buyer_init_mean)}"
+            f"c{_value_slug(args.buyer_init_concentration)}"
+        )
+    if args.target_kl is not None:
+        parts.append(f"kl{_value_slug(args.target_kl)}")
+    return "" if not parts else "_" + "_".join(parts)
 
 
 def _validate_e0b_source(provenance):
@@ -110,7 +161,9 @@ def make_env(args, *, seed, context_sampler=None):
 
 
 def _new_model(args, vec_env):
-    model = ScaledLearningRatePPO(
+    actor_loss_mode = _actor_loss_mode(args)
+    algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    model = algorithm_class(
         StackPOMDPAtariPolicy,
         vec_env,
         policy_kwargs={
@@ -132,6 +185,7 @@ def _new_model(args, vec_env):
         ent_coef=args.entropy_coeff,
         vf_coef=args.value_coefficient,
         max_grad_norm=args.max_grad_norm,
+        target_kl=getattr(args, "target_kl", None),
         seed=args.seed,
         device=args.device,
         verbose=1,
@@ -160,16 +214,22 @@ def _new_model(args, vec_env):
         )),
     }
     model.atari_e1_source_provenance = dict(provenance)
-    if args.role == BUYER:
-        model.policy.reset_economic_head(mean=0.95, concentration=10.0)
-    else:
-        model.policy.reset_economic_head(mean=0.5, concentration=2.0)
+    initialization = _economic_initialization(args)
+    model.policy.reset_economic_head(**initialization)
+    attach_atari_training_contract(
+        model,
+        actor_loss_mode=actor_loss_mode,
+        economic_init_mean=initialization["mean"],
+        economic_init_concentration=initialization["concentration"],
+    )
     print({"actor_transfer": provenance}, flush=True)
     return model
 
 
 def _resumed_model(args, vec_env):
-    model = ScaledLearningRatePPO.load(
+    actor_loss_mode = _actor_loss_mode(args)
+    algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    model = algorithm_class.load(
         args.resume,
         env=vec_env,
         device=args.device,
@@ -191,6 +251,52 @@ def _resumed_model(args, vec_env):
         raise ValueError("--resume role does not match --role")
     if policy.economic_input_mode != "full":
         raise ValueError("--resume is not a full-state E1 response")
+    expected_target_kl = getattr(args, "target_kl", None)
+    saved_target_kl = getattr(model, "target_kl", None)
+    if (
+            (saved_target_kl is None) != (expected_target_kl is None)
+            or (
+                saved_target_kl is not None
+                and not math.isclose(
+                    float(saved_target_kl),
+                    float(expected_target_kl),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+            )
+    ):
+        raise ValueError(
+            "--target-kl must match the saved E1 checkpoint "
+            f"({saved_target_kl})"
+        )
+    saved_actor_loss_mode = model_actor_loss_mode(model)
+    if saved_actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError(
+            "--resume contains an unknown Atari actor loss mode: "
+            f"{saved_actor_loss_mode!r}"
+        )
+    if saved_actor_loss_mode != actor_loss_mode:
+        raise ValueError(
+            "--actor-loss-mode must match the saved E1 checkpoint "
+            f"({saved_actor_loss_mode})"
+        )
+    expected_initialization = _economic_initialization(args)
+    saved_initialization = model_economic_initialization(
+        model,
+        default_mean=(
+            BUYER_INIT_MEAN if args.role == BUYER else SELLER_INIT_MEAN
+        ),
+        default_concentration=(
+            BUYER_INIT_CONCENTRATION
+            if args.role == BUYER
+            else SELLER_INIT_CONCENTRATION
+        ),
+    )
+    if saved_initialization != expected_initialization:
+        raise ValueError(
+            "economic-head initialization arguments must match the saved E1 "
+            f"checkpoint ({saved_initialization})"
+        )
     if not math.isclose(
             policy.pretrained_lr_scale,
             args.pretrained_lr_scale,
@@ -211,6 +317,12 @@ def _resumed_model(args, vec_env):
             "--e0b-checkpoint differs from the source bound into this E1 "
             f"run ({current_sha256} != {provenance['sha256']})"
         )
+    attach_atari_training_contract(
+        model,
+        actor_loss_mode=actor_loss_mode,
+        economic_init_mean=expected_initialization["mean"],
+        economic_init_concentration=expected_initialization["concentration"],
+    )
     return model
 
 
@@ -347,10 +459,22 @@ def parse_args(argv=None):
     parser.add_argument("--n-epochs", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
+    parser.add_argument(
+        "--actor-loss-mode",
+        choices=ACTOR_LOSS_MODES,
+        default=STANDARD_ACTOR_LOSS_MODE,
+    )
+    parser.add_argument("--buyer-init-mean", type=float, default=BUYER_INIT_MEAN)
+    parser.add_argument(
+        "--buyer-init-concentration",
+        type=float,
+        default=BUYER_INIT_CONCENTRATION,
+    )
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument("--clip-range", type=float, default=0.1)
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
+    parser.add_argument("--target-kl", type=float)
     parser.add_argument("--noop-max", type=int, default=30)
     parser.add_argument("--max-frames", type=int, default=100_000)
     parser.add_argument("--rom-path")
@@ -399,6 +523,28 @@ def parse_args(argv=None):
         parser.error("--batch-size must lie in [1, n_steps * num_envs]")
     if buffer_size % args.batch_size:
         parser.error("--batch-size must divide n_steps * num_envs exactly")
+    if (
+            args.actor_loss_mode == PHASE_BALANCED_ACTOR_LOSS_MODE
+            and args.batch_size != buffer_size
+    ):
+        parser.error(
+            "phase-balanced Atari PPO requires one full-rollout minibatch "
+            "(batch-size = n-steps * num-envs)"
+        )
+    if (
+            not math.isfinite(args.buyer_init_mean)
+            or not 0.0 < args.buyer_init_mean < 1.0
+    ):
+        parser.error("--buyer-init-mean must lie in (0, 1)")
+    if (
+            not math.isfinite(args.buyer_init_concentration)
+            or args.buyer_init_concentration <= 0.0
+    ):
+        parser.error("--buyer-init-concentration must be positive")
+    if args.target_kl is not None and (
+            not math.isfinite(args.target_kl) or args.target_kl <= 0.0
+    ):
+        parser.error("--target-kl must be positive")
     if args.timesteps <= 0 and not args.eval_only:
         parser.error("--timesteps must be positive during training")
     if args.eval_episodes <= 0:
@@ -410,7 +556,10 @@ def parse_args(argv=None):
     default = (
         REPOSITORY_ROOT
         / "replication/atari/checkpoints/clean"
-        / f"meta_{args.role}_e1_ppo_seed{args.seed}.zip"
+        / (
+            f"meta_{args.role}_e1_ppo{_run_variant_suffix(args)}"
+            f"_seed{args.seed}.zip"
+        )
     )
     args.checkpoint = str(checkpoint_path(args.checkpoint or default))
     return args
@@ -449,6 +598,19 @@ def main(argv=None):
         evaluation = evaluate_response(model, args)
         evaluation["provenance"] = {
             "e0b_source": source_provenance,
+            "actor_loss_mode": model_actor_loss_mode(model),
+            "target_kl": getattr(model, "target_kl", None),
+            "economic_head_initialization": model_economic_initialization(
+                model,
+                default_mean=(
+                    BUYER_INIT_MEAN if args.role == BUYER else SELLER_INIT_MEAN
+                ),
+                default_concentration=(
+                    BUYER_INIT_CONCENTRATION
+                    if args.role == BUYER
+                    else SELLER_INIT_CONCENTRATION
+                ),
+            ),
         }
         write_csv(
             fixed_context_csv_path(args.checkpoint),

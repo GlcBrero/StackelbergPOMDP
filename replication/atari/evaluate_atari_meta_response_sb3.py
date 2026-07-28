@@ -15,7 +15,10 @@ import numpy as np
 
 from replication.atari import train_atari_meta_response_sb3 as trainer
 from replication.atari.sb3_common import (
+    ACTOR_LOSS_MODES,
     ScaledLearningRatePPO,
+    model_actor_loss_mode,
+    model_economic_initialization,
     write_csv,
     write_json,
 )
@@ -175,6 +178,28 @@ def load_candidate(
         raise ValueError("E1 candidate does not use the canonical 205-step return")
     if not np.isclose(model.gae_lambda, 1.0):
         raise ValueError("E1 candidate must have gae_lambda=1")
+    actor_loss_mode = model_actor_loss_mode(model)
+    if actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError(
+            "E1 candidate has an unknown actor-loss mode: "
+            f"{actor_loss_mode!r}"
+        )
+    economic_initialization = model_economic_initialization(
+        model,
+        default_mean=(
+            trainer.BUYER_INIT_MEAN if role == BUYER else trainer.SELLER_INIT_MEAN
+        ),
+        default_concentration=(
+            trainer.BUYER_INIT_CONCENTRATION
+            if role == BUYER
+            else trainer.SELLER_INIT_CONCENTRATION
+        ),
+    )
+    target_kl = getattr(model, "target_kl", None)
+    if target_kl is not None:
+        target_kl = float(target_kl)
+        if not np.isfinite(target_kl) or target_kl <= 0.0:
+            raise ValueError("E1 candidate has an invalid target KL")
     reported_path = (
         Path(display_path).expanduser().resolve()
         if display_path is not None
@@ -197,6 +222,9 @@ def load_candidate(
         "economic_input_mode": policy.economic_input_mode,
         "training_config": {
             "algorithm": "PPO",
+            "actor_loss_mode": actor_loss_mode,
+            "economic_head_initialization": economic_initialization,
+            "target_kl": target_kl,
             "seed": int(model.seed),
             "learning_rate": float(model.learning_rate),
             "n_steps": int(model.n_steps),

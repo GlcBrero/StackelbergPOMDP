@@ -70,6 +70,47 @@ Thus a payment or delayed game reward can credit an earlier economic query
 because `gamma = gae_lambda = 1`, while cached execution is never counted as a
 second policy decision.
 
+### PPO actor-loss modes
+
+E1 and E2 expose two explicit `--actor-loss-mode` choices:
+
+- `standard` is the default, backward-compatible SB3
+  objective. Actor and entropy terms are averaged over rollout transitions, so
+  inactive rows remain in the denominator even though their gated log
+  probability is zero. A legacy checkpoint without stored actor-loss metadata
+  is interpreted as this mode.
+- `balanced` separately averages the PPO surrogate,
+  entropy, clip fraction, and approximate KL over active gameplay rows and
+  active economic rows. The two actor losses and two entropy losses are then
+  summed. Cached reward-trade rows have no actor contribution. The critic still
+  fits returns on every transition, and SB3 advantage normalization remains
+  global over the full rollout. Target-KL early stopping uses the larger of the
+  gameplay-head and economic-head KL values.
+
+Phase-balanced training requires a single full-rollout minibatch:
+`batch_size = n_steps * num_envs`. This guarantees that both sparse economic
+rows and dense gameplay rows are present when their separate active-row means
+are computed. The trainers reject smaller minibatches in this mode.
+Both modes preserve the existing parameter-group learning-rate scaling.
+Phase-balanced runs additionally log separate gameplay/economic policy loss,
+entropy, clip fraction, approximate KL, and active-row counts, plus the number
+of actor-inactive rows. These optimizer rows are written durably to both W&B
+and the local `.training.jsonl`, including the exact optimization timestep.
+Optional `--target-kl K` activates early stopping on the larger of the two
+head-specific approximate KL values. It defaults to `None`; the first balanced
+run should leave it unset so that phase averaging is the only objective change.
+
+New E1/E2 checkpoints store both the actor-loss mode and the economic-head
+initialization contract. Same-stage resume, including `--eval-only`, validates
+these fields rather than silently changing the training objective or initial
+Beta distribution; the E2 provenance evaluator and selector also distinguish
+them. An E1 buyer defaults to Beta mean `0.95` and concentration `10`, exposed
+as `--buyer-init-mean` and `--buyer-init-concentration`. Legacy buyer
+checkpoints without initialization metadata use those historical defaults.
+Default balanced checkpoint and W&B names contain a `balanced` slug; nondefault
+buyer initialization and nondefault target-KL values also enter the default
+checkpoint stem, preventing variants from silently sharing artifacts.
+
 ## Environment protocol
 
 Within one max-and-skip decision, a requested FIRE action is forwarded until
@@ -248,16 +289,23 @@ Buyer response to random seller price sequences:
 ```bash
 python -u -m replication.atari.train_atari_meta_response_sb3 \
   --role buyer \
-  --e0b-checkpoint replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1.zip \
+  --e0b-checkpoint replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip \
+  --actor-loss-mode balanced \
+  --buyer-init-mean 0.95 \
+  --buyer-init-concentration 10 \
   --seed 1 \
-  --timesteps 2000000 \
-  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1.zip \
-  --wandb-name atari_clean_e1_buyer_seed1_2m_local
+  --timesteps 2000800 \
+  --num-envs 4 \
+  --checkpoint-every 400000 \
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain.zip \
+  --wandb-name atari_clean_e1_buyer_balanced_seed1_firefix_retrain_2m_local
 ```
 
 Seller response to random buyer-threshold sequences uses the same command with
-`--role seller`. E1 evaluation runs 100 random commitment sequences plus 20
-episodes at each constant opponent value from 0.0 through 1.0. Every fixed
+`--role seller` and the same phase-balanced actor-loss mode; its economic head
+retains the uniform initialization rather than using the buyer-only
+initialization flags. E1 evaluation runs 100 random commitment sequences plus
+20 episodes at each constant opponent value from 0.0 through 1.0. Every fixed
 value uses the same Atari/no-op and event-schedule seeds, making the grid a
 paired comparison. The JSON keeps random and fixed-context episode-level trade
 records plus acceptance-by-event/time diagnostics; the CSV contains the
@@ -283,14 +331,17 @@ post-update checkpoint):
 python -u -m replication.atari.evaluate_atari_meta_response_sb3 \
   --role buyer \
   --e0b-checkpoint replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip \
-  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_step400160.zip \
-  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_step800320.zip \
-  --selected-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1_firefix_retrain_selected.zip
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_step400160.zip \
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_step800320.zip \
+  --selected-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_selected.zip
 ```
 
 The selector binds every candidate to the exact supplied E0b bytes and rejects
 the wrong policy class, role, input mode, or 205-transition/accounting
-protocol. It evaluates run-private immutable copies of the E0b, ROM, and
+protocol. Its common training configuration explicitly includes the stored
+actor-loss mode, economic-head initialization, and target KL, applying the
+historical role-specific defaults only when legacy checkpoint metadata is
+absent. It evaluates run-private immutable copies of the E0b, ROM, and
 candidate bytes, requires one checkpoint family and PPO seed/configuration,
 and enforces the canonical preprocessing, price grid, and usable event
 schedule. All candidates receive the same 20 random commitments, Atari seeds,
@@ -328,12 +379,13 @@ Seller leader against a frozen E1 meta-buyer:
 ```bash
 python -u -m replication.atari.train_atari_stackpomdp_leader_sb3 \
   --leader-role seller \
-  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1.zip \
-  --leader-e1-checkpoint replication/atari/checkpoints/clean/meta_seller_e1_ppo_seed1.zip \
+  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1.zip \
+  --leader-e1-checkpoint replication/atari/checkpoints/clean/meta_seller_e1_ppo_balanced_seed1.zip \
+  --actor-loss-mode balanced \
   --seed 1 \
   --timesteps 2000000 \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1.zip \
-  --wandb-name atari_clean_e2_seller_seed1_2m_local
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1.zip \
+  --wandb-name atari_clean_e2_seller_balanced_seed1_2m_local
 ```
 
 For a buyer leader, swap the roles of the two E1 checkpoints. E2 rollouts are
@@ -351,10 +403,10 @@ step checkpoints only with the deterministic selector:
 ```bash
 python -u -m replication.atari.evaluate_atari_stackpomdp_leader_sb3 \
   --leader-role seller \
-  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_seed1.zip \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_step400000.zip \
-  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_step800000.zip \
-  --selected-checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_seed1_selected.zip
+  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_selected.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_step400000.zip \
+  --checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_step800000.zip \
+  --selected-checkpoint replication/atari/checkpoints/clean/leader_seller_e2_ppo_balanced_seed1_selected.zip
 ```
 
 All candidates must share one provenance fingerprint and are screened on the
@@ -383,7 +435,7 @@ their normal arguments.
 
 Each checkpoint produces:
 
-- `CHECKPOINT.training.jsonl`: completed-episode training metrics;
+- `CHECKPOINT.training.jsonl`: completed-episode and phase-optimizer metrics;
 - `CHECKPOINT.evaluation.json`: deterministic evaluation rows and summaries;
 - E1 only, `CHECKPOINT.fixed_contexts.csv`: paired fixed-context table;
 - step checkpoints at completed outer-episode boundaries.
@@ -393,16 +445,20 @@ run can retain the same W&B URL with `--wandb-id RUN_ID --wandb-resume must`.
 
 W&B logs episode payoff and length, role-correct game reward, shots, ammo,
 reward per bullet, payments, purchases, all five event prices/thresholds/
-acceptance times, true-game-over reset counts/rates, time-limit reset counts,
-whether a true game-over occurred before the fifth event, total timesteps,
-learning rate, seed, algorithm, and checkpoint path. Evaluation JSON rows also
-retain the exact policy-step indices at which each local reset occurred.
+acceptance times, and early/middle/late trade summaries. The timing summaries
+always log each bin's event count and, for nonempty bins, its acceptance rate,
+mean threshold, and mean price. The bins use normalized gameplay time
+`[0,1/3)`, `[1/3,2/3)`, and `[2/3,1]`. W&B also logs true-game-over reset
+counts/rates, time-limit reset counts, whether a true game-over occurred before
+the fifth event, total timesteps, learning rate, seed, algorithm, and
+checkpoint path. Evaluation JSON rows retain the exact policy-step indices at
+which each local reset occurred.
 
 ## Validation
 
 ```bash
 PYTHONNOUSERSITE=1 \
-python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_e1_evaluator.py", "tests/test_atari_clean_leader_trainer.py", "tests/test_atari_clean_e0b_evaluator.py", "tests/test_atari_clean_e2_evaluator.py"]))'
+python -c 'import sys; sys.modules["readline"] = None; import pytest; raise SystemExit(pytest.main(["-q", "tests/test_atari_clean_gameplay_terminal.py", "tests/test_atari_clean_e0_trainer.py", "tests/test_atari_clean_protocol.py", "tests/test_atari_clean_envs.py", "tests/test_atari_phase_balanced_ppo.py", "tests/test_atari_clean_meta_response_trainer.py", "tests/test_atari_clean_e1_evaluator.py", "tests/test_atari_clean_leader_trainer.py", "tests/test_atari_clean_e0b_evaluator.py", "tests/test_atari_clean_e2_evaluator.py"]))'
 ```
 
 The clean suite checks the stable 14D interface, branch-gradient isolation,
@@ -411,6 +467,9 @@ on cached replays, per-vector-row cache reset, at most one registered shot per
 max-and-skip decision, atomic trade accounting, complete E1/E2 horizons, fresh
 critics, independent local true-game-over resets with preserved outer
 accounting, actor transfer, and optimizer checkpoint reloadability.
+It also checks phase-balanced active-row means, cached-row actor isolation,
+credit-gate validation, full-rollout batching, per-head KL diagnostics, and a
+real composite-policy optimization step.
 
 ## Current clean-run status
 

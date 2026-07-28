@@ -6,6 +6,10 @@ import pytest
 
 from replication.atari import evaluate_atari_stackpomdp_leader_sb3 as evaluator
 from replication.atari import train_atari_stackpomdp_leader_sb3 as trainer
+from replication.atari.sb3_common import (
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
+    STANDARD_ACTOR_LOSS_MODE,
+)
 from stackelberg_pomdp.atari.protocol import (
     CACHED_TRADE_REPLAY,
     GAMEPLAY,
@@ -585,6 +589,11 @@ def test_candidate_provenance_requires_exact_response_and_evaluation_config():
         "critic_hidden": 256,
         "pretrained_lr_scale": 0.1,
         "game_action_count": 6,
+        "actor_loss_mode": STANDARD_ACTOR_LOSS_MODE,
+        "economic_head_initialization": {
+            "mean": 0.5,
+            "concentration": 2.0,
+        },
     }
     scientific_config = {
         "leader_role": "seller",
@@ -649,6 +658,37 @@ def test_candidate_provenance_requires_exact_response_and_evaluation_config():
         model, response_hash=response_hash, config=config
     )
     assert validated["fingerprint_sha256"] == manifest["fingerprint_sha256"]
+
+    model.atari_actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
+    with pytest.raises(ValueError, match="actor loss mode"):
+        evaluator.validate_candidate_provenance(
+            model, response_hash=response_hash, config=config
+        )
+    del model.atari_actor_loss_mode
+
+    model.atari_economic_head_initialization = {
+        "mean": 0.75,
+        "concentration": 2.0,
+    }
+    with pytest.raises(ValueError, match="economic initialization"):
+        evaluator.validate_candidate_provenance(
+            model, response_hash=response_hash, config=config
+        )
+    del model.atari_economic_head_initialization
+
+    model.atari_actor_loss_mode = "unknown"
+    with pytest.raises(ValueError, match="unknown actor loss mode"):
+        evaluator.validate_candidate_provenance(
+            model, response_hash=response_hash, config=config
+        )
+    del model.atari_actor_loss_mode
+
+    model.target_kl = 0.01
+    with pytest.raises(ValueError, match="target KL does not match"):
+        evaluator.validate_candidate_provenance(
+            model, response_hash=response_hash, config=config
+        )
+    del model.target_kl
 
     with pytest.raises(ValueError, match="different frozen E1 response"):
         evaluator.validate_candidate_provenance(

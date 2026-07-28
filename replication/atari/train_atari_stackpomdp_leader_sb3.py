@@ -30,16 +30,22 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
 
 from replication.atari.sb3_common import (
+    ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
-    ScaledLearningRatePPO,
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
+    STANDARD_ACTOR_LOSS_MODE,
     WANDB_GROUP,
     WANDB_PROJECT,
+    attach_atari_training_contract,
     checkpoint_path,
     e2_episode_transitions,
     evaluate_model,
     finish_run,
     init_wandb,
     make_vec_env,
+    model_actor_loss_mode,
+    model_economic_initialization,
+    ppo_class_for_actor_loss_mode,
     write_json,
 )
 from stackelberg_pomdp.atari.core import default_rom_path
@@ -87,6 +93,49 @@ E2_PACKAGE_DISTRIBUTIONS = (
     "multi-agent-ale-py",
     "opencv-python",
 )
+
+
+def _actor_loss_mode(args):
+    return str(getattr(args, "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE))
+
+
+def _value_slug(value):
+    return format(float(value), ".6g").replace("-", "m").replace(".", "p")
+
+
+def _run_variant_suffix(args):
+    parts = []
+    if _actor_loss_mode(args) != STANDARD_ACTOR_LOSS_MODE:
+        parts.append(_actor_loss_mode(args))
+    if args.target_kl is not None:
+        parts.append(f"kl{_value_slug(args.target_kl)}")
+    return "" if not parts else "_" + "_".join(parts)
+
+
+def _scientific_config_with_legacy_defaults(config):
+    """Add fields implied by pre-phase-balanced version-1 manifests."""
+
+    result = _canonical_json_copy(config)
+    actor_loss_mode = result.setdefault("optimization", {}).setdefault(
+        "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE
+    )
+    initialization = result.setdefault("initialization", {})
+    economic_init_mean = initialization.setdefault(
+        "economic_head_beta_mean", E2_ECONOMIC_INIT_MEAN
+    )
+    economic_init_concentration = initialization.setdefault(
+        "economic_head_beta_concentration", E2_ECONOMIC_INIT_CONCENTRATION
+    )
+    leader_policy = result.setdefault("leader_policy", {})
+    leader_policy.setdefault("actor_loss_mode", actor_loss_mode)
+    leader_policy.setdefault(
+        "economic_head_initialization",
+        {
+            "mean": economic_init_mean,
+            "concentration": economic_init_concentration,
+        },
+    )
+    return result
 
 
 def follower_role(leader_role):
@@ -172,6 +221,23 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                 f"{label} checkpoint is not a clean StackPOMDPAtariPolicy: "
                 f"{resolved}"
             )
+        actor_loss_mode = model_actor_loss_mode(model)
+        if actor_loss_mode not in ACTOR_LOSS_MODES:
+            raise ValueError(
+                f"{label} checkpoint has an unknown actor-loss mode: "
+                f"{actor_loss_mode!r}"
+            )
+        legacy_buyer = (
+            policy.economic_role == BUYER
+            and policy.economic_input_mode == "full"
+        )
+        economic_initialization = model_economic_initialization(
+            model,
+            default_mean=0.95 if legacy_buyer else E2_ECONOMIC_INIT_MEAN,
+            default_concentration=(
+                10.0 if legacy_buyer else E2_ECONOMIC_INIT_CONCENTRATION
+            ),
+        )
         policy_metadata = {
             "policy_class": (
                 f"{type(policy).__module__}.{type(policy).__qualname__}"
@@ -184,12 +250,16 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             "critic_hidden": int(policy.critic_hidden),
             "pretrained_lr_scale": float(policy.pretrained_lr_scale),
             "game_action_count": int(policy.game_action_count),
+            "actor_loss_mode": actor_loss_mode,
+            "economic_head_initialization": economic_initialization,
         }
         result = {
             "path": str(resolved),
             "sha256": _sha256_file(resolved),
             "economic_role": policy.economic_role,
             "economic_input_mode": policy.economic_input_mode,
+            "actor_loss_mode": actor_loss_mode,
+            "economic_head_initialization": economic_initialization,
             "policy_metadata": policy_metadata,
         }
         manifest = getattr(model, E2_PROVENANCE_ATTRIBUTE, None)
@@ -275,6 +345,7 @@ def e2_scientific_config(args):
         },
         "optimization": {
             "algorithm": "PPO",
+            "actor_loss_mode": _actor_loss_mode(args),
             "seed": int(args.seed),
             "num_envs": int(args.num_envs),
             "start_method": str(args.start_method),
@@ -293,7 +364,9 @@ def e2_scientific_config(args):
             "normalize_advantage": True,
             "use_sde": False,
             "sde_sample_freq": -1,
-            "target_kl": None,
+            "target_kl": (
+                None if args.target_kl is None else float(args.target_kl)
+            ),
             "stats_window_size": 100,
         },
         "leader_policy": {
@@ -309,6 +382,11 @@ def e2_scientific_config(args):
             "critic_hidden": 256,
             "pretrained_lr_scale": float(args.pretrained_lr_scale),
             "game_action_count": 6,
+            "actor_loss_mode": _actor_loss_mode(args),
+            "economic_head_initialization": {
+                "mean": E2_ECONOMIC_INIT_MEAN,
+                "concentration": E2_ECONOMIC_INIT_CONCENTRATION,
+            },
         },
         "initialization": {
             "actor_transfer_modules": list(E2_ACTOR_TRANSFER_MODULES),
@@ -400,8 +478,13 @@ def require_compatible_e2_provenance(
     """Require the current response bytes and scientific setup to match E2."""
 
     manifest = validate_e2_provenance_manifest(manifest)
-    expected_config = e2_scientific_config(args)
-    if manifest.get("scientific_config") != expected_config:
+    expected_config = _scientific_config_with_legacy_defaults(
+        e2_scientific_config(args)
+    )
+    recorded_config = _scientific_config_with_legacy_defaults(
+        manifest.get("scientific_config", {})
+    )
+    if recorded_config != expected_config:
         raise ValueError(
             "E2 resume/evaluation scientific config does not match the "
             "checkpoint provenance"
@@ -568,7 +651,9 @@ def make_env(args, *, seed):
 
 
 def _new_model(args, vec_env, *, provenance_manifest):
-    model = ScaledLearningRatePPO(
+    actor_loss_mode = _actor_loss_mode(args)
+    algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    model = algorithm_class(
         StackPOMDPAtariPolicy,
         vec_env,
         policy_kwargs={
@@ -593,7 +678,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
         normalize_advantage=True,
         use_sde=False,
         sde_sample_freq=-1,
-        target_kl=None,
+        target_kl=args.target_kl,
         stats_window_size=100,
         seed=args.seed,
         device=args.device,
@@ -630,6 +715,12 @@ def _new_model(args, vec_env, *, provenance_manifest):
         mean=E2_ECONOMIC_INIT_MEAN,
         concentration=E2_ECONOMIC_INIT_CONCENTRATION,
     )
+    attach_atari_training_contract(
+        model,
+        actor_loss_mode=actor_loss_mode,
+        economic_init_mean=E2_ECONOMIC_INIT_MEAN,
+        economic_init_concentration=E2_ECONOMIC_INIT_CONCENTRATION,
+    )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
     print({"actor_transfer": provenance, "fresh_economic_head": True}, flush=True)
@@ -637,7 +728,9 @@ def _new_model(args, vec_env, *, provenance_manifest):
 
 
 def _resumed_model(args, vec_env, *, provenance_manifest):
-    model = ScaledLearningRatePPO.load(
+    actor_loss_mode = _actor_loss_mode(args)
+    algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    model = algorithm_class.load(
         args.resume,
         env=vec_env,
         device=args.device,
@@ -654,7 +747,6 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
         normalize_advantage=True,
         use_sde=False,
         sde_sample_freq=-1,
-        target_kl=None,
         stats_window_size=100,
     )
     expected_resume_sha256 = getattr(args, "validated_resume_sha256", None)
@@ -670,6 +762,23 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
         raise ValueError("--resume role does not match --leader-role")
     if model.policy.economic_input_mode != "event_only":
         raise ValueError("--resume is not an event-only E2 leader")
+    saved_target_kl = getattr(model, "target_kl", None)
+    if (
+            (saved_target_kl is None) != (args.target_kl is None)
+            or (
+                saved_target_kl is not None
+                and not math.isclose(
+                    float(saved_target_kl),
+                    float(args.target_kl),
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+            )
+    ):
+        raise ValueError(
+            "--target-kl must match the saved E2 checkpoint "
+            f"({saved_target_kl})"
+        )
     if not math.isclose(
             model.policy.pretrained_lr_scale,
             args.pretrained_lr_scale,
@@ -680,6 +789,36 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
             "--pretrained-lr-scale must match the saved E2 checkpoint "
             f"({model.policy.pretrained_lr_scale})"
         )
+    saved_actor_loss_mode = model_actor_loss_mode(model)
+    if saved_actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError(
+            "--resume contains an unknown Atari actor loss mode: "
+            f"{saved_actor_loss_mode!r}"
+        )
+    if saved_actor_loss_mode != actor_loss_mode:
+        raise ValueError(
+            "--actor-loss-mode must match the saved E2 checkpoint "
+            f"({saved_actor_loss_mode})"
+        )
+    initialization = model_economic_initialization(
+        model,
+        default_mean=E2_ECONOMIC_INIT_MEAN,
+        default_concentration=E2_ECONOMIC_INIT_CONCENTRATION,
+    )
+    expected_initialization = {
+        "mean": E2_ECONOMIC_INIT_MEAN,
+        "concentration": E2_ECONOMIC_INIT_CONCENTRATION,
+    }
+    if initialization != expected_initialization:
+        raise ValueError(
+            "E2 economic-head initialization does not match its checkpoint"
+        )
+    attach_atari_training_contract(
+        model,
+        actor_loss_mode=actor_loss_mode,
+        economic_init_mean=initialization["mean"],
+        economic_init_concentration=initialization["concentration"],
+    )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
     return model
@@ -761,10 +900,16 @@ def parse_args(argv=None):
     parser.add_argument("--n-epochs", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
+    parser.add_argument(
+        "--actor-loss-mode",
+        choices=ACTOR_LOSS_MODES,
+        default=STANDARD_ACTOR_LOSS_MODE,
+    )
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument("--clip-range", type=float, default=0.1)
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
+    parser.add_argument("--target-kl", type=float)
     parser.add_argument("--noop-max", type=int, default=30)
     parser.add_argument("--max-frames", type=int, default=100_000)
     parser.add_argument("--rom-path")
@@ -810,12 +955,24 @@ def parse_args(argv=None):
         parser.error("--batch-size must lie in [1, n_steps * num_envs]")
     if buffer_size % args.batch_size:
         parser.error("--batch-size must divide n_steps * num_envs exactly")
+    if (
+            args.actor_loss_mode == PHASE_BALANCED_ACTOR_LOSS_MODE
+            and args.batch_size != buffer_size
+    ):
+        parser.error(
+            "phase-balanced Atari PPO requires one full-rollout minibatch "
+            "(batch-size = n-steps * num-envs)"
+        )
     if args.timesteps <= 0 and not args.eval_only:
         parser.error("--timesteps must be positive during training")
     if args.eval_episodes <= 0:
         parser.error("--eval-episodes must be positive")
     if args.entropy_coeff < 0.01:
         parser.error("E2 requires --entropy-coeff >= 0.01")
+    if args.target_kl is not None and (
+            not math.isfinite(args.target_kl) or args.target_kl <= 0.0
+    ):
+        parser.error("--target-kl must be positive")
     if args.eval_only and args.resume is None:
         parser.error("--eval-only requires --resume")
     if not args.resume and args.leader_e1_checkpoint is None:
@@ -824,7 +981,10 @@ def parse_args(argv=None):
     default = (
         REPOSITORY_ROOT
         / "replication/atari/checkpoints/clean"
-        / f"leader_{args.leader_role}_e2_ppo_seed{args.seed}.zip"
+        / (
+            f"leader_{args.leader_role}_e2_ppo{_run_variant_suffix(args)}"
+            f"_seed{args.seed}.zip"
+        )
     )
     args.checkpoint = str(checkpoint_path(args.checkpoint or default))
     return args

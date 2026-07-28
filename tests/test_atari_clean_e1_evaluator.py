@@ -5,6 +5,10 @@ import numpy as np
 import pytest
 
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
+from replication.atari.sb3_common import (
+    ECONOMIC_INIT_ATTRIBUTE,
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
+)
 from stackelberg_pomdp.atari.protocol import ACTOR_STATE, actor_state
 from stackelberg_pomdp.atari.stackpomdp_env import BUYER, SELLER
 
@@ -218,6 +222,110 @@ def test_pin_file_detects_source_mutation(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="changed while being pinned"):
         evaluator.pin_file(source, destination)
     assert not destination.exists()
+
+
+def test_candidate_metadata_records_loss_and_initialization_with_legacy_defaults(
+        monkeypatch, tmp_path
+):
+    checkpoint = tmp_path / "candidate.zip"
+    checkpoint.write_bytes(b"candidate")
+
+    class FakePolicy:
+        economic_role = BUYER
+        economic_input_mode = "full"
+        pretrained_lr_scale = 0.1
+        visual_features = 512
+        state_features = 64
+        economic_hidden = 64
+        critic_hidden = 256
+
+        def set_training_mode(self, mode):
+            assert mode is False
+
+    model = SimpleNamespace(
+        policy=FakePolicy(),
+        atari_e1_source_provenance={
+            "sha256": "e" * 64,
+            "source_economic_role": "gameplay",
+            "source_economic_input_mode": "full",
+            "source_pretrained_lr_scale": 0.1,
+            "zero_initialized_actor_state_indices": [9, 10, 11, 12, 13],
+        },
+        n_steps=205,
+        gamma=1.0,
+        gae_lambda=1.0,
+        num_timesteps=205,
+        seed=1,
+        learning_rate=1.0e-4,
+        batch_size=205,
+        n_epochs=4,
+        clip_range=lambda _: 0.1,
+        ent_coef=0.01,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+    )
+    monkeypatch.setattr(evaluator, "StackPOMDPAtariPolicy", FakePolicy)
+    monkeypatch.setattr(evaluator, "_load_model", lambda *a, **k: model)
+
+    _, legacy = evaluator.load_candidate(
+        checkpoint,
+        role=BUYER,
+        e0b_sha256="e" * 64,
+    )
+    assert legacy["training_config"]["actor_loss_mode"] == "standard"
+    assert legacy["training_config"]["economic_head_initialization"] == {
+        "mean": 0.95,
+        "concentration": 10.0,
+    }
+
+    model.atari_actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
+    setattr(model, ECONOMIC_INIT_ATTRIBUTE, {
+        "mean": 0.9,
+        "concentration": 8.0,
+    })
+    _, explicit = evaluator.load_candidate(
+        checkpoint,
+        role=BUYER,
+        e0b_sha256="e" * 64,
+    )
+    assert explicit["training_config"]["actor_loss_mode"] == "balanced"
+    assert explicit["training_config"]["economic_head_initialization"] == {
+        "mean": 0.9,
+        "concentration": 8.0,
+    }
+
+    del model.atari_actor_loss_mode
+    delattr(model, ECONOMIC_INIT_ATTRIBUTE)
+    model.policy.economic_role = SELLER
+    _, legacy_seller = evaluator.load_candidate(
+        checkpoint,
+        role=SELLER,
+        e0b_sha256="e" * 64,
+    )
+    assert legacy_seller["training_config"][
+        "economic_head_initialization"
+    ] == {"mean": 0.5, "concentration": 2.0}
+
+    model.policy.economic_role = BUYER
+    model.atari_actor_loss_mode = "unknown"
+    with pytest.raises(ValueError, match="unknown actor-loss mode"):
+        evaluator.load_candidate(
+            checkpoint,
+            role=BUYER,
+            e0b_sha256="e" * 64,
+        )
+
+    model.atari_actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
+    setattr(model, ECONOMIC_INIT_ATTRIBUTE, {
+        "mean": 1.0,
+        "concentration": 8.0,
+    })
+    with pytest.raises(ValueError, match="metadata is invalid"):
+        evaluator.load_candidate(
+            checkpoint,
+            role=BUYER,
+            e0b_sha256="e" * 64,
+        )
 
 
 def _screen_result(path, digest, payoff, *, valid=True, timestep=100):

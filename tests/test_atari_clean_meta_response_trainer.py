@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import gym
@@ -11,7 +12,12 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from replication.atari import train_atari_meta_response_sb3 as trainer
 from replication.atari.sb3_common import (
     EpisodeCheckpointCallback,
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
     ScaledLearningRatePPO,
+    STANDARD_ACTOR_LOSS_MODE,
+    _episode_trade_time_metrics,
+    model_actor_loss_mode,
+    model_economic_initialization,
 )
 from stackelberg_pomdp.atari.protocol import (
     ACTOR_STATE_DIM,
@@ -138,8 +144,66 @@ def test_parser_aligns_rollout_with_one_full_h_plus_five_episode(tmp_path):
     assert args.batch_size == 66
     assert args.fixed_event_steps == (0, 2, 4, 6, 8)
     assert args.event_tail_steps == 0
+    assert args.actor_loss_mode == STANDARD_ACTOR_LOSS_MODE
+    assert args.buyer_init_mean == pytest.approx(0.95)
+    assert args.buyer_init_concentration == pytest.approx(10.0)
     assert args.wandb_project == "StackPOMDP"
     assert not args.wandb
+
+
+def test_phase_balanced_parser_requires_a_full_rollout_batch(tmp_path):
+    common = [
+        "--role",
+        BUYER,
+        "--e0b-checkpoint",
+        str(tmp_path / "e0b.zip"),
+        "--gameplay-horizon",
+        "17",
+        "--num-envs",
+        "1",
+        "--n-steps",
+        "22",
+        "--actor-loss-mode",
+        PHASE_BALANCED_ACTOR_LOSS_MODE,
+        "--no-wandb",
+    ]
+    args = trainer.parse_args([*common, "--batch-size", "22"])
+    assert args.actor_loss_mode == PHASE_BALANCED_ACTOR_LOSS_MODE
+    assert "_balanced_seed1.zip" in args.checkpoint
+
+    with pytest.raises(SystemExit):
+        trainer.parse_args([*common, "--batch-size", "11"])
+    with pytest.raises(SystemExit):
+        trainer.parse_args([*common, "--batch-size", "22", "--target-kl", "0"])
+    with pytest.raises(SystemExit):
+        trainer.parse_args([
+            *common,
+            "--batch-size",
+            "22",
+            "--target-kl",
+            "nan",
+        ])
+    with pytest.raises(SystemExit):
+        trainer.parse_args([
+            *common,
+            "--batch-size",
+            "22",
+            "--buyer-init-concentration",
+            "nan",
+        ])
+
+    custom_init = trainer.parse_args([
+        "--role",
+        BUYER,
+        "--e0b-checkpoint",
+        str(tmp_path / "e0b.zip"),
+        "--buyer-init-mean",
+        "0.9",
+        "--buyer-init-concentration",
+        "8",
+        "--no-wandb",
+    ])
+    assert "_initm0p9c8_seed1.zip" in custom_init.checkpoint
 
 
 def test_parser_rejects_a_rollout_that_ends_mid_episode(tmp_path):
@@ -199,6 +263,16 @@ def test_e1_build_transfers_only_actor_and_uses_role_specific_economic_start(
         )
         assert model.gamma == 1.0
         assert model.gae_lambda == 1.0
+        assert model_actor_loss_mode(model) == STANDARD_ACTOR_LOSS_MODE
+        expected_concentration = 10.0 if role == BUYER else 2.0
+        assert model_economic_initialization(
+            model,
+            default_mean=0.0,
+            default_concentration=1.0,
+        ) == {
+            "mean": expected_economic_mean,
+            "concentration": expected_concentration,
+        }
 
         # E0b visual/game modules transfer exactly.  The state encoder differs
         # only in the five previously unseen opponent-commitment columns,
@@ -257,6 +331,7 @@ def test_e1_build_transfers_only_actor_and_uses_role_specific_economic_start(
             model.atari_e1_source_provenance
         )
         assert restored.policy.pretrained_lr_scale == pytest.approx(0.1)
+        assert model_actor_loss_mode(restored) == STANDARD_ACTOR_LOSS_MODE
         assert [
             group["lr_scale"]
             for group in restored.policy.optimizer.param_groups
@@ -363,6 +438,21 @@ def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
             for group in restored.policy.optimizer.param_groups
         ] == [0.1, 1.0]
 
+        args.actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
+        with pytest.raises(ValueError, match="must match the saved E1"):
+            trainer._resumed_model(args, vec_env)
+        args.actor_loss_mode = STANDARD_ACTOR_LOSS_MODE
+
+        args.buyer_init_mean = 0.9
+        with pytest.raises(ValueError, match="initialization arguments"):
+            trainer._resumed_model(args, vec_env)
+        args.buyer_init_mean = 0.95
+
+        args.target_kl = 0.01
+        with pytest.raises(ValueError, match="must match the saved E1"):
+            trainer._resumed_model(args, vec_env)
+        args.target_kl = None
+
         equivalent_source = tmp_path / "same_e0b_bytes.zip"
         equivalent_source.write_bytes(e0b_checkpoint.read_bytes())
         args.e0b_checkpoint = str(equivalent_source)
@@ -416,6 +506,23 @@ def test_episode_wandb_metrics_follow_the_controlled_seller_role(tmp_path):
                 "seller_true_game_over_reset_rate": 0.01,
                 "seller_time_limit_resets": 0,
                 "seller_true_game_over_before_fifth_event": True,
+                "gameplay_transitions": 200,
+                "events": [
+                    {
+                        "event_index": event_index,
+                        "game_step": game_step,
+                        "price": price,
+                        "threshold": 0.5,
+                        "accepted": accepted,
+                    }
+                    for event_index, (game_step, price, accepted) in enumerate((
+                        (0, 0.1, 1),
+                        (66, 0.9, 0),
+                        (67, 0.2, 1),
+                        (133, 0.8, 0),
+                        (134, 0.7, 0),
+                    ))
+                ],
             }
         }],
     }
@@ -434,6 +541,48 @@ def test_episode_wandb_metrics_follow_the_controlled_seller_role(tmp_path):
     assert payload["train/true_game_over_reset_rate"] == pytest.approx(0.01)
     assert payload["train/time_limit_resets"] == 0
     assert payload["train/true_game_over_before_fifth_event"] == 1
+    assert payload["train/early_trade_events"] == 2
+    assert payload["train/middle_trade_events"] == 2
+    assert payload["train/late_trade_events"] == 1
+    assert payload["train/early_acceptance_rate"] == pytest.approx(0.5)
+    assert payload["train/middle_acceptance_rate"] == pytest.approx(0.5)
+    assert payload["train/late_acceptance_rate"] == pytest.approx(0.0)
+    assert payload["train/early_mean_price"] == pytest.approx(0.5)
+    assert payload["train/middle_mean_price"] == pytest.approx(0.5)
+    assert payload["train/late_mean_price"] == pytest.approx(0.7)
+    local = json.loads(callback.training_log.read_text().splitlines()[-1])
+    for key in (
+            "train/early_trade_events",
+            "train/middle_trade_events",
+            "train/late_trade_events",
+            "train/early_acceptance_rate",
+            "train/middle_acceptance_rate",
+            "train/late_acceptance_rate",
+    ):
+        assert local[key] == payload[key]
+
+
+def test_trade_time_metrics_omit_undefined_empty_bin_means():
+    metrics = _episode_trade_time_metrics({
+        "gameplay_transitions": 200,
+        "events": [
+            {
+                "game_step": step,
+                "price": 0.2,
+                "threshold": 0.4,
+                "accepted": True,
+            }
+            for step in range(5)
+        ],
+    })
+
+    assert metrics["early_trade_events"] == 5
+    assert metrics["middle_trade_events"] == 0
+    assert metrics["late_trade_events"] == 0
+    assert "middle_acceptance_rate" not in metrics
+    assert "middle_mean_price" not in metrics
+    assert "middle_mean_threshold" not in metrics
+    assert "late_acceptance_rate" not in metrics
 
 
 def test_episode_wandb_aggregates_simultaneous_vector_completions(tmp_path):

@@ -9,7 +9,13 @@ from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from replication.atari import train_atari_stackpomdp_leader_sb3 as trainer
-from replication.atari.sb3_common import ScaledLearningRatePPO
+from replication.atari.sb3_common import (
+    PHASE_BALANCED_ACTOR_LOSS_MODE,
+    STANDARD_ACTOR_LOSS_MODE,
+    ScaledLearningRatePPO,
+    model_actor_loss_mode,
+    model_economic_initialization,
+)
 from stackelberg_pomdp.atari.protocol import (
     GAMEPLAY,
     action_space,
@@ -74,6 +80,13 @@ def _checkpoint_metadata(
         "critic_hidden": 256,
         "pretrained_lr_scale": 0.1,
         "game_action_count": 6,
+        "actor_loss_mode": STANDARD_ACTOR_LOSS_MODE,
+        "economic_head_initialization": {
+            "mean": 0.95 if role == "buyer" and mode == "full" else 0.5,
+            "concentration": (
+                10.0 if role == "buyer" and mode == "full" else 2.0
+            ),
+        },
     }
     result = {
         "path": str(path),
@@ -108,10 +121,33 @@ def test_rollout_is_exactly_queries_gameplay_and_cached_trades(tmp_path):
     assert args.n_steps == 5 + 200 + 5
     assert args.batch_size == args.n_steps * args.num_envs
     assert args.event_tail_steps == 0
+    assert args.actor_loss_mode == STANDARD_ACTOR_LOSS_MODE
+    assert args.target_kl is None
     assert args.wandb_project == "StackPOMDP"
 
     with pytest.raises(SystemExit):
         _args(tmp_path, "--n-steps", "200")
+
+
+def test_phase_balanced_leader_requires_a_full_rollout_batch(tmp_path):
+    args = _args(
+        tmp_path,
+        "--actor-loss-mode",
+        PHASE_BALANCED_ACTOR_LOSS_MODE,
+    )
+    assert args.actor_loss_mode == PHASE_BALANCED_ACTOR_LOSS_MODE
+    assert args.target_kl is None
+
+    with pytest.raises(SystemExit):
+        _args(
+            tmp_path,
+            "--actor-loss-mode",
+            PHASE_BALANCED_ACTOR_LOSS_MODE,
+            "--batch-size",
+            "105",
+        )
+    with pytest.raises(SystemExit):
+        _args(tmp_path, "--target-kl", "nan")
 
 
 def test_checkpoint_contract_is_same_role_init_and_opposite_response(
@@ -210,6 +246,11 @@ def test_checkpoint_metadata_binds_exact_bytes_and_policy(monkeypatch, tmp_path)
     ).hexdigest()
     assert result["policy_metadata"]["economic_role"] == "buyer"
     assert result["policy_metadata"]["game_action_count"] == 6
+    assert result["actor_loss_mode"] == STANDARD_ACTOR_LOSS_MODE
+    assert result["economic_head_initialization"] == {
+        "mean": 0.95,
+        "concentration": 10.0,
+    }
 
 
 def test_provenance_accepts_relocated_bytes_and_rejects_any_change(tmp_path):
@@ -286,6 +327,30 @@ def test_scientific_config_binds_rom_bytes_not_machine_path(tmp_path):
     assert changed["environment"]["rom_sha256"] != (
         first["environment"]["rom_sha256"]
     )
+
+
+def test_scientific_config_distinguishes_actor_loss_mode(tmp_path):
+    standard = trainer.e2_scientific_config(_args(tmp_path))
+    balanced = trainer.e2_scientific_config(_args(
+        tmp_path,
+        "--actor-loss-mode",
+        PHASE_BALANCED_ACTOR_LOSS_MODE,
+    ))
+
+    assert standard["optimization"]["actor_loss_mode"] == (
+        STANDARD_ACTOR_LOSS_MODE
+    )
+    assert balanced["optimization"]["actor_loss_mode"] == (
+        PHASE_BALANCED_ACTOR_LOSS_MODE
+    )
+    assert standard != balanced
+
+    target = trainer.e2_scientific_config(_args(
+        tmp_path,
+        "--target-kl",
+        "0.01",
+    ))
+    assert target["optimization"]["target_kl"] == pytest.approx(0.01)
 
 
 def test_provenance_rejects_config_or_manifest_tampering(tmp_path):
@@ -376,11 +441,113 @@ def test_real_sb3_checkpoint_round_trip_retains_manifest(tmp_path):
             verbose=0,
         )
         trainer.attach_e2_provenance(model, manifest)
+        trainer.attach_atari_training_contract(
+            model,
+            actor_loss_mode=STANDARD_ACTOR_LOSS_MODE,
+            economic_init_mean=0.5,
+            economic_init_concentration=2.0,
+        )
         checkpoint = tmp_path / "e2_with_provenance.zip"
         model.save(checkpoint)
         restored = ScaledLearningRatePPO.load(checkpoint, device="cpu")
         assert restored.e2_provenance_manifest == manifest
+        assert model_actor_loss_mode(restored) == STANDARD_ACTOR_LOSS_MODE
+        assert model_economic_initialization(
+            restored, default_mean=0.1, default_concentration=1.0
+        ) == {"mean": 0.5, "concentration": 2.0}
     finally:
+        vec_env.close()
+
+
+def test_new_e2_checkpoint_is_provenance_compatible_and_resumable(tmp_path):
+    args = _args(
+        tmp_path,
+        "--num-envs",
+        "1",
+        "--actor-loss-mode",
+        PHASE_BALANCED_ACTOR_LOSS_MODE,
+    )
+    response = _checkpoint_metadata(
+        tmp_path / "buyer_e1.zip", role="buyer", mode="full"
+    )
+    leader_e1 = _checkpoint_metadata(
+        tmp_path / "seller_e1.zip", role="seller", mode="full"
+    )
+    manifest = trainer.build_e2_provenance_manifest(
+        args, response=response, leader_e1=leader_e1
+    )
+    vec_env = DummyVecEnv([_StableProtocolEnv])
+    model = None
+    resumed = None
+    try:
+        algorithm_class = trainer.ppo_class_for_actor_loss_mode(
+            args.actor_loss_mode
+        )
+        model = algorithm_class(
+            StackPOMDPAtariPolicy,
+            vec_env,
+            policy_kwargs={
+                "economic_role": args.leader_role,
+                "economic_input_mode": "event_only",
+                "visual_features": 512,
+                "state_features": 64,
+                "economic_hidden": 64,
+                "critic_hidden": 256,
+                "pretrained_lr_scale": args.pretrained_lr_scale,
+            },
+            learning_rate=args.learning_rate,
+            n_steps=args.n_steps,
+            batch_size=args.batch_size,
+            n_epochs=args.n_epochs,
+            gamma=1.0,
+            gae_lambda=1.0,
+            clip_range=args.clip_range,
+            ent_coef=args.entropy_coeff,
+            vf_coef=args.value_coefficient,
+            max_grad_norm=args.max_grad_norm,
+            normalize_advantage=True,
+            use_sde=False,
+            sde_sample_freq=-1,
+            target_kl=args.target_kl,
+            stats_window_size=100,
+            seed=args.seed,
+            device=args.device,
+            verbose=0,
+        )
+        model.policy.reset_economic_head(mean=0.5, concentration=2.0)
+        trainer.attach_atari_training_contract(
+            model,
+            actor_loss_mode=PHASE_BALANCED_ACTOR_LOSS_MODE,
+            economic_init_mean=0.5,
+            economic_init_concentration=2.0,
+        )
+        trainer.attach_e2_provenance(model, manifest)
+
+        checkpoint = tmp_path / "new_balanced_e2.zip"
+        model.save(checkpoint)
+        metadata = trainer.checkpoint_policy_metadata(checkpoint)
+
+        assert metadata["policy_metadata"] == (
+            manifest["scientific_config"]["leader_policy"]
+        )
+        trainer.require_compatible_e2_provenance(
+            manifest,
+            args,
+            response=response,
+            resumed_leader=metadata,
+        )
+
+        args.resume = str(checkpoint)
+        resumed = trainer._resumed_model(
+            args, vec_env, provenance_manifest=manifest
+        )
+        assert model_actor_loss_mode(resumed) == (
+            PHASE_BALANCED_ACTOR_LOSS_MODE
+        )
+        assert resumed.e2_provenance_manifest == manifest
+    finally:
+        del resumed
+        del model
         vec_env.close()
 
 
@@ -424,7 +591,11 @@ def test_new_leader_transfers_actor_only_and_starts_fresh_economic_critic(
             captured["kwargs"] = kwargs
             self.policy = FakePolicy()
 
-    monkeypatch.setattr(trainer, "ScaledLearningRatePPO", FakePPO)
+    monkeypatch.setattr(
+        trainer,
+        "ppo_class_for_actor_loss_mode",
+        lambda mode: FakePPO,
+    )
 
     model = trainer._new_model(
         args, vec_env="vec", provenance_manifest=manifest
@@ -437,6 +608,10 @@ def test_new_leader_transfers_actor_only_and_starts_fresh_economic_critic(
     assert captured["kwargs"]["gamma"] == 1.0
     assert captured["kwargs"]["gae_lambda"] == 1.0
     assert captured["cache_cleared"] is True
+    assert model_actor_loss_mode(model) == STANDARD_ACTOR_LOSS_MODE
+    assert model_economic_initialization(
+        model, default_mean=0.1, default_concentration=1.0
+    ) == {"mean": 0.5, "concentration": 2.0}
     assert model.e2_provenance_manifest["fingerprint_sha256"] == (
         manifest["fingerprint_sha256"]
     )
@@ -548,3 +723,20 @@ def test_clean_checkpoint_default_stays_under_clean_directory(tmp_path):
     checkpoint = Path(args.checkpoint)
     assert checkpoint.parent.name == "clean"
     assert checkpoint.name == "leader_buyer_e2_ppo_seed1.zip"
+
+    balanced = trainer.parse_args([
+        "--leader-role",
+        "buyer",
+        "--response-checkpoint",
+        str(tmp_path / "seller_e1.zip"),
+        "--leader-e1-checkpoint",
+        str(tmp_path / "buyer_e1.zip"),
+        "--actor-loss-mode",
+        PHASE_BALANCED_ACTOR_LOSS_MODE,
+        "--target-kl",
+        "0.01",
+        "--no-wandb",
+    ])
+    assert Path(balanced.checkpoint).name == (
+        "leader_buyer_e2_ppo_balanced_kl0p01_seed1.zip"
+    )

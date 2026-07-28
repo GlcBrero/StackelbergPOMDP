@@ -32,7 +32,15 @@ os.environ.setdefault(
     "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "stackpomdp-matplotlib")
 )
 
-from replication.atari.sb3_common import ScaledLearningRatePPO, write_csv, write_json
+from replication.atari.sb3_common import (
+    ACTOR_LOSS_MODES,
+    STANDARD_ACTOR_LOSS_MODE,
+    ScaledLearningRatePPO,
+    model_actor_loss_mode,
+    model_economic_initialization,
+    write_csv,
+    write_json,
+)
 from replication.atari.train_atari_stackpomdp_leader_sb3 import (
     E2_PROVENANCE_ATTRIBUTE,
     e2_implementation_provenance,
@@ -68,6 +76,12 @@ EVALUATOR_NAME = "clean_atari_e2_selector_v1"
 CANONICAL_GAMEPLAY_HORIZON = 200
 SCREEN_EPISODES = 20
 CONFIRMATION_EPISODES = 100
+E1_BUYER_INIT_MEAN = 0.95
+E1_BUYER_INIT_CONCENTRATION = 10.0
+E1_SELLER_INIT_MEAN = 0.5
+E1_SELLER_INIT_CONCENTRATION = 2.0
+E2_INIT_MEAN = 0.5
+E2_INIT_CONCENTRATION = 2.0
 SELECTION_RULE = (
     "exclude any checkpoint with a screen protocol violation",
     "maximize mean leader payoff",
@@ -191,6 +205,8 @@ def validate_candidate_provenance(model, *, response_hash, config):
     scientific = manifest.get("scientific_config", {})
     recorded_environment = scientific.get("environment", {})
     recorded_protocol = scientific.get("protocol", {})
+    recorded_optimization = scientific.get("optimization", {})
+    recorded_initialization = scientific.get("initialization", {})
     recorded_response = manifest.get("artifacts", {}).get(
         "frozen_response", {}
     )
@@ -253,6 +269,35 @@ def validate_candidate_provenance(model, *, response_hash, config):
             "current evaluator runtime"
         )
     policy = model.policy
+    actual_actor_loss_mode = model_actor_loss_mode(model)
+    actual_economic_initialization = model_economic_initialization(
+        model,
+        default_mean=E2_INIT_MEAN,
+        default_concentration=E2_INIT_CONCENTRATION,
+    )
+    recorded_actor_loss_mode = str(recorded_optimization.get(
+        "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE
+    ))
+    if recorded_actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError("E2 candidate provenance has an unknown actor loss mode")
+    if actual_actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError("E2 candidate checkpoint has an unknown actor loss mode")
+    if actual_actor_loss_mode != recorded_actor_loss_mode:
+        raise ValueError(
+            "E2 candidate actor loss mode does not match its provenance"
+        )
+    recorded_economic_initialization = {
+        "mean": float(recorded_initialization.get(
+            "economic_head_beta_mean", E2_INIT_MEAN
+        )),
+        "concentration": float(recorded_initialization.get(
+            "economic_head_beta_concentration", E2_INIT_CONCENTRATION
+        )),
+    }
+    if actual_economic_initialization != recorded_economic_initialization:
+        raise ValueError(
+            "E2 candidate economic initialization does not match its provenance"
+        )
     actual_leader_policy = {
         "policy_class": f"{type(policy).__module__}.{type(policy).__qualname__}",
         "economic_role": policy.economic_role,
@@ -263,10 +308,39 @@ def validate_candidate_provenance(model, *, response_hash, config):
         "critic_hidden": int(policy.critic_hidden),
         "pretrained_lr_scale": float(policy.pretrained_lr_scale),
         "game_action_count": int(policy.game_action_count),
+        "actor_loss_mode": actual_actor_loss_mode,
+        "economic_head_initialization": actual_economic_initialization,
     }
-    if scientific.get("leader_policy") != actual_leader_policy:
+    recorded_leader_policy = dict(scientific.get("leader_policy", {}))
+    recorded_leader_policy.setdefault(
+        "actor_loss_mode", recorded_actor_loss_mode
+    )
+    recorded_leader_policy.setdefault(
+        "economic_head_initialization", recorded_economic_initialization
+    )
+    if recorded_leader_policy != actual_leader_policy:
         raise ValueError(
             "E2 candidate policy architecture does not match its provenance"
+        )
+    recorded_target_kl = recorded_optimization.get("target_kl")
+    actual_target_kl = getattr(model, "target_kl", None)
+    for label, value in (
+            ("provenance", recorded_target_kl),
+            ("checkpoint", actual_target_kl),
+    ):
+        if value is not None and (
+                not np.isfinite(float(value)) or float(value) <= 0.0
+        ):
+            raise ValueError(f"E2 candidate {label} has an invalid target KL")
+    normalized_recorded_target_kl = (
+        None if recorded_target_kl is None else float(recorded_target_kl)
+    )
+    normalized_actual_target_kl = (
+        None if actual_target_kl is None else float(actual_target_kl)
+    )
+    if normalized_actual_target_kl != normalized_recorded_target_kl:
+        raise ValueError(
+            "E2 candidate target KL does not match its provenance"
         )
     if recorded_response.get("sha256") != response_hash:
         raise ValueError(
@@ -1152,6 +1226,12 @@ def evaluate_checkpoint(
     provenance = validate_candidate_provenance(
         model, response_hash=response_hash, config=config
     )
+    actor_loss_mode = model_actor_loss_mode(model)
+    economic_initialization = model_economic_initialization(
+        model,
+        default_mean=E2_INIT_MEAN,
+        default_concentration=E2_INIT_CONCENTRATION,
+    )
     evaluation = evaluate_e2_model(
         model,
         lambda episode: make_e2_env(
@@ -1188,6 +1268,9 @@ def evaluate_checkpoint(
         "training_total_timesteps": int(getattr(model, "num_timesteps", 0)),
         "economic_role": model.policy.economic_role,
         "economic_input_mode": model.policy.economic_input_mode,
+        "actor_loss_mode": actor_loss_mode,
+        "target_kl": getattr(model, "target_kl", None),
+        "economic_head_initialization": economic_initialization,
         "phase": phase,
         "seed_start": int(seed_start),
         "seed_end": int(seed_start) + int(episodes) - 1,
@@ -1286,6 +1369,14 @@ def rank_candidates(results):
                 "e2_provenance_fingerprint"
             ),
             "training_total_timesteps": result["training_total_timesteps"],
+            "actor_loss_mode": result.get(
+                "actor_loss_mode", STANDARD_ACTOR_LOSS_MODE
+            ),
+            "target_kl": result.get("target_kl"),
+            "economic_head_initialization": result.get(
+                "economic_head_initialization",
+                {"mean": E2_INIT_MEAN, "concentration": E2_INIT_CONCENTRATION},
+            ),
             **result["summary"],
             "protocol_violation_count": len(result["protocol"]["violations"]),
         })
@@ -1420,6 +1511,26 @@ def run_selection(args):
         device=args.device,
         expected_sha256=response_hash,
     )
+    response_is_buyer = response_model.policy.economic_role == BUYER
+    response_actor_loss_mode = model_actor_loss_mode(response_model)
+    if response_actor_loss_mode not in ACTOR_LOSS_MODES:
+        raise ValueError("frozen E1 response has an unknown actor loss mode")
+    response_target_kl = getattr(response_model, "target_kl", None)
+    if response_target_kl is not None:
+        response_target_kl = float(response_target_kl)
+        if not np.isfinite(response_target_kl) or response_target_kl <= 0.0:
+            raise ValueError("frozen E1 response has an invalid target KL")
+    response_initialization = model_economic_initialization(
+        response_model,
+        default_mean=(
+            E1_BUYER_INIT_MEAN if response_is_buyer else E1_SELLER_INIT_MEAN
+        ),
+        default_concentration=(
+            E1_BUYER_INIT_CONCENTRATION
+            if response_is_buyer
+            else E1_SELLER_INIT_CONCENTRATION
+        ),
+    )
     response_metadata = {
         "checkpoint_path": str(response_path),
         "checkpoint_sha256": response_hash,
@@ -1428,6 +1539,9 @@ def run_selection(args):
         "training_total_timesteps": int(
             getattr(response_model, "num_timesteps", 0)
         ),
+        "actor_loss_mode": response_actor_loss_mode,
+        "target_kl": response_target_kl,
+        "economic_head_initialization": response_initialization,
         "frozen": True,
         "deterministic": True,
     }
