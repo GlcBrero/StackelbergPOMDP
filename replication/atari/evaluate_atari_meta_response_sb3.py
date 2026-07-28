@@ -144,6 +144,135 @@ def validate_e0b(path, *, device="cpu"):
     return result
 
 
+def _canonical_sampler_provenance(raw, *, label):
+    """Validate one exact, canonical E1 training-sampler contract."""
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"{label} must be a mapping")
+    value = _jsonable(raw)
+    mode = value.get("mode")
+    if mode not in trainer.E1_SAMPLER_MODES:
+        raise ValueError(f"{label} has an unknown sampler mode: {mode!r}")
+    expected = trainer.e1_sampler_provenance(
+        mode, gameplay_horizon=200, event_tail_steps=0
+    )
+    if value != expected:
+        raise ValueError(f"{label} does not match its canonical provenance")
+    return value
+
+
+def _canonical_sampler_history(raw, *, current, training_timesteps):
+    """Validate and retain every sampler stage and byte-bound resume parent."""
+
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("E1 sampler history must be a nonempty list")
+    history = _jsonable(raw)
+    previous_start = -1
+    previous_resume = -1
+    for index, stage in enumerate(history):
+        label = f"E1 sampler history stage {index}"
+        if not isinstance(stage, dict):
+            raise ValueError(f"{label} must be a mapping")
+        start = stage.get("start_total_timesteps")
+        if type(start) is not int or start < 0:
+            raise ValueError(f"{label} has invalid start_total_timesteps")
+        if index == 0 and start != 0:
+            raise ValueError("E1 sampler history must start at timestep zero")
+        if start <= previous_start or start > int(training_timesteps):
+            raise ValueError(f"{label} has a nonmonotone or future start")
+        previous_start = start
+        stage["sampler"] = _canonical_sampler_provenance(
+            stage.get("sampler"), label=f"{label} sampler"
+        )
+        inferred = stage.get("inferred_for_legacy_checkpoint")
+        if type(inferred) is not bool:
+            raise ValueError(f"{label} has no Boolean legacy-inference flag")
+        if inferred and (
+                index != 0
+                or stage["sampler"]["mode"] != trainer.UNIFORM_E1_SAMPLER
+        ):
+            raise ValueError(
+                "only the initial uniform sampler stage may be legacy-inferred"
+            )
+        resume_sources = stage.get("resume_sources")
+        if not isinstance(resume_sources, list):
+            raise ValueError(f"{label} resume_sources must be a list")
+        for source_index, source in enumerate(resume_sources):
+            source_label = f"{label} resume source {source_index}"
+            if not isinstance(source, dict):
+                raise ValueError(f"{source_label} must be a mapping")
+            path = source.get("path")
+            digest = source.get("sha256")
+            source_step = source.get("training_total_timesteps")
+            resume_step = source.get("resume_total_timesteps")
+            if not isinstance(path, str) or not path:
+                raise ValueError(f"{source_label} has no source path")
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise ValueError(f"{source_label} has no SHA-256 digest")
+            try:
+                int(digest, 16)
+            except ValueError as error:
+                raise ValueError(
+                    f"{source_label} has an invalid SHA-256 digest"
+                ) from error
+            if (
+                    type(source_step) is not int
+                    or type(resume_step) is not int
+                    or source_step != resume_step
+                    or resume_step < start
+                    or resume_step < previous_resume
+                    or resume_step > int(training_timesteps)
+            ):
+                raise ValueError(
+                    f"{source_label} has invalid resume timesteps"
+                )
+            previous_resume = resume_step
+    if history[-1]["sampler"] != current:
+        raise ValueError(
+            "E1 current sampler provenance does not match its final history stage"
+        )
+    return history
+
+
+def candidate_sampler_contract(model):
+    """Return validated sampler provenance/history, inferring legacy uniform."""
+
+    current = getattr(model, "atari_e1_sampler_provenance", None)
+    history = getattr(model, "atari_e1_sampler_history", None)
+    if current is None and history is None:
+        current = trainer.e1_sampler_provenance(
+            trainer.UNIFORM_E1_SAMPLER,
+            gameplay_horizon=200,
+            event_tail_steps=0,
+        )
+        history = [{
+            "start_total_timesteps": 0,
+            "sampler": current,
+            "inferred_for_legacy_checkpoint": True,
+            "resume_sources": [],
+        }]
+        inferred = True
+    elif current is None or history is None:
+        raise ValueError(
+            "E1 candidate must store sampler provenance and history together"
+        )
+    else:
+        inferred = False
+    current = _canonical_sampler_provenance(
+        current, label="E1 current sampler provenance"
+    )
+    history = _canonical_sampler_history(
+        history,
+        current=current,
+        training_timesteps=int(model.num_timesteps),
+    )
+    return {
+        "atari_e1_sampler_provenance": current,
+        "atari_e1_sampler_history": history,
+        "sampler_contract_inferred_for_legacy_checkpoint": inferred,
+    }
+
+
 def load_candidate(
         path,
         *,
@@ -213,6 +342,7 @@ def load_candidate(
         raise ValueError(
             "step-checkpoint filename does not match saved training timesteps"
         )
+    sampler_contract = candidate_sampler_contract(model)
     policy.set_training_mode(False)
     metadata = {
         "path": str(reported_path),
@@ -246,8 +376,62 @@ def load_candidate(
             "pretrained_lr_scale": float(policy.pretrained_lr_scale),
         },
         "e0b_source_provenance": _jsonable(provenance),
+        **sampler_contract,
     }
     return model, metadata
+
+
+def common_training_family(results):
+    """Require one PPO configuration and one complete sampler lineage."""
+
+    metadata = [
+        result["metadata"] for result in results if result["episode_rows"]
+    ]
+    configs = [item["training_config"] for item in metadata]
+    config_encodings = {
+        json.dumps(config, sort_keys=True, separators=(",", ":"))
+        for config in configs
+    }
+    if len(config_encodings) > 1:
+        raise ValueError(
+            "candidate checkpoints do not share one PPO seed/configuration"
+        )
+    sampler_contracts = [{
+        "atari_e1_sampler_provenance": item[
+            "atari_e1_sampler_provenance"
+        ],
+        "atari_e1_sampler_history": item["atari_e1_sampler_history"],
+        "sampler_contract_inferred_for_legacy_checkpoint": item[
+            "sampler_contract_inferred_for_legacy_checkpoint"
+        ],
+    } for item in metadata]
+    sampler_encodings = {
+        json.dumps(contract, sort_keys=True, separators=(",", ":"))
+        for contract in sampler_contracts
+    }
+    if len(sampler_encodings) > 1:
+        raise ValueError(
+            "candidate checkpoints do not share one complete E1 sampler "
+            "provenance/history"
+        )
+    common_sampler = sampler_contracts[0] if sampler_contracts else None
+    return {
+        "common_training_config": configs[0] if configs else None,
+        "common_sampler_provenance": (
+            None if common_sampler is None
+            else common_sampler["atari_e1_sampler_provenance"]
+        ),
+        "common_sampler_history": (
+            None if common_sampler is None
+            else common_sampler["atari_e1_sampler_history"]
+        ),
+        "sampler_contract_inferred_for_legacy_checkpoint": (
+            None if common_sampler is None
+            else common_sampler[
+                "sampler_contract_inferred_for_legacy_checkpoint"
+            ]
+        ),
+    }
 
 
 def random_context(seed):
@@ -1172,19 +1356,7 @@ def run_selection(args):
         common = validate_common_screen(
             screen, seeds=screen_seeds, contexts=screen_contexts
         )
-        loaded_configs = [
-            result["metadata"]["training_config"]
-            for result in screen
-            if result["episode_rows"]
-        ]
-        config_encodings = {
-            json.dumps(config, sort_keys=True, separators=(",", ":"))
-            for config in loaded_configs
-        }
-        if len(config_encodings) > 1:
-            raise ValueError(
-                "candidate checkpoints do not share one PPO seed/configuration"
-            )
+        training_family = common_training_family(screen)
         ranked, ranking_rows = rank_candidates(screen)
 
         confirmation_seeds = list(range(
@@ -1301,9 +1473,7 @@ def run_selection(args):
             "training_family": {
                 "directory": training_directory,
                 "stem": training_stem,
-                "common_training_config": (
-                    loaded_configs[0] if loaded_configs else None
-                ),
+                **training_family,
             },
             "e0b_source": e0b,
             "environment": environment,

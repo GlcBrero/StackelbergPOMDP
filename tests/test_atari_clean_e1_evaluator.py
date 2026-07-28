@@ -277,6 +277,14 @@ def test_candidate_metadata_records_loss_and_initialization_with_legacy_defaults
         "mean": 0.95,
         "concentration": 10.0,
     }
+    assert legacy["atari_e1_sampler_provenance"]["mode"] == "uniform"
+    assert legacy["atari_e1_sampler_history"] == [{
+        "start_total_timesteps": 0,
+        "sampler": legacy["atari_e1_sampler_provenance"],
+        "inferred_for_legacy_checkpoint": True,
+        "resume_sources": [],
+    }]
+    assert legacy["sampler_contract_inferred_for_legacy_checkpoint"]
 
     model.atari_actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
     setattr(model, ECONOMIC_INIT_ATTRIBUTE, {
@@ -328,14 +336,121 @@ def test_candidate_metadata_records_loss_and_initialization_with_legacy_defaults
         )
 
 
+def _temporal_sampler_contract(*, source_digest="a" * 64):
+    uniform = evaluator.trainer.e1_sampler_provenance(
+        evaluator.trainer.UNIFORM_E1_SAMPLER,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+    temporal = evaluator.trainer.e1_sampler_provenance(
+        evaluator.trainer.TEMPORAL_MIX_E1_SAMPLER,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+    history = [
+        {
+            "start_total_timesteps": 0,
+            "sampler": uniform,
+            "inferred_for_legacy_checkpoint": True,
+            "resume_sources": [],
+        },
+        {
+            "start_total_timesteps": 205,
+            "sampler": temporal,
+            "inferred_for_legacy_checkpoint": False,
+            "resume_sources": [{
+                "path": "/immutable/uniform_parent.zip",
+                "sha256": source_digest,
+                "training_total_timesteps": 205,
+                "resume_total_timesteps": 205,
+            }],
+        },
+    ]
+    return temporal, history
+
+
+def test_candidate_sampler_contract_validates_and_records_full_history():
+    temporal, history = _temporal_sampler_contract()
+    model = SimpleNamespace(
+        num_timesteps=820,
+        atari_e1_sampler_provenance=temporal,
+        atari_e1_sampler_history=history,
+    )
+    result = evaluator.candidate_sampler_contract(model)
+    assert result["atari_e1_sampler_provenance"] == temporal
+    assert result["atari_e1_sampler_history"] == history
+    assert not result["sampler_contract_inferred_for_legacy_checkpoint"]
+
+    model.atari_e1_sampler_provenance = None
+    with pytest.raises(ValueError, match="provenance and history together"):
+        evaluator.candidate_sampler_contract(model)
+
+    model.atari_e1_sampler_provenance = temporal
+    model.atari_e1_sampler_history[-1]["sampler"] = (
+        evaluator.trainer.e1_sampler_provenance(
+            evaluator.trainer.UNIFORM_E1_SAMPLER,
+            gameplay_horizon=200,
+            event_tail_steps=0,
+        )
+    )
+    with pytest.raises(ValueError, match="final history stage"):
+        evaluator.candidate_sampler_contract(model)
+
+
+def _family_result(contract):
+    return {
+        "metadata": {
+            "training_config": {"algorithm": "PPO", "seed": 1},
+            **contract,
+        },
+        "episode_rows": [{}],
+    }
+
+
+def test_common_training_family_rejects_sampler_mode_or_history_mixing():
+    legacy_model = SimpleNamespace(num_timesteps=820)
+    uniform = evaluator.candidate_sampler_contract(legacy_model)
+    temporal_provenance, temporal_history = _temporal_sampler_contract()
+    temporal = {
+        "atari_e1_sampler_provenance": temporal_provenance,
+        "atari_e1_sampler_history": temporal_history,
+        "sampler_contract_inferred_for_legacy_checkpoint": False,
+    }
+
+    family = evaluator.common_training_family([
+        _family_result(temporal), _family_result(temporal)
+    ])
+    assert family["common_sampler_provenance"] == temporal_provenance
+    assert family["common_sampler_history"] == temporal_history
+
+    with pytest.raises(ValueError, match="sampler provenance/history"):
+        evaluator.common_training_family([
+            _family_result(uniform), _family_result(temporal)
+        ])
+
+    _, different_history = _temporal_sampler_contract(source_digest="b" * 64)
+    with pytest.raises(ValueError, match="sampler provenance/history"):
+        evaluator.common_training_family([
+            _family_result(temporal),
+            _family_result({
+                **temporal,
+                "atari_e1_sampler_history": different_history,
+            }),
+        ])
+
+
 def _screen_result(path, digest, payoff, *, valid=True, timestep=100):
     row = _episode(seed=1)
+    sampler_contract = evaluator.candidate_sampler_contract(
+        SimpleNamespace(num_timesteps=timestep)
+    )
     return {
         "metadata": {
             "path": str(path),
             "sha256": digest,
             "training_timesteps": timestep,
             "training_config": {"algorithm": "PPO", "seed": 1},
+            **sampler_contract,
         },
         "summary": {
             "mean_controlled_payoff": payoff,
