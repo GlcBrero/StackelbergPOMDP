@@ -13,7 +13,8 @@ if [[ -f "$E1_SELECTOR_REPORT" ]]; then
     "$E1_PYTHON" "$E1_VALIDATOR" selection \
       --family "$E1_FAMILY" \
       --report "$E1_SELECTOR_REPORT" \
-      --selected "$E1_SELECTED"
+      --selected "$E1_SELECTED" \
+      --gate-output "$E1_SELECTOR_GATE"
   )
   validation_status=$?
   set -e
@@ -58,6 +59,7 @@ fi
   "$E1_PYTHON" "$E1_VALIDATOR" selection \
     --family "$E1_FAMILY" \
     --report "$E1_SELECTOR_REPORT" \
-    --selected "$E1_SELECTED"
+    --selected "$E1_SELECTED" \
+    --gate-output "$E1_SELECTOR_GATE"
 )
 exit "$selector_status"

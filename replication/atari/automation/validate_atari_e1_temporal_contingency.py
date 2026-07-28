@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
 from replication.atari import train_atari_meta_response_sb3 as trainer
@@ -25,6 +26,7 @@ from stackelberg_pomdp.atari.stackpomdp_env import BUYER
 SCHEMA_VERSION = 1
 KIND = "atari_e1_buyer_temporal_contingency_activation"
 FAMILY_KIND = "atari_e1_buyer_temporal_contingency_family"
+SELECTION_GATE_KIND = "atari_e1_buyer_temporal_contingency_gate"
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
 )
@@ -432,6 +434,165 @@ def validate_selection(args):
     return report
 
 
+def build_selection_gate(args, report):
+    """Bind a passing temporal selection to all preregistered source bytes."""
+
+    _require(report.get("passed") is True, "only a passing selection is a gate")
+    family_path = Path(args.family).expanduser().resolve()
+    report_path = Path(args.report).expanduser().resolve()
+    selected = Path(args.selected).expanduser().resolve()
+    family = validate_training_family(family_path)
+    activation_path = Path(family["activation"]["path"]).expanduser().resolve()
+    activation = validate_activation(activation_path)
+    winner = report["selection"]["screen_selected_checkpoint_sha256"]
+    attempt = report["confirmation_attempts"][0]
+    _require(sha256_file(selected) == winner, "selected bytes are not the screen winner")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": SELECTION_GATE_KIND,
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "passed": True,
+        "role": BUYER,
+        "actor_loss_mode": PHASE_BALANCED_ACTOR_LOSS_MODE,
+        "report": {
+            "path": str(report_path),
+            "sha256": sha256_file(report_path),
+            "evaluator": evaluator.EVALUATOR_NAME,
+        },
+        "selected_checkpoint": {
+            "path": str(selected),
+            "sha256": winner,
+        },
+        "training_family": {
+            "path": str(family_path),
+            "sha256": sha256_file(family_path),
+            "candidate_sha256": list(family["candidate_sha256"]),
+        },
+        "activation": {
+            "path": str(activation_path),
+            "sha256": sha256_file(activation_path),
+            "code_revision": activation["code_revision"],
+        },
+        "sampler": {
+            "current": report["training_family"]["common_sampler_provenance"],
+            "history": report["training_family"]["common_sampler_history"],
+        },
+        "selection": {
+            "screen_selected_checkpoint_sha256": winner,
+            "confirmed_checkpoint_sha256": attempt["metadata"]["sha256"],
+            "selected_checkpoint_sha256": report["selection"][
+                "selected_checkpoint_sha256"
+            ],
+            "confirmation_attempts": len(report["confirmation_attempts"]),
+            "confirmation_policy": report["protocol"]["confirmation_policy"],
+            "fallback_allowed": report["selection"]["fallback_allowed"],
+        },
+    }
+
+
+def validate_selection_gate(path, *, family=None, report=None, selected=None):
+    """Revalidate a published temporal gate and every byte-bound dependency."""
+
+    path = Path(path).expanduser().resolve()
+    value = load_json(path)
+    _require(
+        value.get("schema_version") == SCHEMA_VERSION
+        and value.get("kind") == SELECTION_GATE_KIND,
+        "unknown temporal selection-gate manifest",
+    )
+    _require(value.get("passed") is True, "temporal selection gate did not pass")
+    _require(value.get("role") == BUYER, "temporal selection gate has wrong role")
+    _require(
+        value.get("actor_loss_mode") == PHASE_BALANCED_ACTOR_LOSS_MODE,
+        "temporal selection gate is not phase-balanced",
+    )
+    family_path = Path(value["training_family"]["path"]).expanduser().resolve()
+    report_path = Path(value["report"]["path"]).expanduser().resolve()
+    selected_path = Path(value["selected_checkpoint"]["path"]).expanduser().resolve()
+    if family is not None:
+        _require(_same_file(family_path, family), "temporal gate names another family")
+    if report is not None:
+        _require(_same_file(report_path, report), "temporal gate names another report")
+    if selected is not None:
+        _require(_same_file(selected_path, selected), "temporal gate names another alias")
+    _require(
+        sha256_file(family_path) == value["training_family"]["sha256"],
+        "temporal family changed after gate publication",
+    )
+    _require(
+        sha256_file(report_path) == value["report"]["sha256"],
+        "temporal report changed after gate publication",
+    )
+    _require(
+        sha256_file(selected_path) == value["selected_checkpoint"]["sha256"],
+        "temporal selected checkpoint changed after gate publication",
+    )
+    family_value = validate_training_family(family_path)
+    activation_path = Path(value["activation"]["path"]).expanduser().resolve()
+    _require(
+        _same_file(family_value["activation"]["path"], activation_path),
+        "temporal gate names another activation",
+    )
+    _require(
+        sha256_file(activation_path) == value["activation"]["sha256"],
+        "temporal activation changed after gate publication",
+    )
+    activation = validate_activation(activation_path)
+    _require(
+        activation["code_revision"] == value["activation"]["code_revision"],
+        "temporal gate code revision differs from activation",
+    )
+    report_value = validate_selection(SimpleNamespace(
+        family=str(family_path),
+        report=str(report_path),
+        selected=str(selected_path),
+    ))
+    expected = build_selection_gate(
+        SimpleNamespace(
+            family=str(family_path),
+            report=str(report_path),
+            selected=str(selected_path),
+        ),
+        report_value,
+    )
+    for key in (
+        "passed", "role", "actor_loss_mode", "report", "selected_checkpoint",
+        "training_family", "activation", "sampler", "selection",
+    ):
+        _require(value.get(key) == expected.get(key), f"temporal gate differs in {key}")
+    return value
+
+
+def write_or_validate_selection_gate(args, report):
+    """Publish a gate only after the single confirmed screen winner passes."""
+
+    output = Path(args.gate_output).expanduser().resolve()
+    if report.get("passed") is not True:
+        _require(not output.exists(), "failed temporal selection retained a gate")
+        return None
+    expected = build_selection_gate(args, report)
+    if output.exists():
+        existing = validate_selection_gate(
+            output,
+            family=args.family,
+            report=args.report,
+            selected=args.selected,
+        )
+        for key in (
+            "passed", "role", "actor_loss_mode", "report", "selected_checkpoint",
+            "training_family", "activation", "sampler", "selection",
+        ):
+            _require(existing.get(key) == expected.get(key), f"existing gate differs in {key}")
+        return existing
+    atomic_write_json(output, expected)
+    return validate_selection_gate(
+        output,
+        family=args.family,
+        report=args.report,
+        selected=args.selected,
+    )
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -457,6 +618,12 @@ def parse_args(argv=None):
     selection.add_argument("--family", required=True)
     selection.add_argument("--report", required=True)
     selection.add_argument("--selected", required=True)
+    selection.add_argument("--gate-output")
+    gate = subparsers.add_parser("validate-selection-gate")
+    gate.add_argument("--gate", required=True)
+    gate.add_argument("--family")
+    gate.add_argument("--report")
+    gate.add_argument("--selected")
     return parser.parse_args(argv)
 
 
@@ -473,8 +640,19 @@ def main(argv=None):
             result = validate_training_family(args.output)
         elif args.command == "validate-training-family":
             result = validate_training_family(args.family)
-        else:
+        elif args.command == "selection":
             result = validate_selection(args)
+            if args.gate_output:
+                gate = write_or_validate_selection_gate(args, result)
+                if gate is not None:
+                    result = gate
+        else:
+            result = validate_selection_gate(
+                args.gate,
+                family=args.family,
+                report=args.report,
+                selected=args.selected,
+            )
     except ContingencyInactive as error:
         print({"active": False, "reason": str(error)}, flush=True)
         raise SystemExit(3) from error

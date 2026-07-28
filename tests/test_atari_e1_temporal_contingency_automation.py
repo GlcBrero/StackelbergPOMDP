@@ -217,6 +217,19 @@ def test_launcher_orders_activation_and_preflight_before_wandb_or_training():
     assert activation < preflight_index < wandb < training
 
 
+def test_temporal_selector_publishes_a_separate_immutable_gate():
+    root = Path(__file__).resolve().parents[1]
+    selector = (
+        root / "replication/atari/automation"
+        / "run_e1_buyer_temporal_contingency_final_selector.sh"
+    ).read_text(encoding="utf-8")
+    assert "--gate-output \"$E1_SELECTOR_GATE\"" in selector
+    assert "validate-selection-gate" in (
+        root / "replication/atari/automation"
+        / "validate_atari_e1_temporal_contingency.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_temporal_selector_validator_forbids_confirmation_fallback(
         monkeypatch, tmp_path,
 ):

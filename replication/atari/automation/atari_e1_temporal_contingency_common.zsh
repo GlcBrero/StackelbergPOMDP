@@ -18,6 +18,7 @@ typeset -gr E1_FAMILY="$E1_RESULT_ROOT/e1_buyer_temporal_contingency_family_v1.j
 typeset -gr E1_RUN_NAME=e1_buyer_balanced_temporal_mix_v1_seed1_contingency_2m
 typeset -gr E1_SELECTOR_NAME=e1_buyer_balanced_temporal_mix_v1_all6_selector_v2
 typeset -gr E1_SELECTOR_REPORT="$E1_RESULT_ROOT/${E1_SELECTOR_NAME}.json"
+typeset -gr E1_SELECTOR_GATE="${E1_SELECTOR_REPORT%.json}.gate.json"
 typeset -gr E1_SELECTED="$E1_CHECKPOINT_ROOT/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_selected.zip"
 typeset -gr E1_TRAIN_LOG="$E1_LOG_ROOT/${E1_RUN_NAME}.log"
 typeset -gr E1_SELECTOR_LOG="$E1_LOG_ROOT/${E1_SELECTOR_NAME}.log"
@@ -154,5 +155,16 @@ function e1_validate_existing_family() {
     cd "$E1_CODE_ROOT"
     "$E1_PYTHON" "$E1_VALIDATOR" validate-training-family \
       --family "$E1_FAMILY"
+  )
+}
+
+function e1_validate_existing_gate() {
+  (
+    cd "$E1_CODE_ROOT"
+    "$E1_PYTHON" "$E1_VALIDATOR" validate-selection-gate \
+      --gate "$E1_SELECTOR_GATE" \
+      --family "$E1_FAMILY" \
+      --report "$E1_SELECTOR_REPORT" \
+      --selected "$E1_SELECTED"
   )
 }
