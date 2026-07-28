@@ -1,1 +1,1 @@
-"""Atari replication placeholders for companion StackeRLberg targets."""
+"""Stable-Baselines3 entry points for the clean Atari curriculum."""

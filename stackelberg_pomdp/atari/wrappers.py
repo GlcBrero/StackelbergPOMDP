@@ -247,15 +247,22 @@ class MaxAndSkipWrapper(gym.Wrapper):
         done = False
         info = {}
         observations = []
-        for index in range(self.skip):
-            # FIRE is one policy command, not four fire presses. Repeating the
-            # movement component is safe; later raw frames remove FIRE.
+        shot_registered = False
+        for _ in range(self.skip):
+            # A FIRE command may not register on its first raw ALE frame. Keep
+            # trying the same command until ALE reports the projectile, then
+            # remove FIRE for the rest of this decision. This retains standard
+            # max-and-skip robustness while guaranteeing at most one bullet per
+            # policy decision.
             frame_action = action
-            if index > 0 and hasattr(self.env, "without_fire"):
+            if shot_registered and hasattr(self.env, "without_fire"):
                 frame_action = self.env.without_fire(
                     int(np.asarray(action).reshape(-1)[0])
                 )
             observation, reward, done, frame_info = self.env.step(frame_action)
+            shot_registered = bool(
+                shot_registered or frame_info.get("shot_did_fire", False)
+            )
             observations.append(observation)
             total_reward += float(reward)
             info = self._merge_info(info, frame_info)

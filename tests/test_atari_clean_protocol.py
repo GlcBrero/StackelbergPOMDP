@@ -252,7 +252,7 @@ class _FakeALE:
 
 
 class _RawFireEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, *, fire_on_attempt=None):
         super().__init__()
         self.ale = _FakeALE()
         self.action_space = gym.spaces.Discrete(4)
@@ -260,16 +260,26 @@ class _RawFireEnv(gym.Env):
             0, 255, shape=(2, 2, 1), dtype=np.uint8
         )
         self.actions = []
+        self.fire_on_attempt = fire_on_attempt
+        self.fire_attempts = 0
 
     def get_action_meanings(self):
         return ["NOOP", "FIRE", "RIGHT", "RIGHTFIRE"]
 
     def reset(self):
         self.actions = []
+        self.fire_attempts = 0
+        self.ale.ram[...] = 0xF6
         return np.zeros((2, 2, 1), dtype=np.uint8)
 
     def step(self, action):
         self.actions.append(int(action))
+        if int(action) in (1, 3):
+            self.fire_attempts += 1
+            if self.fire_attempts == self.fire_on_attempt:
+                self.ale.ram[
+                    ScarceAmmoWrapper.PROJECTILE_RAM_SLOTS[0]
+                ] = ScarceAmmoWrapper.NEW_PROJECTILE_RAM_VALUE
         return (
             np.zeros((2, 2, 1), dtype=np.uint8),
             0.0,
@@ -278,15 +288,30 @@ class _RawFireEnv(gym.Env):
         )
 
 
-def test_max_skip_sends_at_most_one_fire_press_per_policy_decision():
+def test_max_skip_retries_fire_until_projectile_then_removes_fire():
+    raw = _RawFireEnv(fire_on_attempt=2)
+    scarce = ScarceAmmoWrapper(
+        raw, ledger=AmmoLedger(initial_ammo=5, capacity=5)
+    )
+    env = MaxAndSkipWrapper(scarce, skip=4)
+    env.reset()
+    _, _, _, info = env.step(3)  # RIGHTFIRE
+    assert raw.actions == [3, 3, 2, 2]
+    assert info["shots_fired_this_step"] == 1
+    assert scarce.ledger.value == 4
+
+
+def test_max_skip_retries_unregistered_fire_through_decision_window():
     raw = _RawFireEnv()
     scarce = ScarceAmmoWrapper(
         raw, ledger=AmmoLedger(initial_ammo=5, capacity=5)
     )
     env = MaxAndSkipWrapper(scarce, skip=4)
     env.reset()
-    env.step(3)  # RIGHTFIRE
-    assert raw.actions == [3, 2, 2, 2]
+    _, _, _, info = env.step(3)
+    assert raw.actions == [3, 3, 3, 3]
+    assert info["shots_fired_this_step"] == 0
+    assert scarce.ledger.value == 5
 
 
 def test_active_projectile_blocks_fire_before_the_raw_step():

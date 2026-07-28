@@ -72,6 +72,11 @@ second policy decision.
 
 ## Environment protocol
 
+Within one max-and-skip decision, a requested FIRE action is forwarded until
+ALE confirms that a projectile was created. FIRE is then removed from the
+remaining raw frames. This tolerates frame-level non-registration while
+guaranteeing at most one consumed bullet per policy decision.
+
 - E0a: one Atari agent, five bullets at reset, no trades, 200 gameplay steps.
 - E0b: one Atari agent, zero bullets at reset, five randomly timed paused free
   transfers, 200 gameplay plus five transfer steps.
@@ -198,7 +203,7 @@ spelled explicitly as `--init-checkpoint`.
 ```bash
 python -u -m replication.atari.train_atari_curriculum_sb3 \
   --stage e0b \
-  --init-checkpoint replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.zip \
+  --init-checkpoint replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1_target.zip \
   --seed 1 \
   --timesteps 2000000 \
   --num-envs 4 \
@@ -291,25 +296,25 @@ python -c 'import sys; sys.modules["readline"] = None; import pytest; raise Syst
 
 The clean suite checks the stable 14D interface, branch-gradient isolation,
 event-only leader invariance, exact full-action cache reuse, zero actor credit
-on cached replays, per-vector-row cache reset, one FIRE press per max-and-skip
-decision, atomic trade accounting, complete E1/E2 horizons, fresh critics,
-independent local true-game-over resets with preserved outer accounting, actor
-transfer, and optimizer checkpoint reloadability.
+on cached replays, per-vector-row cache reset, at most one registered shot per
+max-and-skip decision, atomic trade accounting, complete E1/E2 horizons, fresh
+critics, independent local true-game-over resets with preserved outer
+accounting, actor transfer, and optimizer checkpoint reloadability.
 
 ## Current clean-run status
 
-As of 2026-07-27, clean E0a seed 1 is training locally with automatic target
-selection and a 50M-step safety cap:
+E0a is complete. The selected 3.2M-step checkpoint passed two consecutive
+deterministic 20-episode screens and an independent 100-episode confirmation.
+All 100 confirmation episodes achieved clipped reward 5, fired exactly five
+bullets, ended with zero ammo, completed 200 gameplay transitions, and had
+exact bullet and payment accounting.
 
-- W&B: <https://wandb.ai/glcbrero/StackPOMDP/runs/dyaly9m7>
-- run name: `atari_clean_e0a_seed1_targetstop_50mcap_local`
-- group/job type: `atari_clean_curriculum` / `atari_e0a`
-- tmux session: `atari_clean_e0a_seed1_target50m`
-- checkpoint: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.zip`
-- local log: `Research Artifacts/experiment_logs/StackelbergPOMDP/atari/clean_20260727/atari_clean_e0a_seed1_targetstop_50mcap_local.log`
+- selected checkpoint: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1_target.zip`
+- selection manifest: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1.target_selection.json`
+- confirmation result: `replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1_best.confirmation_1.json`
+- W&B validation: <https://wandb.ai/glcbrero/StackPOMDP/runs/l6r0f0d1>
+- source training run: <https://wandb.ai/glcbrero/StackPOMDP/runs/dyaly9m7>
 
-The original fixed-length process reached a durable 200,000-step checkpoint
-without error. The target-driven process resumes that complete model,
-optimizer, critic, and clock under the same W&B run ID. This remains an active
-run, not a declared result; only the auditable selection files above determine
-pass or failure.
+The 50M cap was only a safety ceiling. Its extension was stopped after the
+FIRE-forwarding correction made the already-saved 3.2M checkpoint pass the
+full target gate; the durable 6.4M checkpoint was retained for provenance.
