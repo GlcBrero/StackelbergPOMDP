@@ -4,10 +4,12 @@ import argparse
 from copy import copy
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import tempfile
 
 import numpy as np
 
@@ -30,6 +32,8 @@ PROTOCOL_ATOL = 1.0e-6
 EVALUATOR_NAME = "clean_atari_e1_selector_v1"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "replication/atari/results/e1_selections"
+CANONICAL_FIXED_VALUES = tuple(value / 10.0 for value in range(11))
+CANONICAL_GRID_EVENT_STEPS = (20, 50, 80, 110, 140)
 
 
 def checkpoint_path(raw, *, label="checkpoint"):
@@ -48,6 +52,30 @@ def checkpoint_sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def pin_file(source, destination):
+    """Copy one source into immutable run-private storage and verify both ends."""
+
+    source = Path(source).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"artifact does not exist: {source}")
+    destination = Path(destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise FileExistsError(f"refusing to overwrite pinned artifact: {destination}")
+    before = checkpoint_sha256(source)
+    shutil.copyfile(source, destination)
+    after = checkpoint_sha256(source)
+    pinned = checkpoint_sha256(destination)
+    if not (before == after == pinned):
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(f"artifact changed while being pinned: {source}")
+    return {
+        "source_path": str(source),
+        "pinned_path": str(destination),
+        "sha256": pinned,
+    }
 
 
 def _jsonable(value):
@@ -97,7 +125,14 @@ def validate_e0b(path, *, device="cpu"):
     return result
 
 
-def load_candidate(path, *, role, e0b_sha256, device="cpu"):
+def load_candidate(
+        path,
+        *,
+        role,
+        e0b_sha256,
+        device="cpu",
+        display_path=None,
+):
     """Load one E1 candidate and bind it to the supplied E0b bytes."""
 
     path = checkpoint_path(path)
@@ -124,13 +159,48 @@ def load_candidate(path, *, role, e0b_sha256, device="cpu"):
         raise ValueError("E1 candidate does not use the canonical 205-step return")
     if not np.isclose(model.gae_lambda, 1.0):
         raise ValueError("E1 candidate must have gae_lambda=1")
+    reported_path = (
+        Path(display_path).expanduser().resolve()
+        if display_path is not None
+        else path
+    )
+    named_step = re.search(r"_step(\d+)$", reported_path.stem)
+    if (
+            named_step is not None
+            and int(named_step.group(1)) != int(model.num_timesteps)
+    ):
+        raise ValueError(
+            "step-checkpoint filename does not match saved training timesteps"
+        )
     policy.set_training_mode(False)
     metadata = {
-        "path": str(path),
+        "path": str(reported_path),
         "sha256": digest,
         "training_timesteps": int(model.num_timesteps),
         "role": role,
         "economic_input_mode": policy.economic_input_mode,
+        "training_config": {
+            "algorithm": "PPO",
+            "seed": int(model.seed),
+            "learning_rate": float(model.learning_rate),
+            "n_steps": int(model.n_steps),
+            "batch_size": int(model.batch_size),
+            "n_epochs": int(model.n_epochs),
+            "gamma": float(model.gamma),
+            "gae_lambda": float(model.gae_lambda),
+            "clip_range_at_start": float(model.clip_range(1.0)),
+            "entropy_coefficient": float(model.ent_coef),
+            "value_coefficient": float(model.vf_coef),
+            "max_grad_norm": float(model.max_grad_norm),
+            "policy_class": (
+                f"{type(policy).__module__}.{type(policy).__qualname__}"
+            ),
+            "visual_features": int(policy.visual_features),
+            "state_features": int(policy.state_features),
+            "economic_hidden": int(policy.economic_hidden),
+            "critic_hidden": int(policy.critic_hidden),
+            "pretrained_lr_scale": float(policy.pretrained_lr_scale),
+        },
         "e0b_source_provenance": _jsonable(provenance),
     }
     return model, metadata
@@ -220,6 +290,17 @@ def _violation(row, field, expected, actual):
     }
 
 
+def _finite_number(row, field, violations):
+    value = row.get(field)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = np.nan
+    if not np.isfinite(number):
+        violations.append(_violation(row, field, "finite numeric", value))
+    return number
+
+
 def audit_episode(row, *, role):
     """Audit the complete terminal record of one 200+5 E1 episode."""
 
@@ -238,15 +319,35 @@ def audit_episode(row, *, role):
     for field, expected in exact.items():
         if row.get(field) != expected:
             violations.append(_violation(row, field, expected, row.get(field)))
-    for field in (
+    numeric_fields = (
         "seller_bullet_error",
         "buyer_bullet_error",
         "seller_payoff_error",
         "buyer_payoff_error",
+        "purchases",
+        "payments",
+        "seller_game_reward",
+        "buyer_game_reward",
+        "seller_reward",
+        "buyer_reward",
+        "seller_shots_fired",
+        "buyer_shots_fired",
+        "seller_final_ammo",
+        "buyer_final_ammo",
+        "evaluation_return",
+    )
+    numeric = {
+        field: _finite_number(row, field, violations)
+        for field in numeric_fields
+    }
+    for field in (
+            "seller_bullet_error",
+            "buyer_bullet_error",
+            "seller_payoff_error",
+            "buyer_payoff_error",
     ):
-        value = row.get(field)
-        if not isinstance(value, (int, float)) or abs(float(value)) > PROTOCOL_ATOL:
-            violations.append(_violation(row, field, 0.0, value))
+        if np.isfinite(numeric[field]) and abs(numeric[field]) > PROTOCOL_ATOL:
+            violations.append(_violation(row, field, 0.0, row.get(field)))
 
     events = list(row.get("events", ()))
     context = list(row.get("opponent_commitment", ()))
@@ -272,6 +373,17 @@ def audit_episode(row, *, role):
             violations.append(_violation(row, f"event_{index}_game_step", event_steps[index], event.get("game_step")))
         price = float(event.get("price", np.nan))
         threshold = float(event.get("threshold", np.nan))
+        if not np.isfinite(price) or not 0.0 <= price <= 1.0:
+            violations.append(_violation(
+                row, f"event_{index}_price", "finite value in [0,1]", price
+            ))
+        if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            violations.append(_violation(
+                row,
+                f"event_{index}_threshold",
+                "finite value in [0,1]",
+                threshold,
+            ))
         actual_acceptance = bool(event.get("accepted", False))
         expected_acceptance = bool(price <= threshold)
         if actual_acceptance != expected_acceptance:
@@ -293,18 +405,42 @@ def audit_episode(row, *, role):
         accepted += int(actual_acceptance)
         expected_payments += price * int(actual_acceptance)
 
-    if row.get("purchases") != accepted:
+    if not np.isclose(numeric["purchases"], accepted, atol=0.0, rtol=0.0):
         violations.append(_violation(row, "purchases", accepted, row.get("purchases")))
-    if not np.isclose(float(row.get("payments", np.nan)), expected_payments, atol=PROTOCOL_ATOL, rtol=0):
+    if not np.isclose(
+            numeric["payments"], expected_payments,
+            atol=PROTOCOL_ATOL, rtol=0,
+    ):
         violations.append(_violation(row, "payments", expected_payments, row.get("payments")))
-    seller_expected = 0.1 * float(row.get("seller_game_reward", np.nan)) + expected_payments
-    buyer_expected = float(row.get("buyer_game_reward", np.nan)) - expected_payments
-    if not np.isclose(float(row.get("seller_reward", np.nan)), seller_expected, atol=PROTOCOL_ATOL, rtol=0):
+    seller_bullet_error = (
+        5.0
+        - numeric["seller_shots_fired"]
+        - numeric["purchases"]
+        - numeric["seller_final_ammo"]
+    )
+    buyer_bullet_error = (
+        numeric["purchases"]
+        - numeric["buyer_shots_fired"]
+        - numeric["buyer_final_ammo"]
+    )
+    if not np.isclose(seller_bullet_error, 0.0, atol=0.0, rtol=0.0):
+        violations.append(_violation(
+            row, "independent_seller_bullet_conservation",
+            0.0, seller_bullet_error,
+        ))
+    if not np.isclose(buyer_bullet_error, 0.0, atol=0.0, rtol=0.0):
+        violations.append(_violation(
+            row, "independent_buyer_bullet_conservation",
+            0.0, buyer_bullet_error,
+        ))
+    seller_expected = 0.1 * numeric["seller_game_reward"] + expected_payments
+    buyer_expected = numeric["buyer_game_reward"] - expected_payments
+    if not np.isclose(numeric["seller_reward"], seller_expected, atol=PROTOCOL_ATOL, rtol=0):
         violations.append(_violation(row, "seller_reward", seller_expected, row.get("seller_reward")))
-    if not np.isclose(float(row.get("buyer_reward", np.nan)), buyer_expected, atol=PROTOCOL_ATOL, rtol=0):
+    if not np.isclose(numeric["buyer_reward"], buyer_expected, atol=PROTOCOL_ATOL, rtol=0):
         violations.append(_violation(row, "buyer_reward", buyer_expected, row.get("buyer_reward")))
-    controlled = float(row.get(f"{role}_reward", np.nan))
-    if not np.isclose(float(row.get("evaluation_return", np.nan)), controlled, atol=PROTOCOL_ATOL, rtol=0):
+    controlled = numeric[f"{role}_reward"]
+    if not np.isclose(numeric["evaluation_return"], controlled, atol=PROTOCOL_ATOL, rtol=0):
         violations.append(_violation(row, "evaluation_return", controlled, row.get("evaluation_return")))
     return violations
 
@@ -371,22 +507,39 @@ def evaluate_rows(model, args, metadata, *, seeds, contexts, phase):
     }
 
 
-def screen_candidate(path, args, *, e0b_sha256, seeds, contexts):
+def screen_candidate(
+        path,
+        args,
+        *,
+        e0b_sha256,
+        seeds,
+        contexts,
+        display_path=None,
+):
     try:
         model, metadata = load_candidate(
-            path, role=args.role, e0b_sha256=e0b_sha256, device=args.device
+            path,
+            role=args.role,
+            e0b_sha256=e0b_sha256,
+            device=args.device,
+            display_path=display_path,
         )
         result = evaluate_rows(
             model, args, metadata, seeds=seeds, contexts=contexts, phase="screen"
         )
-        if checkpoint_sha256(metadata["path"]) != metadata["sha256"]:
+        if checkpoint_sha256(path) != metadata["sha256"]:
             raise RuntimeError("candidate changed during screening")
         return {"metadata": metadata, **result}
     except Exception as error:
         path = checkpoint_path(path)
+        reported = (
+            Path(display_path).expanduser().resolve()
+            if display_path is not None
+            else path
+        )
         return {
             "metadata": {
-                "path": str(path),
+                "path": str(reported),
                 "sha256": checkpoint_sha256(path),
                 "training_timesteps": None,
             },
@@ -500,7 +653,8 @@ def behavioral_gate(*, role, random_result, fixed_results):
     if missing:
         return {"passed": False, "checks": [], "error": f"fixed grid missing {missing}"}
     zero, mid, one = (by_value[value] for value in required)
-    curves = [by_value[round(value, 6)] for value in sorted(by_value)]
+    ordered_values = sorted(by_value)
+    curves = [by_value[value] for value in ordered_values]
     checks = []
     if role == BUYER:
         low = [by_value[value] for value in sorted(by_value) if value <= 0.5]
@@ -514,23 +668,67 @@ def behavioral_gate(*, role, random_result, fixed_results):
             _check("random buyer net payoff", random_result["summary"]["mean_controlled_payoff"], ">", 0.0),
             _check("low/mid-price mean purchases", purchases, ">=", 4.5),
             _check("low/mid-price mean shots", shots, ">=", 4.25),
+            _check("price 0.5 purchases", mid["mean_purchases"], ">=", 4.5),
+            _check(
+                "price 0.5 shots",
+                mid["mean_buyer_shots_fired"],
+                ">=",
+                4.25,
+            ),
+            _check(
+                "price 0.5 purchased bullets used",
+                mid["mean_purchases"] - mid["mean_buyer_shots_fired"],
+                "<=",
+                0.5,
+            ),
             _check("price 0.5 buyer net payoff", mid["mean_controlled_payoff"], ">", 0.0),
             _check("price 1 demand", one["mean_purchases"], "<=", 0.5),
             _check("low-to-high demand drop", zero["mean_purchases"] - one["mean_purchases"], ">=", 4.0),
             _check("largest adjacent demand reversal", max_up, "<=", 0.5),
         ])
+        checks.extend(
+            _check(
+                f"price {value:.1f} buyer net payoff",
+                by_value[value]["mean_controlled_payoff"],
+                ">",
+                0.0,
+            )
+            for value in ordered_values
+            if value <= 0.5
+        )
     else:
         prices = [row["mean_price"] for row in curves]
         max_down = max(earlier - later for earlier, later in zip(prices, prices[1:]))
+        high_values = [value for value in ordered_values if value >= 0.5]
+        high = [by_value[value] for value in high_values]
+        minimum_high_sales = min(row["mean_purchases"] for row in high)
+        maximum_high_price_gap = max(
+            abs(value - by_value[value]["mean_price"])
+            for value in high_values
+        )
         checks.extend([
             _check("random seller payoff", random_result["summary"]["mean_controlled_payoff"], ">", 0.5),
             _check("threshold 0 purchases", zero["mean_purchases"], "<=", 0.5),
             _check("threshold 0 retained-bullet shots", zero["mean_seller_shots_fired"], ">=", 4.0),
+            _check("threshold 0.5 purchases", mid["mean_purchases"], ">=", 4.0),
+            _check("threshold 0.5 mean price", mid["mean_price"], ">=", 0.35),
             _check("threshold 1 purchases", one["mean_purchases"], ">=", 4.5),
             _check("threshold 1 mean price", one["mean_price"], ">=", 0.75),
             _check("threshold 1 seller payoff", one["mean_controlled_payoff"], ">=", 3.5),
             _check("low-to-high price response", one["mean_price"] - zero["mean_price"], ">=", 0.5),
             _check("largest adjacent price reversal", max_down, "<=", 0.15),
+            _check(
+                "minimum purchases for thresholds at least 0.5",
+                minimum_high_sales,
+                ">=",
+                4.0,
+            ),
+            _check(
+                "largest high-threshold price gap",
+                maximum_high_price_gap,
+                "<=",
+                0.2,
+            ),
         ])
     mechanics = random_result["protocol"]["passed"] and all(
         result["protocol"]["passed"] for result in fixed_results
@@ -560,94 +758,217 @@ def atomic_copy_no_overwrite(source, destination):
 
 
 def run_selection(args):
-    e0b = validate_e0b(args.e0b_checkpoint, device=args.device)
-    candidates = [checkpoint_path(path) for path in args.checkpoint]
-    hashes = [checkpoint_sha256(path) for path in candidates]
-    if len(hashes) != len(set(hashes)):
+    source_e0b = checkpoint_path(args.e0b_checkpoint, label="E0b checkpoint")
+    source_candidates = [checkpoint_path(path) for path in args.checkpoint]
+    source_hashes = [checkpoint_sha256(path) for path in source_candidates]
+    if len(source_hashes) != len(set(source_hashes)):
         raise ValueError("candidate checkpoints must have distinct SHA-256 hashes")
-    families = {checkpoint_family(path) for path in candidates}
+    families = {checkpoint_family(path) for path in source_candidates}
     if len(families) != 1:
         raise ValueError(
             "candidate checkpoints must be retained from one training family"
         )
     training_directory, training_stem = next(iter(families))
-    screen_seeds = list(range(args.screen_seed_start, args.screen_seed_start + SCREEN_EPISODES))
-    screen_contexts = [random_context(seed) for seed in screen_seeds]
-    screen = [
-        screen_candidate(path, args, e0b_sha256=e0b["sha256"], seeds=screen_seeds, contexts=screen_contexts)
-        for path in candidates
-    ]
-    common = validate_common_screen(screen, seeds=screen_seeds, contexts=screen_contexts)
-    ranked, ranking_rows = rank_candidates(screen)
-    confirmation_seeds = list(range(args.confirmation_seed_start, args.confirmation_seed_start + CONFIRMATION_EPISODES))
-    confirmation_contexts = [random_context(seed) for seed in confirmation_seeds]
-    fixed_seeds = list(range(args.fixed_seed_start, args.fixed_seed_start + FIXED_EPISODES))
-    attempts = []
-    selected = None
-    for candidate in ranked:
-        try:
-            screened_sha256 = candidate["metadata"]["sha256"]
-            model, metadata = load_candidate(
-                candidate["metadata"]["path"],
-                role=args.role,
+
+    source_rom = Path(args.rom_path or default_rom_path()).expanduser().resolve()
+    canonical_rom = Path(default_rom_path()).expanduser().resolve()
+    canonical_rom_sha256 = checkpoint_sha256(canonical_rom)
+    if checkpoint_sha256(source_rom) != canonical_rom_sha256:
+        raise ValueError(
+            "official E1 selection requires the canonical Space Invaders ROM"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="stackpomdp-e1-selector-") as raw:
+        pin_root = Path(raw)
+        e0b_pin = pin_file(source_e0b, pin_root / "e0b.zip")
+        rom_pin = pin_file(source_rom, pin_root / "space_invaders.bin")
+        candidate_pins = [
+            pin_file(path, pin_root / f"candidate_{index}.zip")
+            for index, path in enumerate(source_candidates)
+        ]
+        if [item["sha256"] for item in candidate_pins] != source_hashes:
+            raise RuntimeError("candidate bytes changed before immutable pinning")
+        if rom_pin["sha256"] != canonical_rom_sha256:
+            raise RuntimeError("ROM bytes changed before immutable pinning")
+        pinned_by_sha = {
+            item["sha256"]: item for item in candidate_pins
+        }
+
+        local = copy(args)
+        local.e0b_checkpoint = e0b_pin["pinned_path"]
+        local.rom_path = rom_pin["pinned_path"]
+        e0b = validate_e0b(local.e0b_checkpoint, device=local.device)
+        e0b["path"] = e0b_pin["source_path"]
+
+        screen_seeds = list(range(
+            local.screen_seed_start,
+            local.screen_seed_start + SCREEN_EPISODES,
+        ))
+        screen_contexts = [random_context(seed) for seed in screen_seeds]
+        screen = [
+            screen_candidate(
+                item["pinned_path"],
+                local,
                 e0b_sha256=e0b["sha256"],
-                device=args.device,
+                seeds=screen_seeds,
+                contexts=screen_contexts,
+                display_path=item["source_path"],
             )
-            if metadata["sha256"] != screened_sha256:
-                raise RuntimeError("candidate bytes changed after screening")
-            random_result = evaluate_rows(
-                model,
-                args,
-                metadata,
-                seeds=confirmation_seeds,
-                contexts=confirmation_contexts,
-                phase="confirmation_random",
+            for item in candidate_pins
+        ]
+        common = validate_common_screen(
+            screen, seeds=screen_seeds, contexts=screen_contexts
+        )
+        loaded_configs = [
+            result["metadata"]["training_config"]
+            for result in screen
+            if result["episode_rows"]
+        ]
+        config_encodings = {
+            json.dumps(config, sort_keys=True, separators=(",", ":"))
+            for config in loaded_configs
+        }
+        if len(config_encodings) > 1:
+            raise ValueError(
+                "candidate checkpoints do not share one PPO seed/configuration"
             )
-            fixed_results = fixed_grid(model, args, metadata, seeds=fixed_seeds)
-            if checkpoint_sha256(metadata["path"]) != screened_sha256:
-                raise RuntimeError("candidate bytes changed during confirmation")
-            gate = behavioral_gate(role=args.role, random_result=random_result, fixed_results=fixed_results)
-            attempt = {"metadata": metadata, "random": random_result, "fixed_contexts": fixed_results, "behavioral_gate": gate}
-        except Exception as error:
-            metadata = candidate["metadata"]
-            attempt = {
-                "metadata": metadata,
-                "random": {"summary": None, "protocol": {"passed": False, "violations": [{"field": "confirmation", "actual": repr(error)}]}, "episode_rows": [], "event_rows": []},
-                "fixed_contexts": [],
-                "behavioral_gate": {"passed": False, "mechanics_passed": False, "error": repr(error), "checks": []},
-            }
-        attempts.append(attempt)
-        if attempt["behavioral_gate"]["passed"]:
-            selected = atomic_copy_no_overwrite(metadata["path"], args.selected_checkpoint)
-            selected["source_path"] = metadata["path"]
-            break
-    return {
-        "evaluator": EVALUATOR_NAME,
-        "created_utc": datetime.now(timezone.utc).isoformat(),
-        "role": args.role,
-        "training_family": {
-            "directory": training_directory,
-            "stem": training_stem,
-        },
-        "e0b_source": e0b,
-        "environment": environment_config(args),
-        "protocol": {
-            "gameplay_transitions": 200,
-            "trade_transitions": 5,
-            "outer_transitions": 205,
-            "deterministic_evaluation": "masked Atari argmax and Beta mean",
-            "screen_episodes": SCREEN_EPISODES,
-            "confirmation_episodes": CONFIRMATION_EPISODES,
-            "fixed_context_episodes": FIXED_EPISODES,
-            "fixed_context_values": list(args.fixed_eval_values),
-            "fixed_context_event_steps": list(args.grid_event_steps),
-        },
-        "screen": {"common_pairing": common, "results": screen},
-        "ranking": ranking_rows,
-        "confirmation_attempts": attempts,
-        "selected_alias": selected,
-        "passed": selected is not None,
-    }
+        ranked, ranking_rows = rank_candidates(screen)
+
+        confirmation_seeds = list(range(
+            local.confirmation_seed_start,
+            local.confirmation_seed_start + CONFIRMATION_EPISODES,
+        ))
+        confirmation_contexts = [
+            random_context(seed) for seed in confirmation_seeds
+        ]
+        fixed_seeds = list(range(
+            local.fixed_seed_start,
+            local.fixed_seed_start + FIXED_EPISODES,
+        ))
+        attempts = []
+        selected = None
+        selected_pin = None
+        for candidate in ranked:
+            screened_sha256 = candidate["metadata"]["sha256"]
+            pinned = pinned_by_sha[screened_sha256]
+            try:
+                model, metadata = load_candidate(
+                    pinned["pinned_path"],
+                    role=local.role,
+                    e0b_sha256=e0b["sha256"],
+                    device=local.device,
+                    display_path=pinned["source_path"],
+                )
+                if metadata["sha256"] != screened_sha256:
+                    raise RuntimeError("candidate bytes changed after screening")
+                random_result = evaluate_rows(
+                    model,
+                    local,
+                    metadata,
+                    seeds=confirmation_seeds,
+                    contexts=confirmation_contexts,
+                    phase="confirmation_random",
+                )
+                fixed_results = fixed_grid(
+                    model, local, metadata, seeds=fixed_seeds
+                )
+                if (
+                        checkpoint_sha256(pinned["pinned_path"])
+                        != screened_sha256
+                ):
+                    raise RuntimeError(
+                        "candidate bytes changed during confirmation"
+                    )
+                gate = behavioral_gate(
+                    role=local.role,
+                    random_result=random_result,
+                    fixed_results=fixed_results,
+                )
+                attempt = {
+                    "metadata": metadata,
+                    "random": random_result,
+                    "fixed_contexts": fixed_results,
+                    "behavioral_gate": gate,
+                }
+            except Exception as error:
+                metadata = candidate["metadata"]
+                attempt = {
+                    "metadata": metadata,
+                    "random": {
+                        "summary": None,
+                        "protocol": {
+                            "passed": False,
+                            "violations": [{
+                                "field": "confirmation",
+                                "actual": repr(error),
+                            }],
+                        },
+                        "episode_rows": [],
+                        "event_rows": [],
+                    },
+                    "fixed_contexts": [],
+                    "behavioral_gate": {
+                        "passed": False,
+                        "mechanics_passed": False,
+                        "error": repr(error),
+                        "checks": [],
+                    },
+                }
+            attempts.append(attempt)
+            if attempt["behavioral_gate"]["passed"]:
+                selected_pin = pinned
+                break
+
+        environment = environment_config(local)
+        if checkpoint_sha256(e0b_pin["pinned_path"]) != e0b_pin["sha256"]:
+            raise RuntimeError("pinned E0b bytes changed during evaluation")
+        if checkpoint_sha256(rom_pin["pinned_path"]) != rom_pin["sha256"]:
+            raise RuntimeError("pinned ROM bytes changed during evaluation")
+        environment["rom_path"] = rom_pin["source_path"]
+        report = {
+            "evaluator": EVALUATOR_NAME,
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "role": local.role,
+            "training_family": {
+                "directory": training_directory,
+                "stem": training_stem,
+                "common_training_config": (
+                    loaded_configs[0] if loaded_configs else None
+                ),
+            },
+            "e0b_source": e0b,
+            "environment": environment,
+            "immutable_evaluation": {
+                "e0b_sha256": e0b_pin["sha256"],
+                "rom_sha256": rom_pin["sha256"],
+                "candidate_sha256": source_hashes,
+            },
+            "protocol": {
+                "gameplay_transitions": 200,
+                "trade_transitions": 5,
+                "outer_transitions": 205,
+                "deterministic_evaluation": (
+                    "masked Atari argmax and Beta mean"
+                ),
+                "screen_episodes": SCREEN_EPISODES,
+                "confirmation_episodes": CONFIRMATION_EPISODES,
+                "fixed_context_episodes": FIXED_EPISODES,
+                "fixed_context_values": list(local.fixed_eval_values),
+                "fixed_context_event_steps": list(local.grid_event_steps),
+            },
+            "screen": {"common_pairing": common, "results": screen},
+            "ranking": ranking_rows,
+            "confirmation_attempts": attempts,
+            "selected_alias": selected,
+            "passed": selected_pin is not None,
+        }
+        if selected_pin is not None:
+            selected = atomic_copy_no_overwrite(
+                selected_pin["pinned_path"], local.selected_checkpoint
+            )
+            selected["source_path"] = selected_pin["source_path"]
+            report["selected_alias"] = selected
+        return report
 
 
 def artifact_paths(args):
@@ -742,6 +1063,18 @@ def parse_args(argv=None):
         args.grid_event_steps = _parse_steps(args.grid_event_steps)
     except ValueError as error:
         parser.error(str(error))
+    if tuple(args.fixed_eval_values) != CANONICAL_FIXED_VALUES:
+        parser.error(
+            "official selection requires fixed values 0,0.1,...,0.9,1"
+        )
+    if tuple(args.grid_event_steps) != CANONICAL_GRID_EVENT_STEPS:
+        parser.error(
+            "official selection requires grid event steps 20,50,80,110,140"
+        )
+    if args.noop_max != 30 or args.max_frames != 100_000:
+        parser.error(
+            "official selection requires noop_max=30 and max_frames=100000"
+        )
     ranges = (
         (args.screen_seed_start, SCREEN_EPISODES),
         (args.confirmation_seed_start, CONFIRMATION_EPISODES),
@@ -774,7 +1107,21 @@ def main(argv=None):
     if selected.exists():
         raise FileExistsError(f"refusing to overwrite selected alias: {selected}")
     report = run_selection(args)
-    paths = persist_report(report, args)
+    try:
+        paths = persist_report(report, args)
+    except Exception:
+        selected_info = report.get("selected_alias")
+        if selected_info is not None:
+            selected_path = Path(selected_info["path"])
+            if (
+                    selected_path.is_file()
+                    and checkpoint_sha256(selected_path)
+                    == selected_info["sha256"]
+            ):
+                selected_path.unlink()
+        for path in artifact_paths(args).values():
+            path.unlink(missing_ok=True)
+        raise
     print({"passed": report["passed"], "selected": report["selected_alias"], "report": str(paths["json"])}, flush=True)
     if not report["passed"]:
         raise SystemExit(2)

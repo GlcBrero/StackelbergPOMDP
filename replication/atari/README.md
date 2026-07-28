@@ -290,19 +290,22 @@ python -u -m replication.atari.evaluate_atari_meta_response_sb3 \
 
 The selector binds every candidate to the exact supplied E0b bytes and rejects
 the wrong policy class, role, input mode, or 205-transition/accounting
-protocol. All candidates receive the same 20 random commitments, Atari seeds,
+protocol. It evaluates run-private immutable copies of the E0b, ROM, and
+candidate bytes, requires one checkpoint family and PPO seed/configuration,
+and enforces the canonical preprocessing, price grid, and usable event
+schedule. All candidates receive the same 20 random commitments, Atari seeds,
 and event schedules. Mechanically valid candidates are ranked by controlled
 random payoff, then median, minimum, standard deviation, training step, and
 checkpoint hash. In rank order, each candidate is tested on 100 disjoint random
 episodes and a paired constant-context grid on the usable schedule
 `20,50,80,110,140`. The selected alias is created only after the role-specific
-behavioral gate passes. Buyer gates require low-price purchases and shots,
-positive low/mid-price net payoff, and lower high-price demand; seller gates
-require retained-bullet play at threshold zero and high-price sales with an
-increasing threshold response. Full episode/event rows, ranking and fixed-grid
-CSVs, acceptance by event and time bin, exact hashes, explicit seeds, and all
-failed confirmation attempts are written collision-safely under
-`replication/atari/results/e1_selections/`.
+behavioral gate passes. Buyer gates require close to five purchases and shots
+through price 0.5, positive net payoff at every lower grid price, and lower
+high-price demand; seller gates require retained-bullet play at threshold zero
+and near-threshold sales throughout the upper half of the grid. Full
+episode/event rows, ranking and fixed-grid CSVs, acceptance by event and time
+bin, exact hashes, explicit seeds, and all failed confirmation attempts are
+written collision-safely under `replication/atari/results/e1_selections/`.
 
 ## E2: Stackelberg leaders
 

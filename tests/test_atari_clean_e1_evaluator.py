@@ -83,6 +83,26 @@ def test_e1_episode_audit_rejects_protocol_payment_and_inventory_errors():
     assert "event_0_buyer_inventory" in fields
 
 
+def test_e1_episode_audit_rejects_nonfinite_and_recomputes_bullets():
+    row = _episode()
+    row["seller_bullet_error"] = float("nan")
+    row["buyer_shots_fired"] -= 1
+    fields = {item["field"] for item in evaluator.audit_episode(row, role=BUYER)}
+    assert "seller_bullet_error" in fields
+    assert "independent_buyer_bullet_conservation" in fields
+
+
+def test_pin_file_detects_source_mutation(monkeypatch, tmp_path):
+    source = tmp_path / "source.zip"
+    destination = tmp_path / "pinned.zip"
+    source.write_bytes(b"source")
+    values = iter(("a" * 64, "b" * 64, "a" * 64))
+    monkeypatch.setattr(evaluator, "checkpoint_sha256", lambda path: next(values))
+    with pytest.raises(RuntimeError, match="changed while being pinned"):
+        evaluator.pin_file(source, destination)
+    assert not destination.exists()
+
+
 def _screen_result(path, digest, payoff, *, valid=True, timestep=100):
     row = _episode(seed=1)
     return {
@@ -90,6 +110,7 @@ def _screen_result(path, digest, payoff, *, valid=True, timestep=100):
             "path": str(path),
             "sha256": digest,
             "training_timesteps": timestep,
+            "training_config": {"algorithm": "PPO", "seed": 1},
         },
         "summary": {
             "mean_controlled_payoff": payoff,
@@ -195,9 +216,11 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
     second = tmp_path / "response_step200.zip"
     first.write_bytes(b"first")
     second.write_bytes(b"second")
+    e0b = tmp_path / "e0b.zip"
+    e0b.write_bytes(b"e0b")
     args = SimpleNamespace(
         role=BUYER,
-        e0b_checkpoint="e0b.zip",
+        e0b_checkpoint=str(e0b),
         device="cpu",
         checkpoint=[str(first), str(second)],
         screen_seed_start=100,
@@ -206,6 +229,7 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
         selected_checkpoint=str(tmp_path / "selected.zip"),
         fixed_eval_values=(0.0, 0.5, 1.0),
         grid_event_steps=(20, 50, 80, 110, 140),
+        rom_path=None,
     )
     monkeypatch.setattr(evaluator, "validate_e0b", lambda *a, **k: {"sha256": "e0b"})
     monkeypatch.setattr(evaluator, "environment_config", lambda args: {"test": True})
@@ -213,9 +237,20 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
         str(first.resolve()): _screen_result(first, evaluator.checkpoint_sha256(first), 2.0),
         str(second.resolve()): _screen_result(second, evaluator.checkpoint_sha256(second), 1.0),
     }
-    monkeypatch.setattr(evaluator, "screen_candidate", lambda path, *a, **k: screen_results[str(path)])
+    monkeypatch.setattr(
+        evaluator,
+        "screen_candidate",
+        lambda path, *a, **k: screen_results[str(Path(k["display_path"]).resolve())],
+    )
     monkeypatch.setattr(evaluator, "validate_common_screen", lambda *a, **k: {"passed": True})
-    monkeypatch.setattr(evaluator, "load_candidate", lambda path, **k: (object(), screen_results[str(Path(path).resolve())]["metadata"]))
+    monkeypatch.setattr(
+        evaluator,
+        "load_candidate",
+        lambda path, **k: (
+            object(),
+            screen_results[str(Path(k["display_path"]).resolve())]["metadata"],
+        ),
+    )
     fake_random = {"summary": {"mean_controlled_payoff": 1.0}, "protocol": {"passed": True}, "episode_rows": [], "event_rows": []}
     monkeypatch.setattr(evaluator, "evaluate_rows", lambda *a, **k: fake_random)
     monkeypatch.setattr(evaluator, "fixed_grid", lambda *a, **k: [])
@@ -226,7 +261,8 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
     report = evaluator.run_selection(args)
     assert report["passed"]
     assert len(report["confirmation_attempts"]) == 2
-    assert Path(copied[0]).resolve() == second.resolve()
+    assert copied
+    assert Path(report["selected_alias"]["source_path"]).resolve() == second.resolve()
 
 
 def test_parser_enforces_exact_disjoint_screen_and_confirmation(tmp_path):
@@ -245,4 +281,10 @@ def test_parser_enforces_exact_disjoint_screen_and_confirmation(tmp_path):
         evaluator.parse_args(base + [
             "--screen-seed-start", "100",
             "--confirmation-seed-start", "110",
+        ])
+    with pytest.raises(SystemExit):
+        evaluator.parse_args(base + ["--fixed-eval-values", "0,0.5,1"])
+    with pytest.raises(SystemExit):
+        evaluator.parse_args(base + [
+            "--grid-event-steps", "10,40,70,100,130",
         ])
