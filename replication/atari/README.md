@@ -211,8 +211,35 @@ python -u -m replication.atari.train_atari_curriculum_sb3 \
   --wandb-name atari_clean_e0b_seed1_2m_local
 ```
 
-E0b should accept all five automatic transfers, fire close to all five bullets,
-and recover the E0a game score despite random arrival times.
+E0b should accept all five automatic transfers and use bullets that arrive with
+enough gameplay remaining. Full-horizon random schedules deliberately include
+late transfers whose projectiles cannot always reach an alien before the
+200-step horizon, so the unconditional random-schedule score is reported by
+fifth-event timing rather than compared mechanically with E0a's 5/5 gate. A
+fixed usable schedule provides the uncensored control: there E0b should again
+fire all five bullets and recover the E0a score.
+
+Use the dedicated evaluator to compare E0b with its E0a source on identical
+seeds and schedules. It writes collision-safe artifacts under
+`replication/atari/results/e0b_evaluations/` rather than overwriting either
+checkpoint's training evaluation.
+
+```bash
+python -u -m replication.atari.evaluate_atari_e0b_sb3 \
+  --checkpoint replication/atari/checkpoints/clean/space_invaders_e0a_ppo_seed1_firefix_retrain_target.zip \
+  --checkpoint replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain.zip \
+  --episodes 100 \
+  --seed-start 3100001 \
+  --fixed-event-steps 0,10,20,30,40 \
+  --fixed-event-steps 0,30,60,90,120 \
+  --fixed-event-steps 10,50,100,150,190 \
+  --run-name e0a_vs_e0b_final_seed3100001_n100
+```
+
+Every scenario is required to pass the exact `200 + 5` transition, transfer,
+payment, return, and bullet-accounting audit. The report also records
+checkpoint SHA-256 hashes, paired episode deltas, and outcomes by fifth-event
+time.
 
 ## E1: role-specific meta-responses
 
@@ -230,9 +257,11 @@ python -u -m replication.atari.train_atari_meta_response_sb3 \
 
 Seller response to random buyer-threshold sequences uses the same command with
 `--role seller`. E1 evaluation runs 100 random commitment sequences plus 20
-episodes at each constant opponent value from 0.0 through 1.0. The JSON keeps
-all random episode trade records and acceptance-by-event/time diagnostics; the
-CSV contains the fixed-context table.
+episodes at each constant opponent value from 0.0 through 1.0. Every fixed
+value uses the same Atari/no-op and event-schedule seeds, making the grid a
+paired comparison. The JSON keeps random and fixed-context episode-level trade
+records plus acceptance-by-event/time diagnostics; the CSV contains the
+fixed-context summary table.
 
 ## E2: Stackelberg leaders
 
