@@ -479,11 +479,18 @@ def _trade_diagnostics(episode_rows, *, gameplay_horizon):
     return result
 
 
-def evaluate_response(model, args):
-    """Evaluate random commitments and a paired fixed-context grid."""
+def canonical_evaluation_args(args):
+    """Return an evaluation-only copy using the preregistered uniform law."""
 
     evaluation_args = copy(args)
     evaluation_args.e1_sampler_mode = UNIFORM_E1_SAMPLER
+    return evaluation_args
+
+
+def evaluate_response(model, args):
+    """Evaluate random commitments and a paired fixed-context grid."""
+
+    evaluation_args = canonical_evaluation_args(args)
     random_evaluation = evaluate_model(
         model,
         lambda episode: make_env(

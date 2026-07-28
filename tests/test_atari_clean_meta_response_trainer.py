@@ -180,6 +180,19 @@ def test_temporal_sampler_parser_is_explicit_and_horizon_bound(tmp_path):
             trainer.parse_args([*common, *incompatible])
 
 
+def test_canonical_evaluation_args_never_reuse_temporal_training_sampler():
+    marker = object()
+    source = SimpleNamespace(
+        e1_sampler_mode=trainer.TEMPORAL_MIX_E1_SAMPLER,
+        marker=marker,
+    )
+    result = trainer.canonical_evaluation_args(source)
+    assert result is not source
+    assert result.e1_sampler_mode == trainer.UNIFORM_E1_SAMPLER
+    assert result.marker is marker
+    assert source.e1_sampler_mode == trainer.TEMPORAL_MIX_E1_SAMPLER
+
+
 def test_phase_balanced_parser_requires_a_full_rollout_batch(tmp_path):
     common = [
         "--role",

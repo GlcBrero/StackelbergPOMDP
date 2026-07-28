@@ -1377,7 +1377,10 @@ def run_selection(args):
         attempts = []
         selected = None
         selected_pin = None
-        for candidate in ranked:
+        # Screening chooses the candidate.  Confirmation estimates its
+        # out-of-sample behavior; it must never search down the ranking after
+        # observing a failed fresh-seed gate.
+        for candidate in ranked[:1]:
             screened_sha256 = candidate["metadata"]["sha256"]
             pinned = pinned_by_sha[screened_sha256]
             try:
@@ -1490,8 +1493,14 @@ def run_selection(args):
                     "masked Atari argmax and Beta mean"
                 ),
                 "screen_episodes": SCREEN_EPISODES,
+                "screen_seed_start": int(local.screen_seed_start),
                 "confirmation_episodes": CONFIRMATION_EPISODES,
+                "confirmation_seed_start": int(
+                    local.confirmation_seed_start
+                ),
+                "confirmation_policy": "screen_winner_only_no_fallback",
                 "fixed_context_episodes": FIXED_EPISODES,
+                "fixed_context_seed_start": int(local.fixed_seed_start),
                 "fixed_context_values": list(local.fixed_eval_values),
                 "fixed_context_event_steps": list(local.grid_event_steps),
                 "paired_timing_required_for_role": BUYER,
@@ -1535,6 +1544,19 @@ def run_selection(args):
             "screen": {"common_pairing": common, "results": screen},
             "ranking": ranking_rows,
             "confirmation_attempts": attempts,
+            "selection": {
+                "fallback_allowed": False,
+                "screen_selected_checkpoint_sha256": (
+                    None
+                    if not ranked
+                    else ranked[0]["metadata"]["sha256"]
+                ),
+                "selected_checkpoint_sha256": (
+                    None
+                    if selected_pin is None
+                    else selected_pin["sha256"]
+                ),
+            },
             "selected_alias": selected,
             "passed": selected_pin is not None,
         }

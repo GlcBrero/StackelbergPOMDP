@@ -679,7 +679,7 @@ def test_seller_behavior_gate_requires_retention_then_high_value_sales():
     assert not evaluator.behavioral_gate(role=SELLER, random_result=random, fixed_results=fixed)["passed"]
 
 
-def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeypatch, tmp_path):
+def test_selection_never_falls_back_after_screen_winner_fails(monkeypatch, tmp_path):
     first = tmp_path / "response_step100.zip"
     second = tmp_path / "response_step200.zip"
     first.write_bytes(b"first")
@@ -726,15 +726,25 @@ def test_selection_tries_next_ranked_candidate_after_failed_confirmation(monkeyp
     monkeypatch.setattr(
         evaluator, "paired_timing_confirmation", lambda *a, **k: []
     )
-    calls = iter((False, True))
-    monkeypatch.setattr(evaluator, "behavioral_gate", lambda **k: {"passed": next(calls)})
+    calls = []
+    monkeypatch.setattr(
+        evaluator,
+        "behavioral_gate",
+        lambda **k: calls.append(k) or {"passed": False},
+    )
     copied = []
     monkeypatch.setattr(evaluator, "atomic_copy_no_overwrite", lambda source, destination: copied.append(str(source)) or {"path": str(destination), "sha256": "selected"})
     report = evaluator.run_selection(args)
-    assert report["passed"]
-    assert len(report["confirmation_attempts"]) == 2
-    assert copied
-    assert Path(report["selected_alias"]["source_path"]).resolve() == second.resolve()
+    assert not report["passed"]
+    assert len(report["confirmation_attempts"]) == 1
+    assert len(calls) == 1
+    assert not copied
+    assert report["selected_alias"] is None
+    assert report["selection"] == {
+        "fallback_allowed": False,
+        "screen_selected_checkpoint_sha256": evaluator.checkpoint_sha256(first),
+        "selected_checkpoint_sha256": None,
+    }
 
 
 def test_parser_enforces_exact_disjoint_screen_and_confirmation(tmp_path):
