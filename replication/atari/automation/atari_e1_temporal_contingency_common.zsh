@@ -1,5 +1,10 @@
 #!/bin/zsh
 
+# tmux servers can retain a restricted launch-time PATH.  All orchestration
+# dependencies below are system tools; bind their standard macOS locations so
+# an unattended gate behaves identically to an interactive shell.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin
+
 typeset -gr E1_SOURCE_ROOT="${${(%):-%N}:A:h:h:h:h}"
 typeset -gr E1_ACTIVE_ROOT="${STACKPOMDP_ACTIVE_ROOT:-/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP}"
 typeset -gr E1_PYTHON="${STACKPOMDP_PYTHON:-/Users/gbrero/miniconda3/envs/stackelbergPOMDP/bin/python}"
@@ -35,12 +40,17 @@ function e1_die() {
 }
 
 function e1_require_regular_sha() {
-  local path="$1"
+  # `path` is a special zsh array tied to PATH; never shadow it locally.
+  local file_path="$1"
   local expected="$2"
-  [[ -f "$path" && ! -L "$path" ]] || e1_die "missing regular file: $path"
+  [[ -f "$file_path" && ! -L "$file_path" ]] || \
+    e1_die "missing regular file: $file_path"
   local actual
-  actual=$(shasum -a 256 "$path" | awk '{print $1}')
-  [[ "$actual" == "$expected" ]] || e1_die "SHA-256 mismatch for $path: $actual"
+  # macOS shasum is Perl-based and rejects the inherited C.UTF-8 locale on
+  # some hosts; bind the portable C locale for this command only.
+  actual=$(LC_ALL=C LANG=C shasum -a 256 "$file_path" | awk '{print $1}')
+  [[ "$actual" == "$expected" ]] || \
+    e1_die "SHA-256 mismatch for $file_path: $actual"
 }
 
 function e1_require_scoped_clean() {
@@ -77,10 +87,16 @@ function e1_activate() {
   return "$exit_code"
 }
 
+function e1_require_revision() {
+  local revision="$1"
+  [[ ${#revision} -eq 40 && "$revision" != *[!0-9a-f]* ]] || \
+    e1_die "invalid activation code revision"
+}
+
 function e1_prepare_runtime() {
   local revision
   revision=$(jq -r '.code_revision' "$E1_ACTIVATION")
-  [[ "$revision" == [0-9a-f]## && ${#revision} == 40 ]] || e1_die "invalid activation code revision"
+  e1_require_revision "$revision"
   local runtime="/private/tmp/stackpomdp-e1-temporal-code-${revision[1,12]}"
   if [[ -d "$runtime/.git" || -f "$runtime/.git" ]]; then
     [[ "$(git -C "$runtime" rev-parse HEAD)" == "$revision" ]] || \
@@ -119,14 +135,16 @@ function e1_refuse_path() {
 }
 
 function e1_wait_for_stable_zip() {
-  local path="$1"
+  local file_path="$1"
   local first second
-  [[ -f "$path" ]] || e1_die "missing expected temporal checkpoint: $path"
-  first=$(stat -f %z "$path")
+  [[ -f "$file_path" ]] || \
+    e1_die "missing expected temporal checkpoint: $file_path"
+  first=$(stat -f %z "$file_path")
   sleep 4
-  second=$(stat -f %z "$path")
-  [[ "$first" == "$second" ]] || e1_die "temporal checkpoint is still changing: $path"
-  unzip -tq "$path"
+  second=$(stat -f %z "$file_path")
+  [[ "$first" == "$second" ]] || \
+    e1_die "temporal checkpoint is still changing: $file_path"
+  unzip -tq "$file_path"
 }
 
 function e1_candidates() {

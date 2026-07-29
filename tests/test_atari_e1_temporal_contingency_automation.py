@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,6 +13,58 @@ from replication.atari.automation import (
 from replication.atari.automation import (
     validate_atari_e1_temporal_contingency as validator,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+E1_SHELL_COMMON = (
+    REPO_ROOT / "replication/atari/automation/atari_e1_temporal_contingency_common.zsh"
+)
+E2_SHELL_COMMON = (
+    REPO_ROOT / "replication/atari/automation/atari_e2_pipeline_common.zsh"
+)
+
+
+def _run_zsh(command, *arguments):
+    environment = dict(os.environ)
+    environment.update({"PATH": "/bin", "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"})
+    return subprocess.run(
+        ["/bin/zsh", "-c", command, "--", *map(str, arguments)],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_temporal_shell_helpers_survive_restricted_path_and_macos_locale(tmp_path):
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"portable orchestration")
+    expected = validator.sha256_file(payload)
+    result = _run_zsh(
+        'source "$1"; e1_require_regular_sha "$2" "$3"; '
+        'e1_require_revision "$4"; print -- helpers-ok',
+        E1_SHELL_COMMON,
+        payload,
+        expected,
+        "e5324d3bb657e4cf2bf3969d9503a8c4a2881a1a",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "helpers-ok"
+
+    invalid = _run_zsh(
+        'source "$1"; e1_require_revision "$2"',
+        E1_SHELL_COMMON,
+        "not-a-forty-character-git-revision",
+    )
+    assert invalid.returncode != 0
+    assert "invalid activation code revision" in invalid.stderr
+
+
+def test_atari_orchestration_never_shadows_zsh_special_path_parameter():
+    for shell_file in (E1_SHELL_COMMON, E2_SHELL_COMMON):
+        contents = shell_file.read_text(encoding="utf-8")
+        assert "local path=" not in contents
 
 
 def _write_failed_report(

@@ -3,6 +3,9 @@
 # Shared, collision-safe helpers for clean Atari E2 launchers.
 # This file is sourced by the role-specific scripts; it does not launch work.
 
+# tmux may retain a restricted launch-time PATH across long unattended runs.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin
+
 typeset -gr AUTOMATION_DIR="${${(%):-%N}:A:h}"
 typeset -gr ROOT=/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP
 typeset -gr CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba
@@ -81,34 +84,35 @@ function e2_prepare_runtime() {
 }
 
 function e2_wait_for_file() {
-  local path="$1"
+  # `path` is a special zsh array tied to PATH; never shadow it locally.
+  local file_path="$1"
   local label="${2:-file}"
-  while [[ ! -f "$path" ]]; do
-    print "waiting for $label: $path"
+  while [[ ! -f "$file_path" ]]; do
+    print "waiting for $label: $file_path"
     sleep 20
   done
 }
 
 function e2_wait_for_stable_zip() {
-  local path="$1"
+  local file_path="$1"
   local first second
-  e2_wait_for_file "$path" "checkpoint ZIP"
+  e2_wait_for_file "$file_path" "checkpoint ZIP"
   while true; do
-    first=$(stat -f '%z:%m' "$path")
+    first=$(stat -f '%z:%m' "$file_path")
     sleep 10
-    [[ -f "$path" ]] || continue
-    second=$(stat -f '%z:%m' "$path")
-    if [[ "$first" == "$second" ]] && unzip -tq "$path"; then
+    [[ -f "$file_path" ]] || continue
+    second=$(stat -f '%z:%m' "$file_path")
+    if [[ "$first" == "$second" ]] && unzip -tq "$file_path"; then
       return 0
     fi
-    print "checkpoint is not yet stable; waiting: $path"
+    print "checkpoint is not yet stable; waiting: $file_path"
   done
 }
 
 function e2_refuse_path() {
-  local path="$1"
-  if [[ -e "$path" || -L "$path" ]]; then
-    print -u2 "refusing to overwrite existing pipeline artifact: $path"
+  local file_path="$1"
+  if [[ -e "$file_path" || -L "$file_path" ]]; then
+    print -u2 "refusing to overwrite existing pipeline artifact: $file_path"
     return 1
   fi
 }
