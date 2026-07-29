@@ -153,7 +153,7 @@
     "fallback_allowed": false,
     "selection_basis": "immutable temporal-v1 common-screen rank one"
   },
-  "created_utc": "2026-07-29T20:45:38.862355+00:00",
+  "created_utc": "2026-07-29T21:01:05.440540+00:00",
   "decision_record": {
     "criterion_change_after_observing_timing_failure": true,
     "no_timing_optimality_claim": true,
@@ -196,7 +196,7 @@
     "trade_transitions": 5
   },
   "evaluator": "clean_atari_e1_primary_economic_confirmation_v1",
-  "evaluator_code_revision": "d67d35fcb36594aa948ff7e5ad1fe271723254f9",
+  "evaluator_code_revision": "52ed372b7dcf6064c38a8aca2102b273eac21f5c",
   "execution": {
     "device": "cpu"
   },
