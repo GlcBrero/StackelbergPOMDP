@@ -5,7 +5,12 @@ set -euo pipefail
 # per-checkpoint diagnostic waiters; only the common screen winner receives one
 # fresh confirmation and no lower-ranked fallback is permitted.
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"' EXIT
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 129' HUP
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 130' INT
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 143' TERM
 e2_prepare_runtime
+trap - EXIT HUP INT TERM
 
 typeset -gr SELECTOR_CODE_ROOT="$AUTOMATION_ROOT"
 typeset -gr E0B="$CHECKPOINT_ROOT/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip"
@@ -32,6 +37,7 @@ function release_selector_lock() {
   typeset -g SELECTOR_LOCK_OWNED_BY_CALLER=0
 }
 trap 'release_selector_lock' EXIT
+trap 'release_selector_lock; exit 129' HUP
 trap 'release_selector_lock; exit 130' INT
 trap 'release_selector_lock; exit 143' TERM
 

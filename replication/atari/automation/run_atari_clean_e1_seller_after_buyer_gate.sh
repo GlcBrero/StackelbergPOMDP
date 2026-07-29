@@ -6,7 +6,12 @@ set -euo pipefail
 # terminal and no legacy selector can release seller training.
 
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"' EXIT
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 129' HUP
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 130' INT
+trap 'e2_release_transient_lock || print -u2 "failed to release a runtime-init lock"; exit 143' TERM
 e2_prepare_runtime
+trap - EXIT HUP INT TERM
 
 typeset -gr SELLER_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_firefix_retrain.zip"
 typeset -gr SELLER_RELEASE="${SELLER_BASE%.zip}.buyer_gate.json"
@@ -24,6 +29,7 @@ function release_seller_lock() {
   typeset -g SELLER_LOCK_OWNED_BY_CALLER=0
 }
 trap 'release_seller_lock' EXIT
+trap 'release_seller_lock; exit 129' HUP
 trap 'release_seller_lock; exit 130' INT
 trap 'release_seller_lock; exit 143' TERM
 

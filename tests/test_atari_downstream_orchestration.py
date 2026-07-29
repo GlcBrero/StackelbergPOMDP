@@ -613,6 +613,28 @@ def test_all_e2_lock_owners_install_signal_cleanup():
             ) in source
 
 
+def test_seller_launchers_protect_runtime_init_and_owned_locks():
+    automation = (
+        Path(__file__).resolve().parents[1] / "replication/atari/automation"
+    )
+    launchers = {
+        "run_atari_clean_e1_seller_after_buyer_gate.sh": "release_seller_lock",
+        "run_e1_seller_balanced_final_selector.sh": "release_selector_lock",
+    }
+    for launcher, release_function in launchers.items():
+        source = (automation / launcher).read_text(encoding="utf-8")
+        init_trap = source.index(
+            "trap 'e2_release_transient_lock || print -u2 "
+        )
+        runtime = source.index("e2_prepare_runtime")
+        clear = source.index("trap - EXIT HUP INT TERM")
+        assert init_trap < runtime < clear
+        for signal_name, exit_status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            assert (
+                f"trap '{release_function}; exit {exit_status}' {signal_name}"
+            ) in source
+
+
 def test_incomplete_orchestration_summary_is_immutable_and_revalidated(
         monkeypatch, tmp_path,
 ):
