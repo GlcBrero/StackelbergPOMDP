@@ -278,9 +278,8 @@ function e2_load_e1_cohort() {
 
 function e2_wait_for_both_e1_gates() {
   # One collision-safe cohort fixes both role launchers to identical E1 bytes.
-  # Prefer a passing balanced buyer; accept a strictly passing standard buyer.
-  # A temporal-contingency buyer is eligible only through its immutable gate
-  # sidecar after both preregistered uniform families failed.
+  # The buyer must be the authoritative primary-economic release, and it must
+  # be byte/report-identical to the buyer that authorized seller training.
   # The seller is balanced-only. Intermediate-step reports are never gates.
   if [[ -f "$E1_COHORT" ]]; then
     e2_load_e1_cohort
@@ -298,9 +297,8 @@ function e2_wait_for_both_e1_gates() {
     sleep 2
   done
   if [[ ! -f "$E1_COHORT" ]]; then
-    # Refresh under the cohort lock so a balanced buyer that passed while we
-    # were waiting for the seller cannot be displaced by an earlier standard
-    # observation. These are the exact records written below.
+    # Refresh under the cohort lock. The validator proves that these buyer
+    # bytes are exactly those in the seller's immutable release manifest.
     e2_resolve_e1_gate seller
     e2_resolve_e1_gate buyer
     set +e

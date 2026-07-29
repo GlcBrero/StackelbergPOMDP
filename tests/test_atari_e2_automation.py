@@ -20,6 +20,8 @@ def test_shared_e1_cohort_is_collision_safe_and_requires_balanced_seller(
         checkpoints[role] = tmp_path / f"{role}.zip"
         reports[role].write_text("{}", encoding="utf-8")
         checkpoints[role].write_bytes(role.encode())
+    release = tmp_path / "seller_release.json"
+    release.write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(validator, "validate_code_root", lambda: "7" * 40)
     monkeypatch.setattr(
@@ -27,31 +29,59 @@ def test_shared_e1_cohort_is_collision_safe_and_requires_balanced_seller(
         lambda path: ("a" if Path(path).suffix == ".json" else "b") * 64,
     )
     monkeypatch.setattr(validator, "validate_zip", lambda path: "b" * 64)
-    monkeypatch.setattr(
-        validator,
-        "validate_e1_gate",
-        lambda args: {
+    release_record = {
+        "path": str(release.resolve()), "sha256": "a" * 64,
+    }
+
+    def validate_gate(args):
+        return {
             "sha256": "b" * 64,
             "role": args.role,
-            "source_kind": "uniform",
-            "sampler_mode": "uniform",
-            "support_artifacts": {},
+            "source_kind": (
+                validator.E1_PRIMARY_SOURCE_KIND
+                if args.role == "buyer" else "uniform"
+            ),
+            "sampler_mode": (
+                validator.E1_TEMPORAL_SAMPLER
+                if args.role == "buyer" else "uniform"
+            ),
+            "support_artifacts": (
+                {} if args.role == "buyer"
+                else {"seller_release": release_record}
+            ),
             "passed": True,
-        },
-    )
+        }
+
+    monkeypatch.setattr(validator, "validate_e1_gate", validate_gate)
     output = tmp_path / "cohort.json"
     args = Namespace(
         output=str(output),
         buyer_report=str(reports["buyer"]),
         buyer_checkpoint=str(checkpoints["buyer"]),
-        buyer_actor_loss_mode="standard",
+        buyer_actor_loss_mode="balanced",
         seller_report=str(reports["seller"]),
         seller_checkpoint=str(checkpoints["seller"]),
         seller_actor_loss_mode="balanced",
     )
+    expected_buyer = {
+        "report": str(reports["buyer"].resolve()),
+        "report_sha256": "a" * 64,
+        "checkpoint": str(checkpoints["buyer"].resolve()),
+        "checkpoint_sha256": "b" * 64,
+        "actor_loss_mode": "balanced",
+        "source_kind": validator.E1_PRIMARY_SOURCE_KIND,
+        "sampler_mode": validator.E1_TEMPORAL_SAMPLER,
+        "support_artifacts": {},
+    }
+    monkeypatch.setattr(
+        validator, "validated_e1_seller_release",
+        lambda path: {"buyer_gate": expected_buyer},
+    )
     result = validator.write_e1_gate_cohort(args)
-    assert result["e1_gates"]["buyer"]["actor_loss_mode"] == "standard"
+    assert result["schema"] == "stackpomdp.atari.e2_e1_gate_cohort.v3"
+    assert result["e1_gates"]["buyer"] == expected_buyer
     assert result["e1_gates"]["seller"]["actor_loss_mode"] == "balanced"
+    assert result["seller_release"] == release_record
     assert validator.validated_e1_gate_cohort(output)["e1_gates"] == (
         result["e1_gates"]
     )
@@ -251,6 +281,71 @@ def test_durable_seller_release_uses_only_final_strict_gate_discovery():
     assert "write-e1-seller-release" in launcher
     assert "step${step}_selector" not in launcher
     assert "--actor-loss-mode balanced" in launcher
+
+
+def test_seller_release_requires_primary_economic_buyer(
+        monkeypatch, tmp_path,
+):
+    report = tmp_path / "buyer.json"
+    checkpoint = tmp_path / "buyer.zip"
+    report.write_text("{}", encoding="utf-8")
+    checkpoint.write_bytes(b"buyer")
+    monkeypatch.setattr(validator, "validate_code_root", lambda: "7" * 40)
+    monkeypatch.setattr(validator, "sha256_file", lambda path: "a" * 64)
+    monkeypatch.setattr(validator, "validate_e1_gate", lambda args: {
+        "sha256": "b" * 64,
+        "source_kind": "uniform",
+        "sampler_mode": "uniform",
+        "support_artifacts": {},
+    })
+    args = Namespace(
+        output=str(tmp_path / "release.json"),
+        buyer_report=str(report),
+        buyer_checkpoint=str(checkpoint),
+        buyer_actor_loss_mode="balanced",
+    )
+    with pytest.raises(RuntimeError, match="primary-economic buyer"):
+        validator.write_e1_seller_release(args)
+    assert not Path(args.output).exists()
+
+
+def test_cohort_rejects_buyer_different_from_seller_training_release(
+        monkeypatch, tmp_path,
+):
+    release_path = tmp_path / "release.json"
+    release_path.write_text("{}", encoding="utf-8")
+    buyer = {
+        "report": "/buyer/report.json",
+        "report_sha256": "1" * 64,
+        "checkpoint": "/buyer/selected.zip",
+        "checkpoint_sha256": "2" * 64,
+        "actor_loss_mode": "balanced",
+        "source_kind": validator.E1_PRIMARY_SOURCE_KIND,
+        "sampler_mode": validator.E1_TEMPORAL_SAMPLER,
+        "support_artifacts": {},
+    }
+    release_record = {
+        "path": str(release_path.resolve()), "sha256": "a" * 64,
+    }
+    gates = {
+        "buyer": buyer,
+        "seller": {
+            "support_artifacts": {"seller_release": release_record},
+        },
+    }
+    monkeypatch.setattr(validator, "sha256_file", lambda path: "a" * 64)
+    monkeypatch.setattr(
+        validator, "validated_e1_seller_release",
+        lambda path: {
+            "buyer_gate": {
+                **buyer, "checkpoint_sha256": "3" * 64,
+            }
+        },
+    )
+    with pytest.raises(RuntimeError, match="seller-training buyer"):
+        validator._validate_cohort_seller_release_binding(
+            {"seller_release": release_record}, gates
+        )
 
 
 def test_temporal_support_binds_activation_family_and_selected_bytes(

@@ -1,6 +1,7 @@
 from argparse import Namespace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,6 +58,40 @@ def _canonical_seller_report(revision="a" * 40):
                 ],
             } for index in range(11)],
         }],
+    }
+
+
+def _primary_protocol():
+    return {
+        "schema_version": 1,
+        "kind": validator.E1_PRIMARY_PROTOCOL_KIND,
+        "role": "buyer",
+        "evaluator": validator.E1_PRIMARY_EVALUATOR,
+        "evaluator_code_revision": "a" * 40,
+        "source_kind": validator.E1_PRIMARY_SOURCE_KIND,
+        "sampler_mode": validator.E1_TEMPORAL_SAMPLER,
+        "economic_check_names": list(validator.E1_PRIMARY_CHECK_NAMES),
+        "candidate_policy": {
+            "eligible_count": 1,
+            "candidate_search": False,
+            "fallback_allowed": False,
+        },
+        "holdout": {
+            "random": {
+                "episodes": 100,
+                "seed_start": 8_000_001,
+                "seed_end": 8_000_100,
+            },
+            "fixed_grid": {
+                "episodes_per_value": 20,
+                "seed_start": 8_100_001,
+                "seed_end": 8_100_020,
+                "values": [value / 10.0 for value in range(11)],
+                "shared_seeds": True,
+                "event_steps": [20, 50, 80, 110, 140],
+            },
+            "timing_evaluation_run": False,
+        },
     }
 
 
@@ -143,6 +178,128 @@ def test_passing_seller_report_is_hidden_until_gate_sidecar(
         require_mode="balanced",
     ))
     assert discovered == {"kind": "e1_gate_discovery", "found": False}
+
+
+def test_primary_protocol_is_authoritative_pending_and_fail_closed(
+        monkeypatch, tmp_path,
+):
+    protocol = tmp_path / validator.E1_PRIMARY_PROTOCOL_NAME
+    report = tmp_path / validator.E1_PRIMARY_REPORT_NAME
+    gate = tmp_path / validator.E1_PRIMARY_GATE_NAME
+    legacy = tmp_path / "e1_buyer_balanced_all6_selector_v2.json"
+    legacy.write_text(json.dumps({"passed": True}), encoding="utf-8")
+    protocol.write_text(json.dumps(_primary_protocol()), encoding="utf-8")
+    args = Namespace(
+        role="buyer", output_dir=str(tmp_path), override_report=None,
+        require_mode=None,
+    )
+
+    pending = validator.discover_e1_gate(args)
+    assert pending["found"] is False
+    assert pending["authoritative_source"] == validator.E1_PRIMARY_SOURCE_KIND
+
+    malformed = _primary_protocol()
+    malformed["holdout"]["random"]["seed_start"] += 1
+    protocol.write_text(json.dumps(malformed), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="primary random seed_start"):
+        validator.discover_e1_gate(args)
+    protocol.write_text(json.dumps(_primary_protocol()), encoding="utf-8")
+
+    report.write_text(json.dumps({
+        "passed": False,
+        "role": "buyer",
+        "evaluator": validator.E1_PRIMARY_EVALUATOR,
+    }), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="confirmation failed"):
+        validator.discover_e1_gate(args)
+
+    report.write_text(json.dumps({
+        "passed": True,
+        "role": "buyer",
+        "evaluator": validator.E1_PRIMARY_EVALUATOR,
+    }), encoding="utf-8")
+    assert validator.discover_e1_gate(args)["state"] == (
+        "gate_publication_pending"
+    )
+
+    gate.write_text("{}", encoding="utf-8")
+    checkpoint_root = tmp_path / "active"
+    checkpoint = checkpoint_root / validator.E1_PRIMARY_CHECKPOINT_RELATIVE
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"primary")
+    monkeypatch.setattr(validator, "AUTOMATION_SOURCE_ROOT", checkpoint_root)
+    monkeypatch.setattr(validator, "validate_e1_gate", lambda local: {
+        "report": str(report.resolve()),
+        "checkpoint": str(checkpoint.resolve()),
+        "sha256": "a" * 64,
+        "actor_loss_mode": "balanced",
+        "source_kind": validator.E1_PRIMARY_SOURCE_KIND,
+        "sampler_mode": validator.E1_TEMPORAL_SAMPLER,
+        "support_artifacts": {"primary_economic_gate": {}},
+    })
+    discovered = validator.discover_e1_gate(args)
+    assert discovered["found"] is True
+    assert discovered["checkpoint"] == str(checkpoint.resolve())
+
+    with pytest.raises(RuntimeError, match="forbids overriding"):
+        validator.discover_e1_gate(Namespace(
+            **{**vars(args), "override_report": str(legacy)}
+        ))
+
+
+def test_orphan_primary_report_never_falls_back(monkeypatch, tmp_path):
+    report = tmp_path / validator.E1_PRIMARY_REPORT_NAME
+    report.write_text(json.dumps({
+        "passed": True,
+        "role": "buyer",
+        "evaluator": validator.E1_PRIMARY_EVALUATOR,
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        validator, "validate_e1_gate",
+        lambda args: pytest.fail("orphan primary report reached validation"),
+    )
+    with pytest.raises(RuntimeError, match="without their authoritative protocol"):
+        validator.discover_e1_gate(Namespace(
+            role="buyer", output_dir=str(tmp_path), override_report=None,
+            require_mode=None,
+        ))
+
+
+def test_primary_validation_subprocess_separates_active_and_pinned_code(
+        monkeypatch, tmp_path,
+):
+    observed = {}
+
+    def run(command, **kwargs):
+        observed["command"] = command
+        observed.update(kwargs)
+        return SimpleNamespace(
+            stdout=(
+                "STACKPOMDP_PRIMARY_GATE_JSON="
+                + json.dumps({"kind": validator.E1_PRIMARY_GATE_KIND})
+                + "\n"
+            )
+        )
+
+    monkeypatch.setattr(validator.subprocess, "run", run)
+    monkeypatch.setenv("STACKPOMDP_CODE_ROOT", "/private/tmp/pinned-e2")
+    # The helper checks that its active sibling exists before spawning.
+    monkeypatch.setattr(
+        validator, "E1_PRIMARY_MODULE_NAME",
+        Path(validator.__file__).name,
+    )
+    result = validator._run_primary_economic_gate_validator(
+        protocol_path=tmp_path / "protocol.json",
+        report_path=tmp_path / "report.json",
+        gate_path=tmp_path / "gate.json",
+        selected_checkpoint=tmp_path / "selected.zip",
+    )
+    assert result["kind"] == validator.E1_PRIMARY_GATE_KIND
+    assert observed["cwd"] == str(validator.AUTOMATION_SOURCE_ROOT)
+    assert observed["env"]["PYTHONPATH"] == str(
+        validator.AUTOMATION_SOURCE_ROOT
+    )
+    assert "STACKPOMDP_CODE_ROOT" not in observed["env"]
 
 
 def test_seller_gate_binds_release_report_alias_and_revision(
@@ -278,6 +435,41 @@ def test_master_is_sequential_preflights_both_roles_and_isolates_failures():
         assert script.index("e2_claim_pipeline_lock") < script.index(
             "e2_prepare_runtime"
         )
+
+
+def test_primary_master_chains_all_gates_and_preserves_live_wandb():
+    root = Path(__file__).resolve().parents[1]
+    automation = root / "replication/atari/automation"
+    master = (
+        automation
+        / "run_atari_clean_e1_primary_economic_to_e2_sequential.sh"
+    ).read_text(encoding="utf-8")
+    buyer_stage = master.index(
+        'run_required_stage "E1 primary-economic buyer confirmation"'
+    )
+    seller_stage = master.index(
+        'run_required_stage "E1 seller training and selection"'
+    )
+    e2_stage = master.index(
+        'run_required_stage "sequential E2 buyer/seller training and selection"'
+    )
+    assert master.index("e2_claim_pipeline_lock") < buyer_stage
+    assert buyer_stage < seller_stage < e2_stage
+    assert "return 2" in master
+    assert "downstream stages remain closed" in master
+
+    common = (automation / "atari_e2_pipeline_common.zsh").read_text(
+        encoding="utf-8"
+    )
+    assert "CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba" in common
+    assert "EXPECTED_HEAD=7a193ba14b91f6ab116da29ff288e3e577d73b88" in common
+    assert "WANDB_MODE=online" in common
+    for name in (
+        "run_atari_clean_e1_seller_after_buyer_gate.sh",
+        "run_atari_clean_e2_buyer_balanced_2m.sh",
+        "run_atari_clean_e2_seller_balanced_2m.sh",
+    ):
+        assert "--wandb" in (automation / name).read_text(encoding="utf-8")
 
 
 def test_seller_selector_is_one_pinned_all_six_run():

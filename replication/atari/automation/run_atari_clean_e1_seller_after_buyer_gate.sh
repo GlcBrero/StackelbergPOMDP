@@ -1,10 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-# Release the balanced E1 seller only after one immutable final buyer gate.
-# Eligible buyers are a strict final uniform family or the preregistered
-# temporal contingency with its validated gate sidecar.  Step diagnostics are
-# deliberately invisible to this launcher.
+# Release the balanced E1 seller only after the immutable primary-economic
+# buyer gate. Once its protocol exists, a failed or malformed confirmation is
+# terminal and no legacy selector can release seller training.
 
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
 e2_prepare_runtime
@@ -50,7 +49,11 @@ for step in 400160 800320 1200480 1600640 2000800; do
 done
 
 export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e1-seller-balanced
-print "strict buyer gate released E1 seller: $E1_BUYER_REPORT ($E1_BUYER_SOURCE_KIND)"
+[[ "$E1_BUYER_SOURCE_KIND" == primary_economic_v1 ]] || {
+  print -u2 "refusing seller training without the primary-economic buyer"
+  exit 1
+}
+print "primary-economic buyer gate released E1 seller: $E1_BUYER_REPORT"
 set +e
 "$PYTHON" -u -m replication.atari.train_atari_meta_response_sb3 \
   --role seller \
@@ -81,7 +84,7 @@ set +e
   --wandb \
   --wandb-project StackPOMDP \
   --wandb-group atari_clean_curriculum \
-  --wandb-name atari_clean_e1_seller_balanced_seed1_firefix_retrain_2m_local \
+  --wandb-name atari_clean_e1_seller_balanced_primary_economic_release_seed1_2m_local \
   2>&1 | tee "$SELLER_LOG"
 status=$pipestatus[1]
 set -e

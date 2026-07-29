@@ -28,6 +28,45 @@ E1_TEMPORAL_GATE_KIND = "atari_e1_buyer_temporal_contingency_gate"
 E1_TEMPORAL_FAMILY_KIND = "atari_e1_buyer_temporal_contingency_family"
 E1_TEMPORAL_ACTIVATION_KIND = "atari_e1_buyer_temporal_contingency_activation"
 E1_SELLER_GATE_KIND = "atari_e1_seller_selection_gate"
+E1_PRIMARY_PROTOCOL_NAME = (
+    "e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json"
+)
+E1_PRIMARY_REPORT_NAME = (
+    "e1_buyer_temporal_mix_v1_primary_economic_confirmation_v1.json"
+)
+E1_PRIMARY_GATE_NAME = (
+    "e1_buyer_temporal_mix_v1_primary_economic_confirmation_v1.gate.json"
+)
+E1_PRIMARY_EVALUATOR = "clean_atari_e1_primary_economic_confirmation_v1"
+E1_PRIMARY_PROTOCOL_KIND = (
+    "stackpomdp.atari.e1_buyer_primary_economic_protocol.v1"
+)
+E1_PRIMARY_GATE_KIND = "stackpomdp.atari.e1_buyer_primary_economic_gate.v1"
+E1_PRIMARY_SOURCE_KIND = "primary_economic_v1"
+E1_PRIMARY_MODULE_NAME = "release_atari_e1_primary_economic.py"
+E1_PRIMARY_CHECKPOINT_RELATIVE = Path(
+    "replication/atari/checkpoints/clean/"
+    "meta_buyer_e1_ppo_balanced_temporal_mix_v1_"
+    "primary_economic_selected.zip"
+)
+E1_PRIMARY_CHECK_NAMES = (
+    "random buyer net payoff",
+    "low/mid-price mean purchases",
+    "low/mid-price mean shots",
+    "price 0.5 purchases",
+    "price 0.5 shots",
+    "price 0.5 purchased bullets used",
+    "price 0.5 buyer net payoff",
+    "price 1 demand",
+    "low-to-high demand drop",
+    "largest adjacent demand reversal",
+    "price 0.0 buyer net payoff",
+    "price 0.1 buyer net payoff",
+    "price 0.2 buyer net payoff",
+    "price 0.3 buyer net payoff",
+    "price 0.4 buyer net payoff",
+    "price 0.5 buyer net payoff",
+)
 E2_ORCHESTRATION_SCHEMA = "stackpomdp.atari.e2_sequential_orchestration.v1"
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
@@ -37,6 +76,10 @@ CANONICAL_E0B_SHA256 = (
 )
 
 sys.path.insert(0, str(REPOSITORY_ROOT))
+
+# Automation remains on the active reviewed branch while E2 policy code is
+# deliberately imported from REPOSITORY_ROOT's pinned detached worktree.
+AUTOMATION_SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def fail(message: str) -> None:
@@ -726,6 +769,162 @@ def _validate_temporal_gate_support(
     }
 
 
+def _run_primary_economic_gate_validator(
+        *, protocol_path: Path, report_path: Path, gate_path: Path,
+        selected_checkpoint: Path,
+) -> dict:
+    """Validate the active E1 release in a process isolated from pinned E2.
+
+    E2 deliberately imports policy code from detached commit 7a193ba.  The
+    release validator and its evaluator dependencies are newer active
+    automation, so importing them into this process would either fail or mix
+    scientific runtimes.  A short child process receives the active source
+    root explicitly; this process and every subsequent E2 import remain pinned.
+    """
+
+    module_path = Path(__file__).resolve().with_name(E1_PRIMARY_MODULE_NAME)
+    if not module_path.is_file() or module_path.is_symlink():
+        fail(
+            "primary-economic release validator is unavailable or unsafe: "
+            f"{module_path}"
+        )
+    program = """
+import json
+import sys
+from pathlib import Path
+from replication.atari.automation.release_atari_e1_primary_economic import validate_gate
+value = validate_gate(
+    protocol_path=Path(sys.argv[1]),
+    report_path=Path(sys.argv[2]),
+    gate_path=Path(sys.argv[3]),
+    selected_checkpoint=Path(sys.argv[4]),
+)
+print("STACKPOMDP_PRIMARY_GATE_JSON=" + json.dumps(value, sort_keys=True))
+""".strip()
+    environment = os.environ.copy()
+    environment.pop("STACKPOMDP_CODE_ROOT", None)
+    environment["PYTHONPATH"] = str(AUTOMATION_SOURCE_ROOT)
+    environment["PYTHONNOUSERSITE"] = "1"
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable, "-c", program,
+                str(protocol_path), str(report_path), str(gate_path),
+                str(selected_checkpoint),
+            ],
+            cwd=str(AUTOMATION_SOURCE_ROOT),
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        stderr = getattr(error, "stderr", "")
+        fail(f"primary-economic release validation failed: {stderr or error}")
+    prefix = "STACKPOMDP_PRIMARY_GATE_JSON="
+    records = [
+        line[len(prefix):] for line in completed.stdout.splitlines()
+        if line.startswith(prefix)
+    ]
+    if len(records) != 1:
+        fail("primary-economic validator emitted no unique JSON result")
+    try:
+        value = json.loads(records[0])
+    except json.JSONDecodeError as error:
+        fail(f"primary-economic validator emitted invalid JSON: {error}")
+    if not isinstance(value, dict):
+        fail("primary-economic validator result is not an object")
+    return value
+
+
+def _validate_primary_economic_gate(args: argparse.Namespace) -> dict:
+    """Validate and normalize the authoritative one-checkpoint buyer gate."""
+
+    if args.role != "buyer" or args.actor_loss_mode != "balanced":
+        fail("the primary-economic E1 gate is balanced-buyer only")
+    report_path = Path(args.report).expanduser().resolve()
+    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    if report_path.name != E1_PRIMARY_REPORT_NAME:
+        fail(f"unexpected primary-economic report name: {report_path.name}")
+    protocol_path = report_path.with_name(E1_PRIMARY_PROTOCOL_NAME)
+    gate_path = report_path.with_name(E1_PRIMARY_GATE_NAME)
+    report = load_json(report_path)
+    expect_equal(report.get("passed"), True, label="primary buyer outcome")
+    expect_equal(report.get("role"), "buyer", label="primary buyer role")
+    expect_equal(
+        report.get("evaluator"), E1_PRIMARY_EVALUATOR,
+        label="primary buyer evaluator",
+    )
+
+    gate = _run_primary_economic_gate_validator(
+        protocol_path=protocol_path,
+        report_path=report_path,
+        gate_path=gate_path,
+        selected_checkpoint=checkpoint,
+    )
+    if not isinstance(gate, dict):
+        fail("primary-economic validate_gate did not return an object")
+    expect_equal(gate.get("kind"), E1_PRIMARY_GATE_KIND, label="primary gate kind")
+    expect_equal(gate.get("passed"), True, label="primary gate outcome")
+    expect_equal(gate.get("role"), "buyer", label="primary gate role")
+    expect_equal(
+        gate.get("actor_loss_mode"), "balanced", label="primary gate actor loss"
+    )
+    expect_equal(
+        gate.get("sampler_mode"), E1_TEMPORAL_SAMPLER,
+        label="primary gate sampler",
+    )
+    expect_equal(
+        gate.get("source_kind"), E1_PRIMARY_SOURCE_KIND,
+        label="primary gate source kind",
+    )
+    digest = validate_zip(checkpoint)
+
+    from replication.atari.train_atari_stackpomdp_leader_sb3 import (
+        checkpoint_policy_metadata,
+    )
+
+    metadata = checkpoint_policy_metadata(
+        checkpoint, device="cpu", label="selected primary-economic E1 buyer"
+    )
+    expect_equal(metadata.get("sha256"), digest, label="loaded primary E1 SHA-256")
+    expect_equal(metadata.get("economic_role"), "buyer", label="loaded primary role")
+    expect_equal(
+        metadata.get("economic_input_mode"), "full",
+        label="loaded primary economic input mode",
+    )
+    expect_equal(
+        metadata.get("actor_loss_mode"), "balanced",
+        label="loaded primary actor-loss mode",
+    )
+    return {
+        "kind": "e1_gate",
+        "role": "buyer",
+        "report": str(report_path),
+        "checkpoint": str(checkpoint),
+        "sha256": digest,
+        "actor_loss_mode": "balanced",
+        "source_kind": E1_PRIMARY_SOURCE_KIND,
+        "sampler_mode": E1_TEMPORAL_SAMPLER,
+        "support_artifacts": {
+            "primary_economic_protocol": {
+                "path": str(protocol_path),
+                "sha256": sha256_file(protocol_path),
+            },
+            "primary_economic_report": {
+                "path": str(report_path),
+                "sha256": sha256_file(report_path),
+            },
+            "primary_economic_gate": {
+                "path": str(gate_path),
+                "sha256": sha256_file(gate_path),
+            },
+        },
+        "candidate_sha256": [digest],
+        "passed": True,
+    }
+
+
 def _validate_e1_gate_core(
         args: argparse.Namespace, *, require_seller_support: bool,
 ) -> dict:
@@ -837,6 +1036,12 @@ def _validate_e1_gate_core(
 
 
 def validate_e1_gate(args: argparse.Namespace) -> dict:
+    if (
+            args.role == "buyer"
+            and Path(args.report).expanduser().resolve().name
+            == E1_PRIMARY_REPORT_NAME
+    ):
+        return _validate_primary_economic_gate(args)
     return _validate_e1_gate_core(args, require_seller_support=True)
 
 
@@ -872,8 +1077,160 @@ def _report_selected_screen_winner(report: dict) -> bool:
     return False
 
 
+def _validate_primary_protocol_header(path: Path) -> dict:
+    """Fail early on a malformed authoritative protocol while evaluation runs."""
+
+    value = load_json(path)
+    expect_equal(value.get("schema_version"), 1, label="primary protocol schema")
+    expect_equal(
+        value.get("kind"), E1_PRIMARY_PROTOCOL_KIND,
+        label="primary protocol kind",
+    )
+    expect_equal(value.get("role"), "buyer", label="primary protocol role")
+    expect_equal(
+        value.get("evaluator"), E1_PRIMARY_EVALUATOR,
+        label="primary protocol evaluator",
+    )
+    expect_equal(
+        value.get("source_kind"), E1_PRIMARY_SOURCE_KIND,
+        label="primary protocol source kind",
+    )
+    expect_equal(
+        value.get("sampler_mode"), E1_TEMPORAL_SAMPLER,
+        label="primary protocol sampler",
+    )
+    expect_equal(
+        value.get("economic_check_names"), list(E1_PRIMARY_CHECK_NAMES),
+        label="primary protocol economic checks",
+    )
+    candidate = value.get("candidate_policy", {})
+    for key, expected in {
+        "eligible_count": 1,
+        "candidate_search": False,
+        "fallback_allowed": False,
+    }.items():
+        expect_equal(candidate.get(key), expected, label=f"primary candidate {key}")
+    holdout = value.get("holdout", {})
+    expect_equal(holdout.get("timing_evaluation_run"), False, label="timing holdout")
+    random_holdout = holdout.get("random", {})
+    for key, expected in {
+        "episodes": 100,
+        "seed_start": 8_000_001,
+        "seed_end": 8_000_100,
+    }.items():
+        expect_equal(
+            random_holdout.get(key), expected, label=f"primary random {key}"
+        )
+    fixed = holdout.get("fixed_grid", {})
+    for key, expected in {
+        "episodes_per_value": 20,
+        "seed_start": 8_100_001,
+        "seed_end": 8_100_020,
+        "values": [value / 10.0 for value in range(11)],
+        "shared_seeds": True,
+        "event_steps": [20, 50, 80, 110, 140],
+    }.items():
+        expect_equal(fixed.get(key), expected, label=f"primary fixed {key}")
+    revision = value.get("evaluator_code_revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        fail("primary protocol has no full evaluator revision")
+    return value
+
+
+def _discover_authoritative_primary_buyer_gate(
+        *, output_dir: Path, override_report: str | None,
+) -> dict | None:
+    """Resolve the primary buyer protocol or return None before activation.
+
+    The exact protocol file is the activation marker.  Once it exists, legacy
+    all-six and timing-contingency reports are permanently ineligible.  A
+    still-running primary confirmation returns ``found=False``; a published
+    negative or malformed artifact aborts instead of silently falling back.
+    """
+
+    protocol_path = output_dir / E1_PRIMARY_PROTOCOL_NAME
+    report_path = output_dir / E1_PRIMARY_REPORT_NAME
+    gate_path = output_dir / E1_PRIMARY_GATE_NAME
+    primary_paths_exist = any(
+        os.path.lexists(path) for path in (protocol_path, report_path, gate_path)
+    )
+    if not os.path.lexists(protocol_path):
+        if primary_paths_exist:
+            fail(
+                "primary-economic artifacts exist without their authoritative "
+                f"protocol: {protocol_path}"
+            )
+        return None
+
+    # Reject malformed JSON/symlinks immediately even while the confirmation
+    # process is still running. Full protocol semantics are rechecked by the
+    # transitive stage-1 validator when the gate is published.
+    _validate_primary_protocol_header(protocol_path)
+    if override_report:
+        override = Path(override_report).expanduser().resolve()
+        if override != report_path.resolve():
+            fail(
+                "the active primary-economic protocol forbids overriding the "
+                f"buyer report: {override}"
+            )
+    if os.path.lexists(gate_path) and not os.path.lexists(report_path):
+        fail("primary-economic gate exists before its required report")
+    if not os.path.lexists(report_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_PRIMARY_SOURCE_KIND,
+            "state": "confirmation_pending",
+        }
+
+    report = load_json(report_path)
+    passed = report.get("passed")
+    if type(passed) is not bool:
+        fail("authoritative primary-economic report has no Boolean outcome")
+    expect_equal(report.get("role"), "buyer", label="primary report role")
+    expect_equal(
+        report.get("evaluator"), E1_PRIMARY_EVALUATOR,
+        label="primary report evaluator",
+    )
+    if passed is False:
+        fail("authoritative primary-economic buyer confirmation failed")
+    if not os.path.lexists(gate_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_PRIMARY_SOURCE_KIND,
+            "state": "gate_publication_pending",
+        }
+
+    checkpoint = (AUTOMATION_SOURCE_ROOT / E1_PRIMARY_CHECKPOINT_RELATIVE).resolve()
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report_path),
+        checkpoint=str(checkpoint),
+        role="buyer",
+        actor_loss_mode="balanced",
+    ))
+    return {
+        "kind": "e1_gate_discovery",
+        "found": True,
+        "role": "buyer",
+        "report": validated["report"],
+        "checkpoint": validated["checkpoint"],
+        "checkpoint_sha256": validated["sha256"],
+        "actor_loss_mode": validated["actor_loss_mode"],
+        "source_kind": validated["source_kind"],
+        "sampler_mode": validated["sampler_mode"],
+        "support_artifacts": validated["support_artifacts"],
+    }
+
+
 def discover_e1_gate(args: argparse.Namespace) -> dict:
     output_dir = Path(args.output_dir).expanduser().resolve()
+    if args.role == "buyer":
+        primary = _discover_authoritative_primary_buyer_gate(
+            output_dir=output_dir, override_report=args.override_report,
+        )
+        if primary is not None:
+            return primary
     if args.override_report:
         override = Path(args.override_report).expanduser().resolve()
         if not override.exists():
@@ -1040,18 +1397,47 @@ def validated_e1_gate_cohort(path: Path) -> dict:
     value = load_json(path)
     expect_equal(
         value.get("schema"),
-        "stackpomdp.atari.e2_e1_gate_cohort.v2",
+        "stackpomdp.atari.e2_e1_gate_cohort.v3",
         label="E1 gate-cohort schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
     gates = value.get("e1_gates")
     if not isinstance(gates, dict) or set(gates) != {"buyer", "seller"}:
         fail("E1 gate cohort must contain exactly buyer and seller records")
-    for role, gate in gates.items():
-        validate_e1_gate_record(gate, role=role)
+    validated = {
+        role: validate_e1_gate_record(gate, role=role)
+        for role, gate in gates.items()
+    }
+    if validated["buyer"]["source_kind"] != E1_PRIMARY_SOURCE_KIND:
+        fail("E2 gate cohort requires the authoritative primary-economic buyer")
     if gates["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
+    _validate_cohort_seller_release_binding(value, gates)
     return value
+
+
+def _validate_cohort_seller_release_binding(value: dict, gates: dict) -> dict:
+    """Prove E2's buyer is exactly the buyer used to release its seller."""
+
+    record = value.get("seller_release")
+    if not isinstance(record, dict):
+        fail("E1 gate cohort has no seller-release record")
+    release_path = Path(record.get("path", "")).expanduser().resolve()
+    expect_equal(
+        record.get("sha256"), sha256_file(release_path),
+        label="cohort seller-release SHA-256",
+    )
+    release = validated_e1_seller_release(release_path)
+    expect_equal(
+        gates.get("buyer"), release.get("buyer_gate"),
+        label="cohort buyer versus seller-training buyer",
+    )
+    seller_support = gates.get("seller", {}).get("support_artifacts", {})
+    expect_equal(
+        seller_support.get("seller_release"), record,
+        label="cohort seller gate versus seller release",
+    )
+    return release
 
 
 def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
@@ -1081,11 +1467,29 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
         }
     if entries["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
+    if entries["buyer"]["source_kind"] != E1_PRIMARY_SOURCE_KIND:
+        fail("E2 gate cohort requires the authoritative primary-economic buyer")
+    seller_release = entries["seller"]["support_artifacts"].get(
+        "seller_release"
+    )
+    if not isinstance(seller_release, dict):
+        fail("E2 seller gate does not bind an immutable seller release")
+    release_path = Path(seller_release.get("path", "")).expanduser().resolve()
+    expect_equal(
+        seller_release.get("sha256"), sha256_file(release_path),
+        label="seller gate release SHA-256",
+    )
+    release = validated_e1_seller_release(release_path)
+    expect_equal(
+        entries["buyer"], release.get("buyer_gate"),
+        label="E2 buyer versus seller-training buyer",
+    )
     result = {
-        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v2",
+        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v3",
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
-        "buyer_preference": "balanced_then_standard_strict_no_fallback",
+        "buyer_authority": E1_PRIMARY_SOURCE_KIND,
+        "seller_release": seller_release,
         "e1_gates": entries,
     }
     atomic_write_new_json(output, result)
@@ -1102,7 +1506,7 @@ def read_e1_gate_cohort(args: argparse.Namespace) -> dict:
 
 
 def write_e1_seller_release(args: argparse.Namespace) -> dict:
-    """Pin the exact strict buyer gate that authorizes E1 seller training."""
+    """Pin the exact primary-economic buyer that authorizes seller training."""
 
     output = Path(args.output).expanduser().resolve()
     if os.path.lexists(output):
@@ -1115,6 +1519,8 @@ def write_e1_seller_release(args: argparse.Namespace) -> dict:
         role="buyer",
         actor_loss_mode=args.buyer_actor_loss_mode,
     ))
+    if validated["source_kind"] != E1_PRIMARY_SOURCE_KIND:
+        fail("E1 seller training requires the authoritative primary-economic buyer")
     gate = {
         "report": str(report),
         "report_sha256": sha256_file(report),
@@ -1126,7 +1532,7 @@ def write_e1_seller_release(args: argparse.Namespace) -> dict:
         "support_artifacts": validated["support_artifacts"],
     }
     result = {
-        "schema": "stackpomdp.atari.e1_seller_release.v1",
+        "schema": "stackpomdp.atari.e1_seller_release.v2",
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
         "seller_training_actor_loss_mode": "balanced",
@@ -1139,7 +1545,7 @@ def write_e1_seller_release(args: argparse.Namespace) -> dict:
 def validated_e1_seller_release(path: Path) -> dict:
     value = load_json(path)
     expect_equal(
-        value.get("schema"), "stackpomdp.atari.e1_seller_release.v1",
+        value.get("schema"), "stackpomdp.atari.e1_seller_release.v2",
         label="E1 seller-release schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
@@ -1147,7 +1553,9 @@ def validated_e1_seller_release(path: Path) -> dict:
         value.get("seller_training_actor_loss_mode"), "balanced",
         label="E1 seller training actor-loss mode",
     )
-    validate_e1_gate_record(value.get("buyer_gate"), role="buyer")
+    buyer = validate_e1_gate_record(value.get("buyer_gate"), role="buyer")
+    if buyer["source_kind"] != E1_PRIMARY_SOURCE_KIND:
+        fail("E1 seller release is not bound to the primary-economic buyer")
     return value
 
 
