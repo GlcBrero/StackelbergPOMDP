@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tempfile
 
 import numpy as np
@@ -1291,10 +1292,26 @@ def atomic_copy_no_overwrite(source, destination):
         temporary.unlink(missing_ok=True)
     if checkpoint_sha256(destination) != checkpoint_sha256(source):
         raise RuntimeError("selected alias copy failed SHA-256 verification")
-    return {"path": str(destination), "sha256": checkpoint_sha256(destination)}
+    return {
+        "pinned_path": str(destination),
+        "sha256": checkpoint_sha256(destination),
+    }
 
 
 def run_selection(args):
+    selector_code_revision = getattr(args, "selector_code_revision", None)
+    if selector_code_revision is not None:
+        current_revision = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if current_revision != selector_code_revision:
+            raise ValueError(
+                "--selector-code-revision does not match the evaluator "
+                f"worktree ({selector_code_revision} != {current_revision})"
+            )
     source_e0b = checkpoint_path(args.e0b_checkpoint, label="E0b checkpoint")
     source_candidates = [checkpoint_path(path) for path in args.checkpoint]
     source_hashes = [checkpoint_sha256(path) for path in source_candidates]
@@ -1484,6 +1501,7 @@ def run_selection(args):
                 "e0b_sha256": e0b_pin["sha256"],
                 "rom_sha256": rom_pin["sha256"],
                 "candidate_sha256": source_hashes,
+                "selector_code_revision": selector_code_revision,
             },
             "protocol": {
                 "gameplay_transitions": 200,
@@ -1710,7 +1728,13 @@ def parse_args(argv=None):
     parser.add_argument("--noop-max", type=int, default=30)
     parser.add_argument("--max-frames", type=int, default=100_000)
     parser.add_argument("--rom-path")
+    parser.add_argument("--selector-code-revision")
     args = parser.parse_args(argv)
+    if (
+            args.selector_code_revision is not None
+            and not re.fullmatch(r"[0-9a-f]{40}", args.selector_code_revision)
+    ):
+        parser.error("--selector-code-revision must be a full lowercase git hash")
     if args.screen_episodes != SCREEN_EPISODES:
         parser.error(f"screen requires exactly {SCREEN_EPISODES} episodes")
     if args.confirmation_episodes != CONFIRMATION_EPISODES:
@@ -1779,7 +1803,7 @@ def main(argv=None):
     except Exception:
         selected_info = report.get("selected_alias")
         if selected_info is not None:
-            selected_path = Path(selected_info["path"])
+            selected_path = Path(selected_info["pinned_path"])
             if (
                     selected_path.is_file()
                     and checkpoint_sha256(selected_path)

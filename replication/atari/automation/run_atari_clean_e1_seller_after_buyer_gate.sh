@@ -92,3 +92,4 @@ set -e
 
 rmdir "$SELLER_LOCK"
 trap - EXIT INT TERM
+exec "$AUTOMATION_DIR/run_e1_seller_balanced_final_selector.sh"

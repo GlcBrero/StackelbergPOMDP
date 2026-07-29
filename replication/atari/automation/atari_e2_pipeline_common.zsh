@@ -7,6 +7,7 @@
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin
 
 typeset -gr AUTOMATION_DIR="${${(%):-%N}:A:h}"
+typeset -gr AUTOMATION_ROOT="${AUTOMATION_DIR:h:h:h}"
 typeset -gr ROOT=/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP
 typeset -gr CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba
 typeset -gr PYTHON=/Users/gbrero/miniconda3/envs/stackelbergPOMDP/bin/python
@@ -20,6 +21,7 @@ typeset -gr E2_OUTPUT="$ROOT/replication/atari/results/e2_selections"
 typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort.json"
 typeset -gr ROM="$ROOT/stackelberg_pomdp/atari/roms/space_invaders.bin"
 typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301
+typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-sequential.lock
 
 typeset -gra E2_STEPS=(400680 800520 1200360 1600200 2000040)
 typeset -gr E2_TIMESTEPS=2000040
@@ -27,8 +29,64 @@ typeset -gr E2_N_STEPS=210
 typeset -gr E2_NUM_ENVS=4
 typeset -gr E2_BATCH_SIZE=840
 
+function e2_claim_pipeline_lock() {
+  local token owner
+  token="${STACKPOMDP_E2_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
+  if mkdir "$E2_PIPELINE_LOCK" 2>/dev/null; then
+    print -r -- "${token}"$'\t'"$$"$'\t'"$(hostname)"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > "$E2_PIPELINE_LOCK/owner.tsv"
+    typeset -gx STACKPOMDP_E2_LOCK_TOKEN="$token"
+    typeset -g E2_LOCK_OWNED_BY_CALLER=1
+    return 0
+  fi
+  [[ -f "$E2_PIPELINE_LOCK/owner.tsv" ]] || {
+    print -u2 "E2 pipeline lock exists without an owner record: $E2_PIPELINE_LOCK"
+    return 1
+  }
+  IFS=$'\t' read -r owner _ < "$E2_PIPELINE_LOCK/owner.tsv"
+  if [[ "$owner" != "$token" ]]; then
+    print -u2 "another E2 pipeline owns $E2_PIPELINE_LOCK: $owner"
+    return 1
+  fi
+  typeset -gx STACKPOMDP_E2_LOCK_TOKEN="$token"
+  typeset -g E2_LOCK_OWNED_BY_CALLER=0
+}
+
+function e2_release_pipeline_lock() {
+  local owner
+  [[ "${E2_LOCK_OWNED_BY_CALLER:-0}" == 1 ]] || return 0
+  [[ -f "$E2_PIPELINE_LOCK/owner.tsv" ]] || return 1
+  IFS=$'\t' read -r owner _ < "$E2_PIPELINE_LOCK/owner.tsv"
+  [[ "$owner" == "${STACKPOMDP_E2_LOCK_TOKEN:-}" ]] || {
+    print -u2 "refusing to release an E2 lock owned by another token"
+    return 1
+  }
+  rm "$E2_PIPELINE_LOCK/owner.tsv"
+  rmdir "$E2_PIPELINE_LOCK"
+  typeset -g E2_LOCK_OWNED_BY_CALLER=0
+}
+
 function e2_prepare_runtime() {
-  local head worktree_status lock
+  local head worktree_status automation_status lock
+  typeset -g E2_AUTOMATION_REVISION=$(git -C "$AUTOMATION_ROOT" rev-parse HEAD)
+  [[ ${#E2_AUTOMATION_REVISION} -eq 40 \
+      && "$E2_AUTOMATION_REVISION" != *[!0-9a-f]* ]] || {
+    print -u2 "Atari automation has no full git revision: $AUTOMATION_ROOT"
+    return 1
+  }
+  automation_status=$(git -C "$AUTOMATION_ROOT" status --porcelain -- \
+    replication/atari/automation \
+    replication/atari/evaluate_atari_meta_response_sb3.py \
+    replication/atari/evaluate_atari_stackpomdp_leader_sb3.py \
+    replication/atari/train_atari_meta_response_sb3.py \
+    replication/atari/train_atari_stackpomdp_leader_sb3.py \
+    replication/atari/sb3_common.py \
+    stackelberg_pomdp/atari)
+  if [[ -n "$automation_status" ]]; then
+    print -u2 "refusing automation from uncommitted Atari code: $AUTOMATION_ROOT"
+    print -u2 "$automation_status"
+    return 1
+  fi
   if [[ ! -e "$CODE_ROOT" ]]; then
     # Isolate E2 from later changes on the active branch while all generated
     # checkpoints, reports, W&B files, and logs still go to the active repo.
@@ -115,6 +173,35 @@ function e2_refuse_path() {
     print -u2 "refusing to overwrite existing pipeline artifact: $file_path"
     return 1
   fi
+}
+
+function e2_refuse_role_pipeline_outputs() {
+  local role="$1"
+  local stem run_name selected selector_log step file_path
+  local -a result_artifacts
+  e2_role_paths "$role"
+  stem="${E2_BASE%.zip}"
+  for file_path in \
+      "$E2_BASE" \
+      "${stem}.evaluation.json" \
+      "${stem}.provenance.json" \
+      "${stem}.training.jsonl" \
+      "$E2_INPUT_MANIFEST" \
+      "$E2_TRAIN_LOG"; do
+    e2_refuse_path "$file_path"
+  done
+  for step in $E2_STEPS; do
+    e2_refuse_path "${stem}_step${step}.zip"
+  done
+  run_name="e2_${role}_balanced_all6_selector_v2"
+  selected="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_selected.zip"
+  selector_log="$LOG_ROOT/${run_name}.log"
+  e2_refuse_path "$selected"
+  e2_refuse_path "$selector_log"
+  result_artifacts=("$E2_OUTPUT/${run_name}".*(N))
+  for file_path in $result_artifacts; do
+    e2_refuse_path "$file_path"
+  done
 }
 
 function e2_resolve_e1_gate() {

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 
@@ -26,8 +27,13 @@ E1_TEMPORAL_SAMPLER = "temporal-marginal-v1"
 E1_TEMPORAL_GATE_KIND = "atari_e1_buyer_temporal_contingency_gate"
 E1_TEMPORAL_FAMILY_KIND = "atari_e1_buyer_temporal_contingency_family"
 E1_TEMPORAL_ACTIVATION_KIND = "atari_e1_buyer_temporal_contingency_activation"
+E1_SELLER_GATE_KIND = "atari_e1_seller_selection_gate"
+E2_ORCHESTRATION_SCHEMA = "stackpomdp.atari.e2_sequential_orchestration.v1"
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
+)
+CANONICAL_E0B_SHA256 = (
+    "3a9ded5c53e10bf0b2215f1223f7bde15ba23d197dd0c651590bcd980c375ca3"
 )
 
 sys.path.insert(0, str(REPOSITORY_ROOT))
@@ -67,6 +73,31 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def atomic_write_new_json(path: Path, value: dict) -> None:
+    """Publish a new JSON artifact atomically and never overwrite a peer."""
+
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.path.lexists(path):
+        fail(f"refusing to overwrite immutable JSON artifact: {path}")
+    descriptor, raw_temporary = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(raw_temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            fail(f"refusing to overwrite immutable JSON artifact: {path}")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def validate_zip(path: Path) -> str:
     path = path.expanduser().resolve()
     digest = sha256_file(path)
@@ -104,6 +135,53 @@ def validate_code_root() -> str:
     expected = "7a193ba14b91f6ab116da29ff288e3e577d73b88"
     expect_equal(head, expected, label="E2 code HEAD")
     return head
+
+
+def validate_selector_code_root(path: Path) -> str:
+    """Return the exact clean revision used to run the E1 seller selector."""
+
+    path = path.expanduser().resolve()
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            [
+                "git", "-C", str(path), "status", "--porcelain", "--",
+                "replication/atari/evaluate_atari_meta_response_sb3.py",
+                "replication/atari/train_atari_meta_response_sb3.py",
+                "replication/atari/automation",
+                "replication/atari/sb3_common.py",
+                "stackelberg_pomdp/atari",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        fail(f"cannot validate selector code root {path}: {error}")
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        fail(f"selector code root has no full git revision: {path}")
+    if dirty:
+        fail(f"selector code root has uncommitted Atari changes: {dirty}")
+    return head
+
+
+def validate_recorded_revision(revision: object) -> str:
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        fail("recorded selector code revision is invalid")
+    try:
+        subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "cat-file", "-e", f"{revision}^{{commit}}"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        fail(f"recorded selector revision is unavailable: {revision}: {error}")
+    return revision
 
 
 def _canonical_uniform_sampler() -> dict:
@@ -327,6 +405,80 @@ def _strict_e1_selection(
         label="E1 report self-artifact",
     )
     return screen_hashes
+
+
+def _validate_canonical_seller_selection_protocol(report: dict) -> None:
+    protocol = report.get("protocol", {})
+    expected_protocol = {
+        "screen_episodes": 20,
+        "screen_seed_start": 3_500_001,
+        "confirmation_episodes": 100,
+        "confirmation_seed_start": 3_600_001,
+        "fixed_context_episodes": 20,
+        "fixed_context_seed_start": 3_700_001,
+        "confirmation_policy": "screen_winner_only_no_fallback",
+    }
+    for key, expected in expected_protocol.items():
+        expect_equal(
+            protocol.get(key), expected,
+            label=f"canonical E1 seller protocol {key}",
+        )
+    validate_recorded_revision(
+        report.get("immutable_evaluation", {}).get("selector_code_revision")
+    )
+    expect_equal(
+        report.get("immutable_evaluation", {}).get("e0b_sha256"),
+        CANONICAL_E0B_SHA256,
+        label="canonical E1 seller E0b SHA-256",
+    )
+    results = report.get("screen", {}).get("results")
+    if not isinstance(results, list) or len(results) != 6:
+        fail("canonical E1 seller selection must screen six candidates")
+    expect_equal(
+        [row.get("metadata", {}).get("training_timesteps") for row in results],
+        [400_160, 800_320, 1_200_480, 1_600_640, 2_000_800, 2_000_800],
+        label="canonical E1 seller candidate timesteps",
+    )
+    for row in results:
+        expect_equal(
+            row.get("metadata", {}).get("e0b_source_provenance", {}).get(
+                "sha256"
+            ),
+            CANONICAL_E0B_SHA256,
+            label="canonical E1 seller candidate E0b",
+        )
+    pairs = report.get("screen", {}).get("common_pairing", {}).get(
+        "seed_context_pairs"
+    )
+    expect_equal(
+        [row.get("evaluation_seed") for row in pairs or []],
+        list(range(3_500_001, 3_500_021)),
+        label="canonical E1 seller screen seeds",
+    )
+    attempts = report.get("confirmation_attempts")
+    if not isinstance(attempts, list) or len(attempts) != 1:
+        fail("canonical E1 seller selection must have one confirmation")
+    random_rows = attempts[0].get("random", {}).get("episode_rows")
+    expect_equal(
+        [row.get("evaluation_seed") for row in random_rows or []],
+        list(range(3_600_001, 3_600_101)),
+        label="canonical E1 seller confirmation seeds",
+    )
+    fixed = attempts[0].get("fixed_contexts")
+    if not isinstance(fixed, list) or len(fixed) != 11:
+        fail("canonical E1 seller selection must evaluate eleven fixed contexts")
+    expect_equal(
+        [round(float(row.get("opponent_value")), 6) for row in fixed],
+        [round(index / 10.0, 6) for index in range(11)],
+        label="canonical E1 seller fixed-context grid",
+    )
+    fixed_seeds = list(range(3_700_001, 3_700_021))
+    for row in fixed:
+        expect_equal(
+            [episode.get("evaluation_seed") for episode in row.get("episode_rows", [])],
+            fixed_seeds,
+            label="canonical E1 seller fixed-context seeds",
+        )
 
 
 def _validate_temporal_gate_support(
@@ -574,7 +726,9 @@ def _validate_temporal_gate_support(
     }
 
 
-def validate_e1_gate(args: argparse.Namespace) -> dict:
+def _validate_e1_gate_core(
+        args: argparse.Namespace, *, require_seller_support: bool,
+) -> dict:
     report_path = Path(args.report).expanduser().resolve()
     checkpoint = Path(args.checkpoint).expanduser().resolve()
     report = load_json(report_path)
@@ -595,12 +749,20 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     candidate_hashes = _strict_e1_selection(
         report, report_path, checkpoint, digest
     )
+    if args.role == "seller":
+        _validate_canonical_seller_selection_protocol(report)
     sampler = _e1_sampler_contract(report)
     if sampler["source_kind"] == "temporal_contingency":
         if args.role != "buyer" or args.actor_loss_mode != "balanced":
             fail("temporal E1 contingency is valid only for the balanced buyer")
         support_artifacts = _validate_temporal_gate_support(
             report_path, checkpoint, digest, report, candidate_hashes
+        )
+    elif args.role == "seller" and require_seller_support:
+        if args.actor_loss_mode != "balanced":
+            fail("the downstream E1 seller gate must use balanced actor loss")
+        support_artifacts = _validate_seller_selection_gate_support(
+            report_path, checkpoint, digest, candidate_hashes
         )
     else:
         support_artifacts = {}
@@ -669,8 +831,13 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
         "source_kind": sampler["source_kind"],
         "sampler_mode": sampler["sampler_mode"],
         "support_artifacts": support_artifacts,
+        "candidate_sha256": candidate_hashes,
         "passed": True,
     }
+
+
+def validate_e1_gate(args: argparse.Namespace) -> dict:
+    return _validate_e1_gate_core(args, require_seller_support=True)
 
 
 def _report_selected_screen_winner(report: dict) -> bool:
@@ -737,6 +904,13 @@ def discover_e1_gate(args: argparse.Namespace) -> dict:
                 # The selector publishes its immutable JSON before the
                 # contingency validator can publish the gate sidecar.  Treat
                 # this narrow interval as not ready, never as an eligible gate.
+                continue
+        if args.role == "seller":
+            gate_path = report_path.with_name(f"{report_path.stem}.gate.json")
+            if not gate_path.is_file():
+                # The report and selected alias are published before the
+                # release-bound gate sidecar.  Never discover the transient
+                # report alone as a downstream response policy.
                 continue
         if not _report_selected_screen_winner(report):
             # Legacy selectors could report success after searching below the
@@ -914,10 +1088,7 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
         "buyer_preference": "balanced_then_standard_strict_no_fallback",
         "e1_gates": entries,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as handle:
-        json.dump(result, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    atomic_write_new_json(output, result)
     return {"kind": "e1_gate_cohort", "path": str(output), **result}
 
 
@@ -961,10 +1132,7 @@ def write_e1_seller_release(args: argparse.Namespace) -> dict:
         "seller_training_actor_loss_mode": "balanced",
         "buyer_gate": gate,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as handle:
-        json.dump(result, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    atomic_write_new_json(output, result)
     return {"kind": "e1_seller_release", "path": str(output), **result}
 
 
@@ -990,6 +1158,157 @@ def read_e1_seller_release(args: argparse.Namespace) -> dict:
         "path": str(path),
         **validated_e1_seller_release(path),
     }
+
+
+def _validate_seller_selection_gate_support(
+        report_path: Path,
+        checkpoint: Path,
+        digest: str,
+        candidate_hashes: list[str],
+) -> dict:
+    """Recheck the immutable release-bound E1 seller selection gate."""
+
+    gate_path = report_path.with_name(f"{report_path.stem}.gate.json")
+    gate = load_json(gate_path)
+    expect_equal(gate.get("schema_version"), 1, label="seller gate schema")
+    expect_equal(gate.get("kind"), E1_SELLER_GATE_KIND, label="seller gate kind")
+    if gate.get("passed") is not True:
+        fail("E1 seller selection gate did not pass")
+    expect_equal(gate.get("role"), "seller", label="seller gate role")
+    expect_equal(gate.get("actor_loss_mode"), "balanced", label="seller gate mode")
+
+    report_record = gate.get("report", {})
+    same_path(report_record.get("path"), report_path, label="seller gate report")
+    expect_equal(
+        report_record.get("sha256"), sha256_file(report_path),
+        label="seller report SHA-256",
+    )
+    selected_record = gate.get("selected_checkpoint", {})
+    same_path(
+        selected_record.get("path"), checkpoint,
+        label="seller gate selected checkpoint",
+    )
+    expect_equal(
+        selected_record.get("sha256"), digest,
+        label="seller selected SHA-256",
+    )
+    expect_equal(
+        gate.get("candidate_sha256"), candidate_hashes,
+        label="seller gate candidate hashes",
+    )
+
+    release_record = gate.get("seller_release", {})
+    release_path = Path(release_record.get("path", "")).expanduser().resolve()
+    expect_equal(
+        release_record.get("sha256"), sha256_file(release_path),
+        label="seller-release SHA-256",
+    )
+    validated_e1_seller_release(release_path)
+    revision = validate_recorded_revision(
+        gate.get("selector", {}).get("code_revision")
+    )
+    report_revision = load_json(report_path).get(
+        "immutable_evaluation", {}
+    ).get("selector_code_revision")
+    expect_equal(
+        revision, report_revision,
+        label="seller gate evaluator revision",
+    )
+    expect_equal(
+        gate.get("selector", {}).get("evaluator"), E1_EVALUATOR,
+        label="seller selector evaluator",
+    )
+    return {
+        "seller_selection_gate": {
+            "path": str(gate_path),
+            "sha256": sha256_file(gate_path),
+        },
+        "seller_release": {
+            "path": str(release_path),
+            "sha256": sha256_file(release_path),
+        },
+        "selector_code_revision": revision,
+    }
+
+
+def write_e1_seller_selection_gate(args: argparse.Namespace) -> dict:
+    output = Path(args.output).expanduser().resolve()
+    report = Path(args.report).expanduser().resolve()
+    selected = Path(args.selected).expanduser().resolve()
+    release = Path(args.release_manifest).expanduser().resolve()
+    expected_output = report.with_name(f"{report.stem}.gate.json")
+    if output != expected_output:
+        fail(f"seller gate must be adjacent to its report: {expected_output}")
+    if os.path.lexists(output):
+        fail(f"refusing to overwrite E1 seller selection gate: {output}")
+
+    validated = _validate_e1_gate_core(
+        argparse.Namespace(
+            report=str(report), role="seller", checkpoint=str(selected),
+            actor_loss_mode="balanced",
+        ),
+        require_seller_support=False,
+    )
+    validated_e1_seller_release(release)
+    selector_revision = validate_selector_code_root(
+        Path(args.selector_code_root)
+    )
+    expect_equal(
+        selector_revision,
+        load_json(report).get("immutable_evaluation", {}).get(
+            "selector_code_revision"
+        ),
+        label="seller selector code revision",
+    )
+    result = {
+        "schema_version": 1,
+        "kind": E1_SELLER_GATE_KIND,
+        "passed": True,
+        "role": "seller",
+        "actor_loss_mode": "balanced",
+        "report": {
+            "path": str(report),
+            "sha256": sha256_file(report),
+        },
+        "selected_checkpoint": {
+            "path": str(selected),
+            "sha256": validated["sha256"],
+        },
+        "candidate_sha256": validated["candidate_sha256"],
+        "seller_release": {
+            "path": str(release),
+            "sha256": sha256_file(release),
+        },
+        "selector": {
+            "code_revision": selector_revision,
+            "evaluator": E1_EVALUATOR,
+            "confirmation_policy": "screen_winner_only_no_fallback",
+        },
+    }
+    atomic_write_new_json(output, result)
+    support = _validate_seller_selection_gate_support(
+        report, selected, validated["sha256"], validated["candidate_sha256"]
+    )
+    return {"kind": "e1_seller_selection_gate", **result, **support}
+
+
+def read_e1_seller_selection_gate(args: argparse.Namespace) -> dict:
+    gate = load_json(Path(args.gate).expanduser().resolve())
+    report = Path(gate.get("report", {}).get("path", "")).expanduser().resolve()
+    selected = Path(
+        gate.get("selected_checkpoint", {}).get("path", "")
+    ).expanduser().resolve()
+    validated = _validate_e1_gate_core(
+        argparse.Namespace(
+            report=str(report), role="seller", checkpoint=str(selected),
+            actor_loss_mode="balanced",
+        ),
+        require_seller_support=False,
+    )
+    support = _validate_seller_selection_gate_support(
+        report, selected, validated["sha256"], validated["candidate_sha256"]
+    )
+    return {"kind": "e1_seller_selection_gate", **gate, **support}
 
 
 def validate_rom(args: argparse.Namespace) -> dict:
@@ -1034,10 +1353,7 @@ def write_e2_input_manifest(args: argparse.Namespace) -> dict:
         },
         "e1_gates": entries,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as handle:
-        json.dump(result, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    atomic_write_new_json(output, result)
     return {"kind": "e2_input_manifest", "path": str(output), **result}
 
 
@@ -1540,6 +1856,190 @@ def validate_e2_report(args: argparse.Namespace) -> dict:
     }
 
 
+def _e2_orchestration_role_record(
+        *, role: str, training_exit_code: int, selector_exit_code: int,
+        checkpoint_root: Path, result_root: Path, cohort_path: Path,
+) -> dict:
+    if type(training_exit_code) is not int or type(selector_exit_code) is not int:
+        fail(f"E2 {role} orchestration statuses must be integers")
+    if training_exit_code != 0:
+        if selector_exit_code != -1:
+            fail(f"E2 {role} selector must be unrun after training failure")
+        return {
+            "training_exit_code": training_exit_code,
+            "selector_exit_code": None,
+            "training_completed": False,
+            "selection_outcome": "not_run",
+        }
+
+    stem = checkpoint_root / (
+        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain"
+    )
+    base = stem.with_suffix(".zip")
+    input_manifest = stem.with_suffix(".pipeline_inputs.json")
+    inputs = validated_pipeline_inputs(input_manifest, role=role)
+    same_path(
+        inputs.get("e1_gate_cohort"), cohort_path,
+        label=f"E2 {role} orchestration cohort",
+    )
+    candidate_paths = [
+        stem.with_name(f"{stem.name}_step{step}.zip") for step in E2_STEPS
+    ] + [base]
+    candidate_hashes = [validate_zip(path) for path in candidate_paths]
+    response_role = "seller" if role == "buyer" else "buyer"
+    response = inputs["e1_gates"][response_role]["checkpoint"]
+    leader_e1 = inputs["e1_gates"][role]["checkpoint"]
+    validate_e2_output(argparse.Namespace(
+        role=role,
+        checkpoint=str(base),
+        response=response,
+        leader_e1=leader_e1,
+        timesteps=2_000_040,
+        input_manifest=str(input_manifest),
+    ))
+    validate_e2_family(argparse.Namespace(
+        role=role,
+        response=response,
+        leader_e1=leader_e1,
+        input_manifest=str(input_manifest),
+        step_checkpoint=[str(path) for path in candidate_paths[:-1]],
+        base_checkpoint=str(base),
+    ))
+
+    run_name = f"e2_{role}_balanced_all6_selector_v2"
+    report = result_root / f"{run_name}.json"
+    selected = checkpoint_root / (
+        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain_selected.zip"
+    )
+    if selector_exit_code in (0, 2):
+        validate_e2_report(argparse.Namespace(
+            role=role,
+            report=str(report),
+            selected=str(selected),
+            response=response,
+            input_manifest=str(input_manifest),
+            candidate=[str(path) for path in candidate_paths],
+            expect="passed" if selector_exit_code == 0 else "failed",
+        ))
+        report_record = {"path": str(report), "sha256": sha256_file(report)}
+        selected_record = (
+            {"path": str(selected), "sha256": validate_zip(selected)}
+            if selector_exit_code == 0 else None
+        )
+        outcome = "passed" if selector_exit_code == 0 else "failed"
+    else:
+        report_record = (
+            {"path": str(report), "sha256": sha256_file(report)}
+            if report.is_file() and not report.is_symlink() else None
+        )
+        selected_record = None
+        outcome = "crashed"
+
+    return {
+        "training_exit_code": 0,
+        "selector_exit_code": selector_exit_code,
+        "training_completed": True,
+        "selection_outcome": outcome,
+        "input_manifest": {
+            "path": str(input_manifest),
+            "sha256": sha256_file(input_manifest),
+        },
+        "candidate_checkpoints": [
+            {"path": str(path), "sha256": digest}
+            for path, digest in zip(candidate_paths, candidate_hashes)
+        ],
+        "report": report_record,
+        "selected_checkpoint": selected_record,
+    }
+
+
+def build_e2_orchestration_summary(args: argparse.Namespace) -> dict:
+    cohort_path = Path(args.cohort_manifest).expanduser().resolve()
+    validated_e1_gate_cohort(cohort_path)
+    checkpoint_root = Path(args.checkpoint_root).expanduser().resolve()
+    result_root = Path(args.result_root).expanduser().resolve()
+    roles = {}
+    for role in ("buyer", "seller"):
+        roles[role] = _e2_orchestration_role_record(
+            role=role,
+            training_exit_code=getattr(args, f"{role}_training_exit_code"),
+            selector_exit_code=getattr(args, f"{role}_selector_exit_code"),
+            checkpoint_root=checkpoint_root,
+            result_root=result_root,
+            cohort_path=cohort_path,
+        )
+    completed = all(
+        row["training_completed"]
+        and row["selection_outcome"] in ("passed", "failed")
+        for row in roles.values()
+    )
+    all_passed = all(
+        row["selection_outcome"] == "passed" for row in roles.values()
+    )
+    recorded_revision = getattr(args, "recorded_automation_revision", None)
+    automation_revision = (
+        validate_recorded_revision(recorded_revision)
+        if recorded_revision is not None
+        else validate_selector_code_root(Path(args.automation_code_root))
+    )
+    return {
+        "schema": E2_ORCHESTRATION_SCHEMA,
+        "code_head": validate_code_root(),
+        "automation_code_revision": automation_revision,
+        "checkpoint_root": str(checkpoint_root),
+        "result_root": str(result_root),
+        "e1_gate_cohort": {
+            "path": str(cohort_path),
+            "sha256": sha256_file(cohort_path),
+        },
+        "execution_order": ["buyer", "seller"],
+        "roles": roles,
+        "orchestration_completed": completed,
+        "all_scientific_gates_passed": all_passed,
+        "passed": all_passed,
+    }
+
+
+def write_e2_orchestration_summary(args: argparse.Namespace) -> dict:
+    output = Path(args.output).expanduser().resolve()
+    if os.path.lexists(output):
+        fail(f"refusing to overwrite E2 orchestration summary: {output}")
+    result = build_e2_orchestration_summary(args)
+    atomic_write_new_json(output, result)
+    return {"kind": "e2_orchestration_summary", "path": str(output), **result}
+
+
+def validate_e2_orchestration_summary(args: argparse.Namespace) -> dict:
+    path = Path(args.summary).expanduser().resolve()
+    value = load_json(path)
+    expect_equal(
+        value.get("schema"), E2_ORCHESTRATION_SCHEMA,
+        label="E2 orchestration-summary schema",
+    )
+    roles = value.get("roles", {})
+    if not isinstance(roles, dict) or set(roles) != {"buyer", "seller"}:
+        fail("E2 orchestration summary must contain both roles")
+    reconstructed = argparse.Namespace(
+        cohort_manifest=value.get("e1_gate_cohort", {}).get("path"),
+        checkpoint_root=value.get("checkpoint_root"),
+        result_root=value.get("result_root"),
+        buyer_training_exit_code=roles["buyer"].get("training_exit_code"),
+        buyer_selector_exit_code=(
+            -1 if roles["buyer"].get("selector_exit_code") is None
+            else roles["buyer"].get("selector_exit_code")
+        ),
+        seller_training_exit_code=roles["seller"].get("training_exit_code"),
+        seller_selector_exit_code=(
+            -1 if roles["seller"].get("selector_exit_code") is None
+            else roles["seller"].get("selector_exit_code")
+        ),
+        recorded_automation_revision=value.get("automation_code_revision"),
+    )
+    expected = build_e2_orchestration_summary(reconstructed)
+    expect_equal(value, expected, label="E2 orchestration-summary contents")
+    return {"kind": "e2_orchestration_summary", "path": str(path), **value}
+
+
 def add_e2_checkpoint_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--role", choices=("buyer", "seller"), required=True)
     parser.add_argument("--checkpoint", required=True)
@@ -1600,6 +2100,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     read_release.add_argument("--release-manifest", required=True)
     read_release.set_defaults(handler=read_e1_seller_release)
 
+    seller_gate = subparsers.add_parser("write-e1-seller-selection-gate")
+    seller_gate.add_argument("--output", required=True)
+    seller_gate.add_argument("--report", required=True)
+    seller_gate.add_argument("--selected", required=True)
+    seller_gate.add_argument("--release-manifest", required=True)
+    seller_gate.add_argument("--selector-code-root", required=True)
+    seller_gate.set_defaults(handler=write_e1_seller_selection_gate)
+
+    read_seller_gate = subparsers.add_parser(
+        "read-e1-seller-selection-gate"
+    )
+    read_seller_gate.add_argument("--gate", required=True)
+    read_seller_gate.set_defaults(handler=read_e1_seller_selection_gate)
+
     rom = subparsers.add_parser("validate-rom")
     rom.add_argument("--rom", required=True)
     rom.add_argument("--sha256", required=True)
@@ -1644,6 +2158,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--expect", choices=("passed", "failed", "either"), required=True
     )
     report.set_defaults(handler=validate_e2_report)
+
+    summary = subparsers.add_parser("write-e2-orchestration-summary")
+    summary.add_argument("--output", required=True)
+    summary.add_argument("--cohort-manifest", required=True)
+    summary.add_argument("--checkpoint-root", required=True)
+    summary.add_argument("--result-root", required=True)
+    summary.add_argument("--automation-code-root", required=True)
+    for role in ("buyer", "seller"):
+        summary.add_argument(
+            f"--{role}-training-exit-code", type=int, required=True
+        )
+        summary.add_argument(
+            f"--{role}-selector-exit-code", type=int, required=True
+        )
+    summary.set_defaults(handler=write_e2_orchestration_summary)
+
+    read_summary = subparsers.add_parser("read-e2-orchestration-summary")
+    read_summary.add_argument("--summary", required=True)
+    read_summary.set_defaults(handler=validate_e2_orchestration_summary)
     return parser.parse_args(argv)
 
 

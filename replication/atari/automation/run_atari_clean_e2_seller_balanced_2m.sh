@@ -2,6 +2,8 @@
 set -euo pipefail
 
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
+e2_claim_pipeline_lock
+trap 'e2_release_pipeline_lock' EXIT
 e2_prepare_runtime
 export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e2-seller-training
 
