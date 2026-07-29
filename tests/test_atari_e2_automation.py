@@ -285,6 +285,9 @@ def test_durable_seller_release_uses_only_final_strict_gate_discovery():
     assert "STACKPOMDP_E1_SELLER_LOCK_TOKEN" in launcher
     assert "stackpomdp_release_owned_lock" in launcher
     assert "rmdir \"$SELLER_LOCK\"" not in launcher
+    run_name = "atari_clean_e1_seller_balanced_primary_economic_release_seed1_2m_local"
+    assert f"{run_name}.log" in launcher
+    assert f"--wandb-name {run_name}" in launcher
 
 
 def test_seller_release_requires_primary_economic_buyer(

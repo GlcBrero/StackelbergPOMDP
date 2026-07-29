@@ -36,7 +36,7 @@ function stackpomdp_claim_owned_lock() {
   local owner_record owner owner_pid owner_host before after current_host
   local lock_mtime lock_age now
   local -a entries
-    current_host=$(hostname)
+  current_host=$(hostname)
   while true; do
     if mkdir "$lock" 2>/dev/null; then
       if ! print -r -- "${token}"$'\t'"$$"$'\t'"${current_host}"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
