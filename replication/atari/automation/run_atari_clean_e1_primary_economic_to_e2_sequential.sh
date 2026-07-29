@@ -8,6 +8,9 @@ set -euo pipefail
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
 e2_claim_pipeline_lock
 trap 'e2_release_pipeline_lock' EXIT
+trap 'e2_release_pipeline_lock; exit 129' HUP
+trap 'e2_release_pipeline_lock; exit 130' INT
+trap 'e2_release_pipeline_lock; exit 143' TERM
 
 typeset -gr PRIMARY_RELEASE="$AUTOMATION_DIR/run_atari_clean_e1_buyer_primary_economic_release.sh"
 typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_after_buyer_gate.sh"

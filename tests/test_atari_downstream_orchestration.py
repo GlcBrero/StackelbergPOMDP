@@ -533,6 +533,72 @@ def test_owned_lock_allows_valid_nested_token_without_releasing_parent(tmp_path)
     assert (lock / "owner.tsv").read_text(encoding="utf-8") == record
 
 
+def test_pipeline_term_trap_releases_owned_lock(tmp_path):
+    common = (
+        Path(__file__).resolve().parents[1]
+        / "replication/atari/automation/atari_e2_pipeline_common.zsh"
+    )
+    lock = tmp_path / "signal.lock"
+    program = r'''
+source "$COMMON"
+typeset -gx STACKPOMDP_E2_LOCK_TOKEN="signal-owner"
+stackpomdp_claim_owned_lock "$LOCK" "$STACKPOMDP_E2_LOCK_TOKEN" "signal test" || exit $?
+typeset -g E2_LOCK_OWNED_BY_CALLER="$STACKPOMDP_LOCK_RESULT_OWNED"
+function e2_release_pipeline_lock() {
+  stackpomdp_release_owned_lock \
+    "$LOCK" "$STACKPOMDP_E2_LOCK_TOKEN" \
+    "$E2_LOCK_OWNED_BY_CALLER" "signal test" || return $?
+  typeset -g E2_LOCK_OWNED_BY_CALLER=0
+}
+trap 'e2_release_pipeline_lock' EXIT
+trap 'e2_release_pipeline_lock; exit 129' HUP
+trap 'e2_release_pipeline_lock; exit 130' INT
+trap 'e2_release_pipeline_lock; exit 143' TERM
+print -r -- READY
+while true; do sleep 1; done
+'''
+    process = subprocess.Popen(
+        ["zsh", "-c", program],
+        env={**os.environ, "COMMON": str(common), "LOCK": str(lock)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "READY"
+        assert lock.is_dir()
+        process.terminate()
+        assert process.wait(timeout=5) == 143
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    assert not lock.exists()
+
+
+def test_all_e2_lock_owners_install_signal_cleanup():
+    automation = (
+        Path(__file__).resolve().parents[1] / "replication/atari/automation"
+    )
+    launchers = (
+        "run_e2_buyer_balanced_final_selector.sh",
+        "run_e2_seller_balanced_final_selector.sh",
+        "run_atari_clean_e2_buyer_balanced_2m.sh",
+        "run_atari_clean_e2_seller_balanced_2m.sh",
+        "run_atari_clean_e2_sequential.sh",
+        "run_atari_clean_e1_primary_economic_to_e2_sequential.sh",
+    )
+    for launcher in launchers:
+        source = (automation / launcher).read_text(encoding="utf-8")
+        assert "e2_claim_pipeline_lock\ntrap 'e2_release_pipeline_lock' EXIT" in source
+        for signal_name, exit_status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            assert (
+                f"trap 'e2_release_pipeline_lock; exit {exit_status}' "
+                f"{signal_name}"
+            ) in source
+
+
 def test_incomplete_orchestration_summary_is_immutable_and_revalidated(
         monkeypatch, tmp_path,
 ):
