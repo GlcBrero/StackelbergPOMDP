@@ -733,6 +733,7 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
     assert "CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba" in common
     assert "EXPECTED_HEAD=7a193ba14b91f6ab116da29ff288e3e577d73b88" in common
     assert "WANDB_MODE=online" in common
+    assert "EPOCHSECONDS" not in common
     assert '"E2 pipeline" || return $?' in common
     assert "write-e1-gate-cohort" in common
     cohort_write = common.index("write-e1-gate-cohort")

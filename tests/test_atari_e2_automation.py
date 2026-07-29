@@ -288,6 +288,7 @@ def test_durable_seller_release_uses_only_final_strict_gate_discovery():
     run_name = "atari_clean_e1_seller_balanced_primary_economic_release_seed1_2m_local"
     assert f"{run_name}.log" in launcher
     assert f"--wandb-name {run_name}" in launcher
+    assert "EPOCHSECONDS" not in launcher
 
 
 def test_seller_release_requires_primary_economic_buyer(

@@ -129,7 +129,7 @@ function stackpomdp_release_owned_lock() {
 
 function e2_claim_pipeline_lock() {
   local token
-  token="${STACKPOMDP_E2_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
+  token="${STACKPOMDP_E2_LOCK_TOKEN:-$(hostname)-$$-$(date +%s)-${RANDOM}}"
   stackpomdp_claim_owned_lock \
     "$E2_PIPELINE_LOCK" "$token" "E2 pipeline" || return $?
   typeset -gx STACKPOMDP_E2_LOCK_TOKEN="$token"
@@ -220,7 +220,7 @@ function e2_prepare_runtime() {
     # Isolate E2 from later changes on the active branch while all generated
     # checkpoints, reports, W&B files, and logs still go to the active repo.
     lock="${CODE_ROOT}.init.lock"
-    local init_token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
+    local init_token="$(hostname)-$$-$(date +%s)-${RANDOM}"
     local init_status=0
     e2_claim_transient_lock \
       "$lock" "$init_token" "E2 code-worktree initialization" || return $?
@@ -417,7 +417,7 @@ function e2_wait_for_both_e1_gates() {
   e2_resolve_e1_gate buyer
 
   local lock="${E1_COHORT}.init.lock"
-  local token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
+  local token="$(hostname)-$$-$(date +%s)-${RANDOM}"
   e2_claim_transient_lock \
     "$lock" "$token" "E1 cohort initialization" || return $?
   if [[ ! -f "$E1_COHORT" ]]; then

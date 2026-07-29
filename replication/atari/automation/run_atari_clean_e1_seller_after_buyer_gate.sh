@@ -17,7 +17,7 @@ typeset -gr SELLER_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_fire
 typeset -gr SELLER_RELEASE="${SELLER_BASE%.zip}.buyer_gate.json"
 typeset -gr SELLER_LOG="$LOG_ROOT/atari_clean_e1_seller_balanced_primary_economic_release_seed1_2m_local.log"
 typeset -gr SELLER_LOCK=/private/tmp/stackpomdp-atari-e1-seller-release.lock
-typeset -gx STACKPOMDP_E1_SELLER_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
+typeset -gx STACKPOMDP_E1_SELLER_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_LOCK_TOKEN:-$(hostname)-$$-$(date +%s)-${RANDOM}}"
 
 stackpomdp_claim_owned_lock \
   "$SELLER_LOCK" "$STACKPOMDP_E1_SELLER_LOCK_TOKEN" "E1 seller" || exit $?

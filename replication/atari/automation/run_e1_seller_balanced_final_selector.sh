@@ -24,7 +24,7 @@ typeset -gr SELECTED="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_firefix
 typeset -gr SELECTOR_LOG="$LOG_ROOT/${RUN_NAME}.log"
 typeset -gr SELECTOR_LOCK=/private/tmp/stackpomdp-atari-e1-seller-selector.lock
 typeset -gra SELLER_STEPS=(400160 800320 1200480 1600640 2000800)
-typeset -gx STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
+typeset -gx STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN:-$(hostname)-$$-$(date +%s)-${RANDOM}}"
 
 stackpomdp_claim_owned_lock \
   "$SELECTOR_LOCK" "$STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN" \
