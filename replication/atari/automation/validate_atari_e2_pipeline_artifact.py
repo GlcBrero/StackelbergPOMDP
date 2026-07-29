@@ -890,8 +890,14 @@ def _validate_primary_economic_gate(args: argparse.Namespace) -> dict:
 
     if args.role != "buyer" or args.actor_loss_mode != "balanced":
         fail("the primary-economic E1 gate is balanced-buyer only")
-    report_path = Path(args.report).expanduser().resolve()
-    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    report_path = Path(args.report).expanduser()
+    checkpoint = Path(args.checkpoint).expanduser()
+    if report_path.is_symlink():
+        fail(f"primary-economic report cannot be a symlink: {report_path}")
+    if checkpoint.is_symlink():
+        fail(f"primary selected checkpoint cannot be a symlink: {checkpoint}")
+    report_path = report_path.resolve()
+    checkpoint = checkpoint.resolve()
     if report_path.name != E1_PRIMARY_REPORT_NAME:
         fail(f"unexpected primary-economic report name: {report_path.name}")
     protocol_path = report_path.with_name(E1_PRIMARY_PROTOCOL_NAME)

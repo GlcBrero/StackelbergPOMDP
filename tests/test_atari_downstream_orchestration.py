@@ -411,6 +411,31 @@ def test_validator_rejects_symlinks_before_resolution(tmp_path):
     assert target_json.read_text(encoding="utf-8") == "{}"
 
 
+def test_primary_gate_rejects_symlinked_cli_paths(tmp_path):
+    report_target = tmp_path / validator.E1_PRIMARY_REPORT_NAME
+    report_target.write_text("{}", encoding="utf-8")
+    report_link = tmp_path / "report-link.json"
+    report_link.symlink_to(report_target)
+    checkpoint_target = tmp_path / validator.E1_PRIMARY_CHECKPOINT_NAME
+    checkpoint_target.write_bytes(b"not reached")
+    checkpoint_link = tmp_path / "checkpoint-link.zip"
+    checkpoint_link.symlink_to(checkpoint_target)
+
+    arguments = Namespace(
+        role="buyer",
+        actor_loss_mode="balanced",
+        report=str(report_link),
+        checkpoint=str(checkpoint_target),
+    )
+    with pytest.raises(RuntimeError, match="report cannot be a symlink"):
+        validator._validate_primary_economic_gate(arguments)
+
+    arguments.report = str(report_target)
+    arguments.checkpoint = str(checkpoint_link)
+    with pytest.raises(RuntimeError, match="checkpoint cannot be a symlink"):
+        validator._validate_primary_economic_gate(arguments)
+
+
 def _run_lock_helper(common, lock, token):
     program = """
 source "$COMMON"

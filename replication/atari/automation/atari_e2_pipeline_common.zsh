@@ -36,11 +36,16 @@ function stackpomdp_claim_owned_lock() {
   local owner_record owner owner_pid owner_host before after current_host
   local lock_mtime lock_age now
   local -a entries
-  current_host=$(hostname)
+    current_host=$(hostname)
   while true; do
     if mkdir "$lock" 2>/dev/null; then
-      print -r -- "${token}"$'\t'"$$"$'\t'"${current_host}"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > "$lock/owner.tsv"
+      if ! print -r -- "${token}"$'\t'"$$"$'\t'"${current_host}"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          > "$lock/owner.tsv"; then
+        rm -f "$lock/owner.tsv" 2>/dev/null || true
+        rmdir "$lock" 2>/dev/null || true
+        print -u2 "failed to publish $label owner record: $lock/owner.tsv"
+        return 1
+      fi
       typeset -g STACKPOMDP_LOCK_RESULT_OWNED=1
       return 0
     fi
