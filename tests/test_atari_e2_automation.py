@@ -281,6 +281,10 @@ def test_durable_seller_release_uses_only_final_strict_gate_discovery():
     assert "write-e1-seller-release" in launcher
     assert "step${step}_selector" not in launcher
     assert "--actor-loss-mode balanced" in launcher
+    assert "stackpomdp_claim_owned_lock" in launcher
+    assert "STACKPOMDP_E1_SELLER_LOCK_TOKEN" in launcher
+    assert "stackpomdp_release_owned_lock" in launcher
+    assert "rmdir \"$SELLER_LOCK\"" not in launcher
 
 
 def test_seller_release_requires_primary_economic_buyer(

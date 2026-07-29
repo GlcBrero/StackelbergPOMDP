@@ -19,12 +19,21 @@ typeset -gr SELECTED="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_firefix
 typeset -gr SELECTOR_LOG="$LOG_ROOT/${RUN_NAME}.log"
 typeset -gr SELECTOR_LOCK=/private/tmp/stackpomdp-atari-e1-seller-selector.lock
 typeset -gra SELLER_STEPS=(400160 800320 1200480 1600640 2000800)
+typeset -gx STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
 
-if ! mkdir "$SELECTOR_LOCK" 2>/dev/null; then
-  print -u2 "another E1 seller selector owns $SELECTOR_LOCK"
-  exit 1
-fi
-trap 'rmdir "$SELECTOR_LOCK" 2>/dev/null || true' EXIT
+stackpomdp_claim_owned_lock \
+  "$SELECTOR_LOCK" "$STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN" \
+  "E1 seller selector" || exit $?
+typeset -g SELECTOR_LOCK_OWNED_BY_CALLER="$STACKPOMDP_LOCK_RESULT_OWNED"
+function release_selector_lock() {
+  stackpomdp_release_owned_lock \
+    "$SELECTOR_LOCK" "$STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN" \
+    "$SELECTOR_LOCK_OWNED_BY_CALLER" "E1 seller selector" || return $?
+  typeset -g SELECTOR_LOCK_OWNED_BY_CALLER=0
+}
+trap 'release_selector_lock' EXIT
+trap 'release_selector_lock; exit 130' INT
+trap 'release_selector_lock; exit 143' TERM
 
 e2_wait_for_file "$RELEASE" "immutable E1 seller-release manifest"
 "$PYTHON" "$VALIDATOR" read-e1-seller-release \

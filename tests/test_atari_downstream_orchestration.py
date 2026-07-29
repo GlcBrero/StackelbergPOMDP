@@ -1,7 +1,12 @@
 from argparse import Namespace
 import json
+import os
 from pathlib import Path
+import socket
+import subprocess
 from types import SimpleNamespace
+import time
+import zipfile
 
 import pytest
 
@@ -213,25 +218,36 @@ def test_primary_protocol_is_authoritative_pending_and_fail_closed(
     with pytest.raises(RuntimeError, match="confirmation failed"):
         validator.discover_e1_gate(args)
 
-    report.write_text(json.dumps({
+    passing_report = {
         "passed": True,
         "role": "buyer",
         "evaluator": validator.E1_PRIMARY_EVALUATOR,
-    }), encoding="utf-8")
+    }
+    report.write_text(json.dumps(passing_report), encoding="utf-8")
     assert validator.discover_e1_gate(args)["state"] == (
         "gate_publication_pending"
     )
 
-    gate.write_text("{}", encoding="utf-8")
-    checkpoint_root = tmp_path / "active"
-    checkpoint = checkpoint_root / validator.E1_PRIMARY_CHECKPOINT_RELATIVE
+    automation_root = tmp_path / "automation_worktree"
+    artifact_root = tmp_path / "main_artifact_root"
+    checkpoint = artifact_root / validator.E1_PRIMARY_CHECKPOINT_NAME
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_bytes(b"primary")
-    monkeypatch.setattr(validator, "AUTOMATION_SOURCE_ROOT", checkpoint_root)
+    digest = "a" * 64
+    passing_report["selected_alias"] = {
+        "pinned_path": str(checkpoint.resolve()), "sha256": digest,
+    }
+    report.write_text(json.dumps(passing_report), encoding="utf-8")
+    gate.write_text(json.dumps({
+        "selected_checkpoint": {
+            "path": str(checkpoint.resolve()), "sha256": digest,
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(validator, "AUTOMATION_SOURCE_ROOT", automation_root)
     monkeypatch.setattr(validator, "validate_e1_gate", lambda local: {
         "report": str(report.resolve()),
         "checkpoint": str(checkpoint.resolve()),
-        "sha256": "a" * 64,
+        "sha256": digest,
         "actor_loss_mode": "balanced",
         "source_kind": validator.E1_PRIMARY_SOURCE_KIND,
         "sampler_mode": validator.E1_TEMPORAL_SAMPLER,
@@ -240,6 +256,7 @@ def test_primary_protocol_is_authoritative_pending_and_fail_closed(
     discovered = validator.discover_e1_gate(args)
     assert discovered["found"] is True
     assert discovered["checkpoint"] == str(checkpoint.resolve())
+    assert not str(checkpoint).startswith(str(automation_root))
 
     with pytest.raises(RuntimeError, match="forbids overriding"):
         validator.discover_e1_gate(Namespace(
@@ -274,11 +291,11 @@ def test_primary_validation_subprocess_separates_active_and_pinned_code(
         observed["command"] = command
         observed.update(kwargs)
         return SimpleNamespace(
-            stdout=(
-                "STACKPOMDP_PRIMARY_GATE_JSON="
-                + json.dumps({"kind": validator.E1_PRIMARY_GATE_KIND})
-                + "\n"
-            )
+            stdout=json.dumps({
+                "kind": "primary_economic_gate",
+                "passed": True,
+                "value": {"kind": validator.E1_PRIMARY_GATE_KIND},
+            }) + "\n"
         )
 
     monkeypatch.setattr(validator.subprocess, "run", run)
@@ -299,6 +316,9 @@ def test_primary_validation_subprocess_separates_active_and_pinned_code(
     assert observed["env"]["PYTHONPATH"] == str(
         validator.AUTOMATION_SOURCE_ROOT
     )
+    assert observed["command"][-2:] == [
+        "--code-root", str(validator.AUTOMATION_SOURCE_ROOT),
+    ]
     assert "STACKPOMDP_CODE_ROOT" not in observed["env"]
 
 
@@ -364,6 +384,128 @@ def test_atomic_json_publication_never_overwrites(tmp_path):
         validator.atomic_write_new_json(output, {"value": 2})
     assert json.loads(output.read_text(encoding="utf-8")) == {"value": 1}
     assert not list(tmp_path.glob(".gate.json.*.tmp"))
+
+
+def test_validator_rejects_symlinks_before_resolution(tmp_path):
+    target_json = tmp_path / "target.json"
+    target_json.write_text("{}", encoding="utf-8")
+    linked_json = tmp_path / "linked.json"
+    linked_json.symlink_to(target_json)
+    with pytest.raises(RuntimeError, match="non-symlink JSON"):
+        validator.load_json(linked_json)
+    with pytest.raises(RuntimeError, match="non-symlink file"):
+        validator.sha256_file(linked_json)
+
+    target_zip = tmp_path / "target.zip"
+    with zipfile.ZipFile(target_zip, "w") as archive:
+        archive.writestr("member", b"value")
+    linked_zip = tmp_path / "linked.zip"
+    linked_zip.symlink_to(target_zip)
+    with pytest.raises(RuntimeError, match="non-symlink ZIP"):
+        validator.validate_zip(linked_zip)
+
+    publication = tmp_path / "publication.json"
+    publication.symlink_to(target_json)
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        validator.atomic_write_new_json(publication, {"changed": True})
+    assert target_json.read_text(encoding="utf-8") == "{}"
+
+
+def _run_lock_helper(common, lock, token):
+    program = """
+source "$COMMON"
+stackpomdp_claim_owned_lock "$LOCK" "$TOKEN" "test" || exit $?
+print -r -- "owned=$STACKPOMDP_LOCK_RESULT_OWNED"
+if [[ "$STACKPOMDP_LOCK_RESULT_OWNED" == 1 ]]; then
+  stackpomdp_release_owned_lock "$LOCK" "$TOKEN" 1 "test"
+fi
+"""
+    return subprocess.run(
+        ["zsh", "-c", program],
+        env={
+            **os.environ,
+            "COMMON": str(common),
+            "LOCK": str(lock),
+            "TOKEN": token,
+        },
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_owned_lock_reclaims_only_old_empty_directories(tmp_path):
+    common = (
+        Path(__file__).resolve().parents[1]
+        / "replication/atari/automation/atari_e2_pipeline_common.zsh"
+    )
+    lock = tmp_path / "old-empty.lock"
+    lock.mkdir()
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+    result = _run_lock_helper(common, lock, "new-owner")
+    assert result.returncode == 0, result.stderr
+    assert "reclaimed stable empty test lock" in result.stdout
+    assert "owned=1" in result.stdout
+    assert not lock.exists()
+
+    young = tmp_path / "young-empty.lock"
+    young.mkdir()
+    result = _run_lock_helper(common, young, "new-owner")
+    assert result.returncode != 0
+    assert "younger than 60 seconds" in result.stderr
+    assert young.is_dir()
+
+
+@pytest.mark.parametrize(
+    "owner_kind", ["live", "dead", "reentrant_dead", "foreign", "malformed"]
+)
+def test_owned_lock_refuses_unsafe_recorded_owners(tmp_path, owner_kind):
+    common = (
+        Path(__file__).resolve().parents[1]
+        / "replication/atari/automation/atari_e2_pipeline_common.zsh"
+    )
+    lock = tmp_path / f"{owner_kind}.lock"
+    lock.mkdir()
+    host = socket.gethostname()
+    if owner_kind == "live":
+        record = f"other\t{os.getpid()}\t{host}\tcreated\n"
+    elif owner_kind == "dead":
+        record = f"other\t99999999\t{host}\tcreated\n"
+    elif owner_kind == "reentrant_dead":
+        record = f"same-token\t99999999\t{host}\tcreated\n"
+    elif owner_kind == "foreign":
+        record = "other\t99999999\tother-host\tcreated\n"
+    else:
+        record = "same-token\n"
+    (lock / "owner.tsv").write_text(record, encoding="utf-8")
+    result = _run_lock_helper(common, lock, "same-token")
+    assert result.returncode != 0
+    assert lock.is_dir()
+    assert (lock / "owner.tsv").read_text(encoding="utf-8") == record
+    if owner_kind == "dead":
+        assert "descendants may still be active" in result.stderr
+    if owner_kind == "reentrant_dead":
+        assert "reentrant token names absent PID" in result.stderr
+    if owner_kind == "foreign":
+        assert "foreign host" in result.stderr
+    if owner_kind == "malformed":
+        assert "malformed owner metadata" in result.stderr
+
+
+def test_owned_lock_allows_valid_nested_token_without_releasing_parent(tmp_path):
+    common = (
+        Path(__file__).resolve().parents[1]
+        / "replication/atari/automation/atari_e2_pipeline_common.zsh"
+    )
+    lock = tmp_path / "nested.lock"
+    lock.mkdir()
+    token = "shared-token"
+    record = f"{token}\t{os.getpid()}\t{socket.gethostname()}\tcreated\n"
+    (lock / "owner.tsv").write_text(record, encoding="utf-8")
+    result = _run_lock_helper(common, lock, token)
+    assert result.returncode == 0, result.stderr
+    assert "owned=0" in result.stdout
+    assert (lock / "owner.tsv").read_text(encoding="utf-8") == record
 
 
 def test_incomplete_orchestration_summary_is_immutable_and_revalidated(
@@ -464,6 +606,11 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
     assert "CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba" in common
     assert "EXPECTED_HEAD=7a193ba14b91f6ab116da29ff288e3e577d73b88" in common
     assert "WANDB_MODE=online" in common
+    assert '"E2 pipeline" || return $?' in common
+    assert "write-e1-gate-cohort" in common
+    assert common.index("write-e1-gate-cohort") < common.index(
+        '"E1 cohort initialization"; then'
+    )
     for name in (
         "run_atari_clean_e1_seller_after_buyer_gate.sh",
         "run_atari_clean_e2_buyer_balanced_2m.sh",
@@ -484,3 +631,7 @@ def test_seller_selector_is_one_pinned_all_six_run():
     assert "read-e1-seller-release" in script
     assert "for step in $SELLER_STEPS" in script
     assert "rank" not in script.lower() or "no lower-ranked fallback" in script
+    assert "stackpomdp_claim_owned_lock" in script
+    assert "STACKPOMDP_E1_SELLER_SELECTOR_LOCK_TOKEN" in script
+    assert "stackpomdp_release_owned_lock" in script
+    assert 'rmdir "$SELECTOR_LOCK"' not in script

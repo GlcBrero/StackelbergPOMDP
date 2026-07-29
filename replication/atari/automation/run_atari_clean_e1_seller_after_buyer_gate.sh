@@ -12,12 +12,20 @@ typeset -gr SELLER_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_fire
 typeset -gr SELLER_RELEASE="${SELLER_BASE%.zip}.buyer_gate.json"
 typeset -gr SELLER_LOG="$LOG_ROOT/atari_clean_e1_seller_balanced_seed1_firefix_retrain_2m_local.log"
 typeset -gr SELLER_LOCK=/private/tmp/stackpomdp-atari-e1-seller-release.lock
+typeset -gx STACKPOMDP_E1_SELLER_LOCK_TOKEN="${STACKPOMDP_E1_SELLER_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
 
-if ! mkdir "$SELLER_LOCK" 2>/dev/null; then
-  print -u2 "another E1 seller release/training process is running"
-  exit 1
-fi
-trap 'rmdir "$SELLER_LOCK" 2>/dev/null || true' EXIT INT TERM
+stackpomdp_claim_owned_lock \
+  "$SELLER_LOCK" "$STACKPOMDP_E1_SELLER_LOCK_TOKEN" "E1 seller" || exit $?
+typeset -g SELLER_LOCK_OWNED_BY_CALLER="$STACKPOMDP_LOCK_RESULT_OWNED"
+function release_seller_lock() {
+  stackpomdp_release_owned_lock \
+    "$SELLER_LOCK" "$STACKPOMDP_E1_SELLER_LOCK_TOKEN" \
+    "$SELLER_LOCK_OWNED_BY_CALLER" "E1 seller" || return $?
+  typeset -g SELLER_LOCK_OWNED_BY_CALLER=0
+}
+trap 'release_seller_lock' EXIT
+trap 'release_seller_lock; exit 130' INT
+trap 'release_seller_lock; exit 143' TERM
 
 if [[ ! -f "$SELLER_RELEASE" ]]; then
   e2_resolve_e1_gate buyer
@@ -93,6 +101,6 @@ set -e
   exit "$status"
 }
 
-rmdir "$SELLER_LOCK"
+release_seller_lock
 trap - EXIT INT TERM
 exec "$AUTOMATION_DIR/run_e1_seller_balanced_final_selector.sh"

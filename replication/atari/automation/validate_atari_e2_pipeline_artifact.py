@@ -44,8 +44,7 @@ E1_PRIMARY_PROTOCOL_KIND = (
 E1_PRIMARY_GATE_KIND = "stackpomdp.atari.e1_buyer_primary_economic_gate.v1"
 E1_PRIMARY_SOURCE_KIND = "primary_economic_v1"
 E1_PRIMARY_MODULE_NAME = "release_atari_e1_primary_economic.py"
-E1_PRIMARY_CHECKPOINT_RELATIVE = Path(
-    "replication/atari/checkpoints/clean/"
+E1_PRIMARY_CHECKPOINT_NAME = (
     "meta_buyer_e1_ppo_balanced_temporal_mix_v1_"
     "primary_economic_selected.zip"
 )
@@ -87,8 +86,11 @@ def fail(message: str) -> None:
 
 
 def load_json(path: Path) -> dict:
-    path = path.expanduser().resolve()
-    if not path.is_file() or path.is_symlink():
+    path = Path(path).expanduser()
+    if path.is_symlink():
+        fail(f"expected a regular, non-symlink JSON file: {path}")
+    path = path.resolve()
+    if not path.is_file():
         fail(f"expected a regular, non-symlink JSON file: {path}")
     with path.open("r", encoding="utf-8") as handle:
         value = json.load(handle)
@@ -98,8 +100,11 @@ def load_json(path: Path) -> dict:
 
 
 def sha256_file(path: Path) -> str:
-    path = path.expanduser().resolve()
-    if not path.is_file() or path.is_symlink():
+    path = Path(path).expanduser()
+    if path.is_symlink():
+        fail(f"expected a regular, non-symlink file: {path}")
+    path = path.resolve()
+    if not path.is_file():
         fail(f"expected a regular, non-symlink file: {path}")
     before = path.stat()
     digest = hashlib.sha256()
@@ -119,7 +124,10 @@ def sha256_file(path: Path) -> str:
 def atomic_write_new_json(path: Path, value: dict) -> None:
     """Publish a new JSON artifact atomically and never overwrite a peer."""
 
-    path = path.expanduser().resolve()
+    path = Path(path).expanduser()
+    if os.path.lexists(path):
+        fail(f"refusing to overwrite immutable JSON artifact: {path}")
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.path.lexists(path):
         fail(f"refusing to overwrite immutable JSON artifact: {path}")
@@ -142,7 +150,10 @@ def atomic_write_new_json(path: Path, value: dict) -> None:
 
 
 def validate_zip(path: Path) -> str:
-    path = path.expanduser().resolve()
+    path = Path(path).expanduser()
+    if path.is_symlink():
+        fail(f"expected a regular, non-symlink ZIP file: {path}")
+    path = path.resolve()
     digest = sha256_file(path)
     with zipfile.ZipFile(path, "r") as archive:
         broken = archive.testzip()
@@ -782,25 +793,18 @@ def _run_primary_economic_gate_validator(
     root explicitly; this process and every subsequent E2 import remain pinned.
     """
 
-    module_path = Path(__file__).resolve().with_name(E1_PRIMARY_MODULE_NAME)
-    if not module_path.is_file() or module_path.is_symlink():
+    module_path = Path(__file__).expanduser().parent / E1_PRIMARY_MODULE_NAME
+    if module_path.is_symlink():
         fail(
             "primary-economic release validator is unavailable or unsafe: "
             f"{module_path}"
         )
-    program = """
-import json
-import sys
-from pathlib import Path
-from replication.atari.automation.release_atari_e1_primary_economic import validate_gate
-value = validate_gate(
-    protocol_path=Path(sys.argv[1]),
-    report_path=Path(sys.argv[2]),
-    gate_path=Path(sys.argv[3]),
-    selected_checkpoint=Path(sys.argv[4]),
-)
-print("STACKPOMDP_PRIMARY_GATE_JSON=" + json.dumps(value, sort_keys=True))
-""".strip()
+    module_path = module_path.resolve()
+    if not module_path.is_file():
+        fail(
+            "primary-economic release validator is unavailable or unsafe: "
+            f"{module_path}"
+        )
     environment = os.environ.copy()
     environment.pop("STACKPOMDP_CODE_ROOT", None)
     environment["PYTHONPATH"] = str(AUTOMATION_SOURCE_ROOT)
@@ -808,9 +812,12 @@ print("STACKPOMDP_PRIMARY_GATE_JSON=" + json.dumps(value, sort_keys=True))
     try:
         completed = subprocess.run(
             [
-                sys.executable, "-c", program,
-                str(protocol_path), str(report_path), str(gate_path),
-                str(selected_checkpoint),
+                sys.executable, str(module_path), "validate-gate",
+                "--protocol", str(protocol_path),
+                "--report", str(report_path),
+                "--gate", str(gate_path),
+                "--selected-checkpoint", str(selected_checkpoint),
+                "--code-root", str(AUTOMATION_SOURCE_ROOT),
             ],
             cwd=str(AUTOMATION_SOURCE_ROOT),
             env=environment,
@@ -821,20 +828,61 @@ print("STACKPOMDP_PRIMARY_GATE_JSON=" + json.dumps(value, sort_keys=True))
     except (OSError, subprocess.CalledProcessError) as error:
         stderr = getattr(error, "stderr", "")
         fail(f"primary-economic release validation failed: {stderr or error}")
-    prefix = "STACKPOMDP_PRIMARY_GATE_JSON="
-    records = [
-        line[len(prefix):] for line in completed.stdout.splitlines()
-        if line.startswith(prefix)
-    ]
+    records = []
+    for line in completed.stdout.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+                isinstance(record, dict)
+                and record.get("kind") == "primary_economic_gate"
+                and isinstance(record.get("value"), dict)
+        ):
+            records.append(record["value"])
     if len(records) != 1:
         fail("primary-economic validator emitted no unique JSON result")
-    try:
-        value = json.loads(records[0])
-    except json.JSONDecodeError as error:
-        fail(f"primary-economic validator emitted invalid JSON: {error}")
+    value = records[0]
     if not isinstance(value, dict):
         fail("primary-economic validator result is not an object")
     return value
+
+
+def _primary_checkpoint_from_records(*, report: dict, gate: dict) -> Path:
+    """Read one exact selected path from the report/gate publication pair."""
+
+    alias = report.get("selected_alias")
+    selected = gate.get("selected_checkpoint")
+    if not isinstance(alias, dict) or not isinstance(selected, dict):
+        fail("primary report/gate has no selected-checkpoint records")
+    alias_raw = alias.get("pinned_path")
+    selected_raw = selected.get("path")
+    if not isinstance(alias_raw, str) or not isinstance(selected_raw, str):
+        fail("primary report/gate selected paths are not strings")
+    alias_path = Path(alias_raw).expanduser()
+    selected_path = Path(selected_raw).expanduser()
+    if alias_path.is_symlink() or selected_path.is_symlink():
+        fail("primary selected checkpoint cannot be a symlink")
+    alias_path = alias_path.resolve()
+    selected_path = selected_path.resolve()
+    expect_equal(
+        alias_path, selected_path,
+        label="primary report versus gate selected path",
+    )
+    if alias_path.name != E1_PRIMARY_CHECKPOINT_NAME:
+        fail(f"unexpected primary selected-checkpoint name: {alias_path.name}")
+    alias_digest = alias.get("sha256")
+    selected_digest = selected.get("sha256")
+    if (
+            not isinstance(alias_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", alias_digest)
+    ):
+        fail("primary report selected alias has no valid SHA-256")
+    expect_equal(
+        alias_digest, selected_digest,
+        label="primary report versus gate selected SHA-256",
+    )
+    return alias_path
 
 
 def _validate_primary_economic_gate(args: argparse.Namespace) -> dict:
@@ -855,6 +903,15 @@ def _validate_primary_economic_gate(args: argparse.Namespace) -> dict:
         report.get("evaluator"), E1_PRIMARY_EVALUATOR,
         label="primary buyer evaluator",
     )
+    gate_record = load_json(gate_path)
+    published_checkpoint = _primary_checkpoint_from_records(
+        report=report, gate=gate_record,
+    )
+    if published_checkpoint != checkpoint:
+        fail(
+            "requested primary checkpoint differs from the report/gate alias: "
+            f"{checkpoint} != {published_checkpoint}"
+        )
 
     gate = _run_primary_economic_gate_validator(
         protocol_path=protocol_path,
@@ -1202,7 +1259,8 @@ def _discover_authoritative_primary_buyer_gate(
             "state": "gate_publication_pending",
         }
 
-    checkpoint = (AUTOMATION_SOURCE_ROOT / E1_PRIMARY_CHECKPOINT_RELATIVE).resolve()
+    gate = load_json(gate_path)
+    checkpoint = _primary_checkpoint_from_records(report=report, gate=gate)
     validated = validate_e1_gate(argparse.Namespace(
         report=str(report_path),
         checkpoint=str(checkpoint),

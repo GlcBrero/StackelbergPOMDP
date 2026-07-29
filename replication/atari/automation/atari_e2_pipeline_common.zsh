@@ -29,40 +29,112 @@ typeset -gr E2_N_STEPS=210
 typeset -gr E2_NUM_ENVS=4
 typeset -gr E2_BATCH_SIZE=840
 
-function e2_claim_pipeline_lock() {
-  local token owner
-  token="${STACKPOMDP_E2_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
-  if mkdir "$E2_PIPELINE_LOCK" 2>/dev/null; then
-    print -r -- "${token}"$'\t'"$$"$'\t'"$(hostname)"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      > "$E2_PIPELINE_LOCK/owner.tsv"
-    typeset -gx STACKPOMDP_E2_LOCK_TOKEN="$token"
-    typeset -g E2_LOCK_OWNED_BY_CALLER=1
-    return 0
-  fi
-  [[ -f "$E2_PIPELINE_LOCK/owner.tsv" ]] || {
-    print -u2 "E2 pipeline lock exists without an owner record: $E2_PIPELINE_LOCK"
+function stackpomdp_claim_owned_lock() {
+  local lock="$1"
+  local token="$2"
+  local label="$3"
+  local owner_record owner owner_pid owner_host before after current_host
+  local lock_mtime lock_age now
+  local -a entries
+  current_host=$(hostname)
+  while true; do
+    if mkdir "$lock" 2>/dev/null; then
+      print -r -- "${token}"$'\t'"$$"$'\t'"${current_host}"$'\t'"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$lock/owner.tsv"
+      typeset -g STACKPOMDP_LOCK_RESULT_OWNED=1
+      return 0
+    fi
+    [[ -d "$lock" && ! -L "$lock" ]] || {
+      print -u2 "$label lock path is not a regular directory: $lock"
+      return 1
+    }
+    if [[ ! -e "$lock/owner.tsv" ]]; then
+      entries=("$lock"/*(DN))
+      if (( ${#entries} != 0 )); then
+        print -u2 "$label lock has no owner record but is not empty: $lock"
+        return 1
+      fi
+      lock_mtime=$(stat -f '%m' "$lock") || return 1
+      now=$(date +%s) || return 1
+      lock_age=$(( now - lock_mtime ))
+      if (( lock_age < 60 )); then
+        print -u2 "$label ownerless lock is younger than 60 seconds: $lock"
+        return 1
+      fi
+      before=$(stat -f '%d:%i:%m:%c' "$lock") || return 1
+      sleep 1
+      entries=("$lock"/*(DN))
+      after=$(stat -f '%d:%i:%m:%c' "$lock") || return 1
+      if (( ${#entries} == 0 )) && [[ "$before" == "$after" ]]; then
+        if rmdir "$lock" 2>/dev/null; then
+          print "reclaimed stable empty $label lock: $lock"
+          continue
+        fi
+      fi
+      print -u2 "$label lock has no stable owner record: $lock"
+      return 1
+    fi
+    [[ -f "$lock/owner.tsv" && ! -L "$lock/owner.tsv" ]] || {
+      print -u2 "$label owner record is not a regular file: $lock/owner.tsv"
+      return 1
+    }
+    owner_record=$(<"$lock/owner.tsv")
+    IFS=$'\t' read -r owner owner_pid owner_host _ <<< "$owner_record"
+    [[ "$owner_pid" == <-> && "$owner_pid" -gt 0 && -n "$owner_host" ]] || {
+      print -u2 "$label lock has malformed owner metadata: $lock"
+      return 1
+    }
+    if [[ "$owner_host" != "$current_host" ]]; then
+      print -u2 "$label lock belongs to foreign host $owner_host: $lock"
+      return 1
+    fi
+    if [[ "$owner" == "$token" ]]; then
+      if ! kill -0 "$owner_pid" 2>/dev/null; then
+        print -u2 "$label reentrant token names absent PID $owner_pid; refusing automatic reclaim: $lock"
+        return 1
+      fi
+      typeset -g STACKPOMDP_LOCK_RESULT_OWNED=0
+      return 0
+    fi
+    if kill -0 "$owner_pid" 2>/dev/null; then
+      print -u2 "$label lock is live on PID $owner_pid: $lock"
+      return 1
+    fi
+    print -u2 "$label owner PID $owner_pid is absent, but descendants may still be active; refusing automatic reclaim: $lock"
+    return 1
+  done
+}
+
+function stackpomdp_release_owned_lock() {
+  local lock="$1"
+  local token="$2"
+  local owned="$3"
+  local label="$4"
+  local owner
+  [[ "$owned" == 1 ]] || return 0
+  [[ -f "$lock/owner.tsv" && ! -L "$lock/owner.tsv" ]] || return 1
+  IFS=$'\t' read -r owner _ < "$lock/owner.tsv"
+  [[ "$owner" == "$token" ]] || {
+    print -u2 "refusing to release a $label lock owned by another token"
     return 1
   }
-  IFS=$'\t' read -r owner _ < "$E2_PIPELINE_LOCK/owner.tsv"
-  if [[ "$owner" != "$token" ]]; then
-    print -u2 "another E2 pipeline owns $E2_PIPELINE_LOCK: $owner"
-    return 1
-  fi
+  rm "$lock/owner.tsv"
+  rmdir "$lock"
+}
+
+function e2_claim_pipeline_lock() {
+  local token
+  token="${STACKPOMDP_E2_LOCK_TOKEN:-$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}}"
+  stackpomdp_claim_owned_lock \
+    "$E2_PIPELINE_LOCK" "$token" "E2 pipeline" || return $?
   typeset -gx STACKPOMDP_E2_LOCK_TOKEN="$token"
-  typeset -g E2_LOCK_OWNED_BY_CALLER=0
+  typeset -g E2_LOCK_OWNED_BY_CALLER="$STACKPOMDP_LOCK_RESULT_OWNED"
 }
 
 function e2_release_pipeline_lock() {
-  local owner
-  [[ "${E2_LOCK_OWNED_BY_CALLER:-0}" == 1 ]] || return 0
-  [[ -f "$E2_PIPELINE_LOCK/owner.tsv" ]] || return 1
-  IFS=$'\t' read -r owner _ < "$E2_PIPELINE_LOCK/owner.tsv"
-  [[ "$owner" == "${STACKPOMDP_E2_LOCK_TOKEN:-}" ]] || {
-    print -u2 "refusing to release an E2 lock owned by another token"
-    return 1
-  }
-  rm "$E2_PIPELINE_LOCK/owner.tsv"
-  rmdir "$E2_PIPELINE_LOCK"
+  stackpomdp_release_owned_lock \
+    "$E2_PIPELINE_LOCK" "${STACKPOMDP_E2_LOCK_TOKEN:-}" \
+    "${E2_LOCK_OWNED_BY_CALLER:-0}" "E2 pipeline" || return $?
   typeset -g E2_LOCK_OWNED_BY_CALLER=0
 }
 
@@ -91,19 +163,21 @@ function e2_prepare_runtime() {
     # Isolate E2 from later changes on the active branch while all generated
     # checkpoints, reports, W&B files, and logs still go to the active repo.
     lock="${CODE_ROOT}.init.lock"
-    while [[ ! -e "$CODE_ROOT" ]]; do
-      if mkdir "$lock" 2>/dev/null; then
-        if [[ ! -e "$CODE_ROOT" ]]; then
-          if ! git -C "$ROOT" worktree add --detach "$CODE_ROOT" "$EXPECTED_HEAD"; then
-            rmdir "$lock"
-            return 1
-          fi
-        fi
-        rmdir "$lock"
-      else
-        sleep 2
-      fi
-    done
+    local init_token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
+    local init_owned init_status=0
+    stackpomdp_claim_owned_lock \
+      "$lock" "$init_token" "E2 code-worktree initialization" || return $?
+    init_owned="$STACKPOMDP_LOCK_RESULT_OWNED"
+    if [[ ! -e "$CODE_ROOT" ]]; then
+      set +e
+      git -C "$ROOT" worktree add --detach "$CODE_ROOT" "$EXPECTED_HEAD"
+      init_status=$?
+      set -e
+    fi
+    stackpomdp_release_owned_lock \
+      "$lock" "$init_token" "$init_owned" \
+      "E2 code-worktree initialization" || return $?
+    (( init_status == 0 )) || return "$init_status"
   elif [[ ! -d "$CODE_ROOT/.git" && ! -f "$CODE_ROOT/.git" ]]; then
     print -u2 "reserved E2 code path exists but is not a git worktree: $CODE_ROOT"
     return 1
@@ -289,33 +363,42 @@ function e2_wait_for_both_e1_gates() {
   e2_resolve_e1_gate buyer
 
   local lock="${E1_COHORT}.init.lock"
-  while ! mkdir "$lock" 2>/dev/null; do
-    if [[ -f "$E1_COHORT" ]]; then
-      e2_load_e1_cohort
-      return 0
-    fi
-    sleep 2
-  done
+  local token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
+  local owned
+  stackpomdp_claim_owned_lock \
+    "$lock" "$token" "E1 cohort initialization" || return $?
+  owned="$STACKPOMDP_LOCK_RESULT_OWNED"
   if [[ ! -f "$E1_COHORT" ]]; then
     # Refresh under the cohort lock. The validator proves that these buyer
     # bytes are exactly those in the seller's immutable release manifest.
-    e2_resolve_e1_gate seller
-    e2_resolve_e1_gate buyer
     set +e
-    "$PYTHON" "$VALIDATOR" write-e1-gate-cohort \
-      --output "$E1_COHORT" \
-      --buyer-report "$E1_BUYER_REPORT" \
-      --buyer-checkpoint "$E1_BUYER" \
-      --buyer-actor-loss-mode "$E1_BUYER_MODE" \
-      --seller-report "$E1_SELLER_REPORT" \
-      --seller-checkpoint "$E1_SELLER" \
-      --seller-actor-loss-mode "$E1_SELLER_MODE"
+    (
+      set -e
+      e2_resolve_e1_gate seller
+      e2_resolve_e1_gate buyer
+      "$PYTHON" "$VALIDATOR" write-e1-gate-cohort \
+        --output "$E1_COHORT" \
+        --buyer-report "$E1_BUYER_REPORT" \
+        --buyer-checkpoint "$E1_BUYER" \
+        --buyer-actor-loss-mode "$E1_BUYER_MODE" \
+        --seller-report "$E1_SELLER_REPORT" \
+        --seller-checkpoint "$E1_SELLER" \
+        --seller-actor-loss-mode "$E1_SELLER_MODE"
+    )
     local exit_code=$?
     set -e
-    rmdir "$lock"
+    if ! stackpomdp_release_owned_lock \
+        "$lock" "$token" "$owned" "E1 cohort initialization"; then
+      print -u2 "failed to release E1 cohort initialization lock: $lock"
+      return 1
+    fi
     (( exit_code == 0 )) || return "$exit_code"
   else
-    rmdir "$lock"
+    if ! stackpomdp_release_owned_lock \
+        "$lock" "$token" "$owned" "E1 cohort initialization"; then
+      print -u2 "failed to release E1 cohort initialization lock: $lock"
+      return 1
+    fi
   fi
   e2_load_e1_cohort
 }
