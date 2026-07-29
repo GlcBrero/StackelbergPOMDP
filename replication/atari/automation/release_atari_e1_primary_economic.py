@@ -824,7 +824,7 @@ def validate_report(*, protocol_path: Path, report_path: Path,
 
 
 def build_gate(*, protocol_path, report_path, selected_checkpoint,
-               code_root=None):
+               code_root):
     report = validate_report(
         protocol_path=protocol_path,
         report_path=report_path,
@@ -867,7 +867,7 @@ def build_gate(*, protocol_path, report_path, selected_checkpoint,
 
 
 def validate_gate(*, protocol_path: Path, report_path: Path, gate_path: Path,
-                  selected_checkpoint: Path, code_root=None) -> dict:
+                  selected_checkpoint: Path, code_root) -> dict:
     """Revalidate a primary release and every bound byte from raw rows."""
 
     gate_path = _absolute_nofollow(gate_path)
@@ -940,7 +940,7 @@ def atomic_copy_new(source, destination):
 
 
 def finalize_release(*, protocol_path, report_path, selected_checkpoint,
-                     gate_path, code_root=None):
+                     gate_path, code_root):
     """Recover or complete the report -> alias -> gate publication transaction.
 
     A report is the immutable outcome marker.  For a passing report, an
