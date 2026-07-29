@@ -143,6 +143,58 @@ function e2_release_pipeline_lock() {
   typeset -g E2_LOCK_OWNED_BY_CALLER=0
 }
 
+function e2_clear_transient_lock_record() {
+  typeset -g E2_TRANSIENT_LOCK_PATH=
+  typeset -g E2_TRANSIENT_LOCK_TOKEN=
+  typeset -g E2_TRANSIENT_LOCK_OWNED=0
+  typeset -g E2_TRANSIENT_LOCK_LABEL=
+}
+
+function e2_claim_transient_lock() {
+  local lock="$1"
+  local token="$2"
+  local label="$3"
+  local claim_status
+  [[ -z "${E2_TRANSIENT_LOCK_PATH:-}" ]] || {
+    print -u2 "cannot nest transient locks: ${E2_TRANSIENT_LOCK_PATH}"
+    return 1
+  }
+  # Pre-register ownership so a signal arriving immediately after mkdir can
+  # still remove this unique-token lock. A mismatched pre-existing owner is
+  # protected by stackpomdp_release_owned_lock's token check.
+  typeset -g E2_TRANSIENT_LOCK_PATH="$lock"
+  typeset -g E2_TRANSIENT_LOCK_TOKEN="$token"
+  typeset -g E2_TRANSIENT_LOCK_OWNED=1
+  typeset -g E2_TRANSIENT_LOCK_LABEL="$label"
+  stackpomdp_claim_owned_lock "$lock" "$token" "$label" || {
+    claim_status=$?
+    e2_clear_transient_lock_record
+    return "$claim_status"
+  }
+  typeset -g E2_TRANSIENT_LOCK_OWNED="$STACKPOMDP_LOCK_RESULT_OWNED"
+}
+
+function e2_release_transient_lock() {
+  [[ -n "${E2_TRANSIENT_LOCK_PATH:-}" ]] || return 0
+  stackpomdp_release_owned_lock \
+    "$E2_TRANSIENT_LOCK_PATH" "$E2_TRANSIENT_LOCK_TOKEN" \
+    "${E2_TRANSIENT_LOCK_OWNED:-0}" "$E2_TRANSIENT_LOCK_LABEL" || return $?
+  e2_clear_transient_lock_record
+}
+
+function e2_release_active_locks() {
+  local aggregate_status=0 release_status
+  e2_release_transient_lock || {
+    release_status=$?
+    aggregate_status=$release_status
+  }
+  e2_release_pipeline_lock || {
+    release_status=$?
+    (( aggregate_status == 0 )) && aggregate_status=$release_status
+  }
+  return "$aggregate_status"
+}
+
 function e2_prepare_runtime() {
   local head worktree_status automation_status lock
   typeset -g E2_AUTOMATION_REVISION=$(git -C "$AUTOMATION_ROOT" rev-parse HEAD)
@@ -169,19 +221,16 @@ function e2_prepare_runtime() {
     # checkpoints, reports, W&B files, and logs still go to the active repo.
     lock="${CODE_ROOT}.init.lock"
     local init_token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
-    local init_owned init_status=0
-    stackpomdp_claim_owned_lock \
+    local init_status=0
+    e2_claim_transient_lock \
       "$lock" "$init_token" "E2 code-worktree initialization" || return $?
-    init_owned="$STACKPOMDP_LOCK_RESULT_OWNED"
     if [[ ! -e "$CODE_ROOT" ]]; then
       set +e
       git -C "$ROOT" worktree add --detach "$CODE_ROOT" "$EXPECTED_HEAD"
       init_status=$?
       set -e
     fi
-    stackpomdp_release_owned_lock \
-      "$lock" "$init_token" "$init_owned" \
-      "E2 code-worktree initialization" || return $?
+    e2_release_transient_lock || return $?
     (( init_status == 0 )) || return "$init_status"
   elif [[ ! -d "$CODE_ROOT/.git" && ! -f "$CODE_ROOT/.git" ]]; then
     print -u2 "reserved E2 code path exists but is not a git worktree: $CODE_ROOT"
@@ -369,10 +418,8 @@ function e2_wait_for_both_e1_gates() {
 
   local lock="${E1_COHORT}.init.lock"
   local token="$(hostname)-$$-${EPOCHSECONDS}-${RANDOM}"
-  local owned
-  stackpomdp_claim_owned_lock \
+  e2_claim_transient_lock \
     "$lock" "$token" "E1 cohort initialization" || return $?
-  owned="$STACKPOMDP_LOCK_RESULT_OWNED"
   if [[ ! -f "$E1_COHORT" ]]; then
     # Refresh under the cohort lock. The validator proves that these buyer
     # bytes are exactly those in the seller's immutable release manifest.
@@ -392,15 +439,13 @@ function e2_wait_for_both_e1_gates() {
     )
     local exit_code=$?
     set -e
-    if ! stackpomdp_release_owned_lock \
-        "$lock" "$token" "$owned" "E1 cohort initialization"; then
+    if ! e2_release_transient_lock; then
       print -u2 "failed to release E1 cohort initialization lock: $lock"
       return 1
     fi
     (( exit_code == 0 )) || return "$exit_code"
   else
-    if ! stackpomdp_release_owned_lock \
-        "$lock" "$token" "$owned" "E1 cohort initialization"; then
+    if ! e2_release_transient_lock; then
       print -u2 "failed to release E1 cohort initialization lock: $lock"
       return 1
     fi

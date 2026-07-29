@@ -7,10 +7,10 @@ set -euo pipefail
 # gate failure and stops the chain; operational failures retain their status.
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
 e2_claim_pipeline_lock
-trap 'e2_release_pipeline_lock' EXIT
-trap 'e2_release_pipeline_lock; exit 129' HUP
-trap 'e2_release_pipeline_lock; exit 130' INT
-trap 'e2_release_pipeline_lock; exit 143' TERM
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"' EXIT
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 129' HUP
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 130' INT
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
 
 typeset -gr PRIMARY_RELEASE="$AUTOMATION_DIR/run_atari_clean_e1_buyer_primary_economic_release.sh"
 typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_after_buyer_gate.sh"
@@ -19,7 +19,7 @@ typeset -gr E2_STAGE="$AUTOMATION_DIR/run_atari_clean_e2_sequential.sh"
 function run_required_stage() {
   local label="$1"
   local launcher="$2"
-  local status
+  local stage_status
   [[ -x "$launcher" ]] || {
     print -u2 "$label launcher is unavailable or not executable: $launcher"
     return 1
@@ -27,9 +27,9 @@ function run_required_stage() {
   print "starting $label"
   set +e
   "$launcher"
-  status=$?
+  stage_status=$?
   set -e
-  case "$status" in
+  case "$stage_status" in
     0)
       print "completed $label"
       ;;
@@ -38,8 +38,8 @@ function run_required_stage() {
       return 2
       ;;
     *)
-      print -u2 "$label failed operationally with exit status $status"
-      return "$status"
+      print -u2 "$label failed operationally with exit status $stage_status"
+      return "$stage_status"
       ;;
   esac
 }

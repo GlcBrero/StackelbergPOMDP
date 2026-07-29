@@ -538,7 +538,8 @@ def test_pipeline_term_trap_releases_owned_lock(tmp_path):
         Path(__file__).resolve().parents[1]
         / "replication/atari/automation/atari_e2_pipeline_common.zsh"
     )
-    lock = tmp_path / "signal.lock"
+    lock = tmp_path / "signal-global.lock"
+    transient_lock = tmp_path / "signal-transient.lock"
     program = r'''
 source "$COMMON"
 typeset -gx STACKPOMDP_E2_LOCK_TOKEN="signal-owner"
@@ -550,16 +551,22 @@ function e2_release_pipeline_lock() {
     "$E2_LOCK_OWNED_BY_CALLER" "signal test" || return $?
   typeset -g E2_LOCK_OWNED_BY_CALLER=0
 }
-trap 'e2_release_pipeline_lock' EXIT
-trap 'e2_release_pipeline_lock; exit 129' HUP
-trap 'e2_release_pipeline_lock; exit 130' INT
-trap 'e2_release_pipeline_lock; exit 143' TERM
+e2_claim_transient_lock "$INNER_LOCK" "inner-owner" "signal transient" || exit $?
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"' EXIT
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 129' HUP
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 130' INT
+trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
 print -r -- READY
 while true; do sleep 1; done
 '''
     process = subprocess.Popen(
         ["zsh", "-c", program],
-        env={**os.environ, "COMMON": str(common), "LOCK": str(lock)},
+        env={
+            **os.environ,
+            "COMMON": str(common),
+            "LOCK": str(lock),
+            "INNER_LOCK": str(transient_lock),
+        },
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -568,6 +575,7 @@ while true; do sleep 1; done
         assert process.stdout is not None
         assert process.stdout.readline().strip() == "READY"
         assert lock.is_dir()
+        assert transient_lock.is_dir()
         process.terminate()
         assert process.wait(timeout=5) == 143
     finally:
@@ -575,6 +583,7 @@ while true; do sleep 1; done
             process.kill()
             process.wait(timeout=5)
     assert not lock.exists()
+    assert not transient_lock.exists()
 
 
 def test_all_e2_lock_owners_install_signal_cleanup():
@@ -591,10 +600,15 @@ def test_all_e2_lock_owners_install_signal_cleanup():
     )
     for launcher in launchers:
         source = (automation / launcher).read_text(encoding="utf-8")
-        assert "e2_claim_pipeline_lock\ntrap 'e2_release_pipeline_lock' EXIT" in source
+        assert (
+            "e2_claim_pipeline_lock\n"
+            "trap 'e2_release_active_locks || print -u2 "
+            "\"failed to release an E2 lock\"' EXIT"
+        ) in source
         for signal_name, exit_status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
             assert (
-                f"trap 'e2_release_pipeline_lock; exit {exit_status}' "
+                "trap 'e2_release_active_locks || print -u2 "
+                f"\"failed to release an E2 lock\"; exit {exit_status}' "
                 f"{signal_name}"
             ) in source
 
@@ -699,8 +713,9 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
     assert "WANDB_MODE=online" in common
     assert '"E2 pipeline" || return $?' in common
     assert "write-e1-gate-cohort" in common
-    assert common.index("write-e1-gate-cohort") < common.index(
-        '"E1 cohort initialization"; then'
+    cohort_write = common.index("write-e1-gate-cohort")
+    assert cohort_write < common.index(
+        "if ! e2_release_transient_lock; then", cohort_write
     )
     for name in (
         "run_atari_clean_e1_seller_after_buyer_gate.sh",

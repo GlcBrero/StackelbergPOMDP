@@ -94,11 +94,11 @@ set +e
   --wandb-group atari_clean_curriculum \
   --wandb-name atari_clean_e1_seller_balanced_primary_economic_release_seed1_2m_local \
   2>&1 | tee "$SELLER_LOG"
-status=$pipestatus[1]
+training_status=$pipestatus[1]
 set -e
-(( status == 0 )) || {
-  print -u2 "E1 seller training failed with exit status $status"
-  exit "$status"
+(( training_status == 0 )) || {
+  print -u2 "E1 seller training failed with exit status $training_status"
+  exit "$training_status"
 }
 
 release_seller_lock
