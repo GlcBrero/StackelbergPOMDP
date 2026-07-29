@@ -12,6 +12,7 @@ import argparse
 from copy import copy
 from datetime import datetime, timezone
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -137,7 +138,7 @@ def git_revision(code_root):
     _require(len(value) == 40 and all(c in "0123456789abcdef" for c in value),
              "evaluator code revision is not a full lowercase Git SHA")
     scoped = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
         check=True,
         capture_output=True,
         text=True,
@@ -159,6 +160,55 @@ def require_commit(code_root, revision):
         text=True,
     )
     _require(result.returncode == 0, "recorded evaluator commit is unavailable")
+    return revision
+
+
+def require_execution_root(code_root):
+    """Bind imports and the claimed revision to this module's checkout."""
+
+    root = Path(code_root).expanduser().resolve()
+    module_root = Path(__file__).resolve().parents[3]
+    _require(
+        os.path.samefile(root, module_root),
+        "--code-root is not the checkout executing the release module",
+    )
+    expected_imports = (
+        (evaluator, root / "replication/atari/evaluate_atari_meta_response_sb3.py"),
+        (
+            temporal_validator,
+            root / "replication/atari/automation/validate_atari_e1_temporal_contingency.py",
+        ),
+        (
+            ExactFiveEventSchedule,
+            root / "stackelberg_pomdp/atari/schedule.py",
+        ),
+        (
+            evaluator.trainer,
+            root / "replication/atari/train_atari_meta_response_sb3.py",
+        ),
+        (
+            evaluator.StackPOMDPAtariPolicy,
+            root / "stackelberg_pomdp/atari/stackpomdp_policy.py",
+        ),
+    )
+    for imported, expected in expected_imports:
+        _require(
+            Path(inspect.getfile(imported)).resolve() == expected.resolve(),
+            f"release dependency was imported outside --code-root: {expected}",
+        )
+    return root
+
+
+def require_active_revision(code_root, revision):
+    """Require validation to execute from the exact clean preregistered tree."""
+
+    code_root = require_execution_root(code_root)
+    revision = require_commit(code_root, revision)
+    current = git_revision(code_root)
+    _require(
+        current == revision,
+        "active evaluator revision differs from the preregistered revision",
+    )
     return revision
 
 
@@ -420,6 +470,7 @@ def validate_source_bundle(paths):
             )
         },
     }
+    records["eligible_checkpoint_metadata"] = attempt["metadata"]
     return records
 
 
@@ -456,12 +507,14 @@ def _protocol_value(*, sources, revision):
             "buyer_game_reward_scale": 1.0,
             "max_frames": 100_000,
         },
+        "execution": {"device": "cpu"},
         "candidate_policy": {
             "eligible_count": 1,
             "selection_basis": "immutable temporal-v1 common-screen rank one",
             "candidate_search": False,
             "fallback_allowed": False,
             "checkpoint": sources["source_checkpoint"],
+            "checkpoint_metadata": sources["eligible_checkpoint_metadata"],
         },
         "holdout": {
             "random": {
@@ -487,6 +540,7 @@ def _protocol_value(*, sources, revision):
 
 
 def build_protocol(args):
+    require_execution_root(args.code_root)
     return _protocol_value(
         sources=validate_source_bundle(args),
         revision=git_revision(args.code_root),
@@ -513,18 +567,26 @@ def validate_protocol(path, *, code_root=None):
              "primary protocol permits candidate search/fallback")
     holdout = value.get("holdout", {})
     root = code_root or Path(__file__).resolve().parents[3]
-    revision = require_commit(root, value.get("evaluator_code_revision"))
+    revision = (
+        require_active_revision(root, value.get("evaluator_code_revision"))
+        if code_root is not None
+        else require_commit(root, value.get("evaluator_code_revision"))
+    )
     sources = validate_source_bundle(SimpleNamespace(
         **{name: value["sources"][name]["path"] for name in EXPECTED_SHA256}
     ))
-    for name in (*EXPECTED_SHA256, "timing_limitation"):
+    for name in (
+        *EXPECTED_SHA256,
+        "timing_limitation",
+        "eligible_checkpoint_metadata",
+    ):
         _require(value["sources"].get(name) == sources[name],
                  f"primary protocol source record changed: {name}")
     expected = _protocol_value(sources=sources, revision=revision)
     for key in (
         "role", "evaluator", "evaluator_code_revision", "source_kind",
         "sampler_mode", "decision_record", "evaluation_semantics",
-        "candidate_policy", "holdout",
+        "execution", "candidate_policy", "holdout",
         "economic_check_names", "sources",
     ):
         _require(value.get(key) == expected.get(key),
@@ -546,6 +608,8 @@ def expected_random_schedule(seed):
 def _evaluation_args(protocol, *, e0b, rom, selected, device):
     """Build the canonical evaluator namespace without invoking selection."""
 
+    _require(device == protocol["execution"]["device"] == "cpu",
+             "fresh confirmation must run on the preregistered CPU device")
     args = evaluator.parse_args([
         "--role", BUYER,
         "--checkpoint", protocol["candidate_policy"]["checkpoint"]["path"],
@@ -704,6 +768,8 @@ def validate_report(*, protocol_path: Path, report_path: Path,
              and checkpoint.get("training_config", {}).get("actor_loss_mode")
              == "balanced",
              "report checkpoint metadata differs from the eligible buyer")
+    _require(checkpoint == protocol["candidate_policy"]["checkpoint_metadata"],
+             "report checkpoint metadata differs from the immutable source report")
     _require(sha256_file(checkpoint["path"]) == checkpoint["sha256"],
              "source checkpoint bytes changed after confirmation")
     for name in ("e0b", "rom"):
@@ -718,6 +784,8 @@ def validate_report(*, protocol_path: Path, report_path: Path,
     environment = report.get("environment", {})
     _require(environment == protocol["evaluation_semantics"],
              "report environment differs from protocol")
+    _require(report.get("execution") == protocol["execution"] == {"device": "cpu"},
+             "report execution device differs from protocol")
     _random, _fixed, gate = _validate_fresh_results(report)
     artifacts = report.get("artifacts", {})
     _require(isinstance(artifacts, dict)
@@ -747,20 +815,24 @@ def validate_report(*, protocol_path: Path, report_path: Path,
         _require(artifacts.get("selected_checkpoint") is None
                  and artifacts.get("gate") is None,
                  "failed fresh report names release artifacts")
+        _require(not os.path.lexists(expected_gate),
+                 "failed fresh report retained an orphan gate")
         if selected_checkpoint is not None:
             _require(not os.path.lexists(selected_checkpoint),
                      "failed fresh report retained a selected alias")
     return report
 
 
-def build_gate(*, protocol_path, report_path, selected_checkpoint):
+def build_gate(*, protocol_path, report_path, selected_checkpoint,
+               code_root=None):
     report = validate_report(
         protocol_path=protocol_path,
         report_path=report_path,
         selected_checkpoint=selected_checkpoint,
+        code_root=code_root,
     )
     _require(report["passed"] is True, "only a passing fresh report is a gate")
-    protocol = validate_protocol(protocol_path)
+    protocol = validate_protocol(protocol_path, code_root=code_root)
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": GATE_KIND,
@@ -789,12 +861,13 @@ def build_gate(*, protocol_path, report_path, selected_checkpoint):
         "secondary_timing_status": "failed",
         "secondary_timing_release_blocking": False,
         "no_timing_optimality_claim": True,
+        "execution": protocol["execution"],
         "sources": protocol["sources"],
     }
 
 
 def validate_gate(*, protocol_path: Path, report_path: Path, gate_path: Path,
-                  selected_checkpoint: Path) -> dict:
+                  selected_checkpoint: Path, code_root=None) -> dict:
     """Revalidate a primary release and every bound byte from raw rows."""
 
     gate_path = _absolute_nofollow(gate_path)
@@ -813,19 +886,21 @@ def validate_gate(*, protocol_path: Path, report_path: Path, gate_path: Path,
         "secondary_timing_status": "failed",
         "secondary_timing_release_blocking": False,
         "no_timing_optimality_claim": True,
+        "execution": {"device": "cpu"},
     }.items():
         _require(value.get(key) == expected, f"primary gate differs in {key}")
     expected = build_gate(
         protocol_path=protocol_path,
         report_path=report_path,
         selected_checkpoint=selected_checkpoint,
+        code_root=code_root,
     )
     for key in (
         "passed", "role", "actor_loss_mode", "sampler_mode", "source_kind",
         "protocol", "report", "selected_checkpoint",
         "evaluator_code_revision", "candidate_search", "fallback_allowed",
         "secondary_timing_status", "secondary_timing_release_blocking",
-        "no_timing_optimality_claim", "sources",
+        "no_timing_optimality_claim", "execution", "sources",
     ):
         _require(value.get(key) == expected.get(key),
                  f"primary gate differs in {key}")
@@ -921,12 +996,14 @@ def finalize_release(*, protocol_path, report_path, selected_checkpoint,
             report_path=report_path,
             gate_path=gate_path,
             selected_checkpoint=selected,
+            code_root=code_root,
         )
     else:
         gate = build_gate(
             protocol_path=protocol_path,
             report_path=report_path,
             selected_checkpoint=selected,
+            code_root=code_root,
         )
         atomic_write_new_json(gate_path, gate)
         gate = validate_gate(
@@ -934,6 +1011,7 @@ def finalize_release(*, protocol_path, report_path, selected_checkpoint,
             report_path=report_path,
             gate_path=gate_path,
             selected_checkpoint=selected,
+            code_root=code_root,
         )
     return {"report": report, "gate": gate}
 
@@ -950,6 +1028,7 @@ def run_fresh_confirmation(args):
     selected = _absolute_nofollow(args.selected_checkpoint)
     gate_path = _absolute_nofollow(args.gate)
     expected_gate = report_path.with_name(f"{report_path.stem}.gate.json")
+    _require(args.device == "cpu", "fresh confirmation must run on CPU")
     _require(gate_path == expected_gate, "primary gate must be adjacent to its report")
     for path in (report_path, selected, gate_path):
         if os.path.lexists(path):
@@ -1045,6 +1124,7 @@ def run_fresh_confirmation(args):
         "e0b_source": protocol["sources"]["e0b"],
         "rom_source": protocol["sources"]["rom"],
         "environment": protocol["evaluation_semantics"],
+        "execution": protocol["execution"],
         "random": random_result,
         "fixed_contexts": fixed_results,
         "primary_economic_gate": release_gate,
@@ -1091,7 +1171,7 @@ def parse_args(argv=None):
     evaluate.add_argument("--selected-checkpoint", required=True)
     evaluate.add_argument("--gate", required=True)
     evaluate.add_argument("--code-root", required=True)
-    evaluate.add_argument("--device", default="cpu")
+    evaluate.add_argument("--device", choices=("cpu",), default="cpu")
     report = subparsers.add_parser("validate-report")
     report.add_argument("--protocol", required=True)
     report.add_argument("--report", required=True)
@@ -1108,6 +1188,7 @@ def parse_args(argv=None):
     gate.add_argument("--report", required=True)
     gate.add_argument("--gate", required=True)
     gate.add_argument("--selected-checkpoint", required=True)
+    gate.add_argument("--code-root", required=True)
     return parser.parse_args(argv)
 
 
@@ -1165,6 +1246,7 @@ def main(argv=None):
             protocol_path=Path(args.protocol), report_path=Path(args.report),
             gate_path=Path(args.gate),
             selected_checkpoint=Path(args.selected_checkpoint),
+            code_root=Path(args.code_root),
         )
         output_value = {"kind": "primary_economic_gate", "passed": True,
                         "gate": str(Path(args.gate).resolve()), "value": result}

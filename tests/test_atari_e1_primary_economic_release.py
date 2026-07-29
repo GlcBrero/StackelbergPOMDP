@@ -1,5 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pytest
@@ -267,6 +268,49 @@ def test_atomic_publication_refuses_overwrite_and_symlink(tmp_path):
         release.sha256_file(symlink)
 
 
+def test_git_revision_rejects_untracked_import_shadowing(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    (repository / "tracked.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "add", "tracked.py"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "commit", "-qm", "initial",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    revision = release.git_revision(repository)
+    assert len(revision) == 40
+    (repository / "sitecustomize.py").write_text("raise RuntimeError\n")
+    with pytest.raises(ValueError, match="dirty Atari evaluator code"):
+        release.git_revision(repository)
+
+
+def test_active_revision_requires_exact_running_checkout(monkeypatch, tmp_path):
+    revision = "a" * 40
+    monkeypatch.setattr(release, "require_execution_root", lambda root: Path(root))
+    monkeypatch.setattr(release, "require_commit", lambda root, value: value)
+    monkeypatch.setattr(release, "git_revision", lambda root: "b" * 40)
+    with pytest.raises(ValueError, match="differs from the preregistered"):
+        release.require_active_revision(tmp_path, revision)
+
+
+def test_evaluation_cli_rejects_non_cpu_device():
+    with pytest.raises(SystemExit):
+        release.parse_args([
+            "evaluate",
+            "--protocol", "protocol.json",
+            "--report", "report.json",
+            "--selected-checkpoint", "selected.zip",
+            "--gate", "gate.json",
+            "--code-root", ".",
+            "--device", "cuda",
+        ])
+
+
 def _stub_release_validation(monkeypatch, source):
     digest = release.sha256_file(source)
     protocol = {
@@ -374,5 +418,6 @@ def test_launcher_uses_clean_code_root_and_separate_artifact_root():
     assert "STACKPOMDP_ARTIFACT_ROOT" in script
     assert "write-protocol" in script
     assert "finalize-release" in script
+    assert "--code-root \"$CODE_ROOT\"" in script
     assert "--device cpu" in script
     assert "wandb" not in script.lower()
