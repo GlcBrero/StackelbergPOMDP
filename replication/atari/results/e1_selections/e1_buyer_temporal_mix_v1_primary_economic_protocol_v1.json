@@ -1,0 +1,438 @@
+{
+  "candidate_policy": {
+    "candidate_search": false,
+    "checkpoint": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79"
+    },
+    "checkpoint_metadata": {
+      "atari_e1_sampler_history": [
+        {
+          "inferred_for_legacy_checkpoint": true,
+          "resume_sources": [],
+          "sampler": {
+            "context": "five independent Uniform(0,1) prices",
+            "event_tail_steps": 0,
+            "gameplay_horizon": 200,
+            "legacy_sampling_path": true,
+            "mode": "uniform",
+            "schedule": "ExactFiveEventSchedule.sample",
+            "schedule_context_rngs_independent": false
+          },
+          "start_total_timesteps": 0
+        },
+        {
+          "inferred_for_legacy_checkpoint": false,
+          "resume_sources": [
+            {
+              "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
+              "resume_total_timesteps": 2000800,
+              "sha256": "db8435016138947dda5b09b80f4ec2b5efe71684e58ca5cf9afef06d54e47cff",
+              "training_total_timesteps": 2000800
+            }
+          ],
+          "sampler": {
+            "conditional_schedule_method": "rejection sample from ExactFiveEventSchedule",
+            "context_stratum_weights": {
+              "low_prefix": 0.25,
+              "uniform": 0.75
+            },
+            "early_fifth_interval_half_open": [
+              120,
+              160
+            ],
+            "event_tail_steps": 0,
+            "gameplay_horizon": 200,
+            "late_fifth_interval_half_open": [
+              180,
+              200
+            ],
+            "legacy_sampling_path": false,
+            "low_prefix_context": {
+              "fifth": "Uniform(0,1) price",
+              "first_four": "four independent Uniform(0,0.25) prices"
+            },
+            "mode": "temporal-marginal-v1",
+            "schedule_context_rngs_independent": true,
+            "schedule_stratum_weights": {
+              "early_fifth": 0.25,
+              "late_fifth": 0.25,
+              "unconditional": 0.5
+            },
+            "uniform_context": "five independent Uniform(0,1) prices"
+          },
+          "start_total_timesteps": 2000800
+        }
+      ],
+      "atari_e1_sampler_provenance": {
+        "conditional_schedule_method": "rejection sample from ExactFiveEventSchedule",
+        "context_stratum_weights": {
+          "low_prefix": 0.25,
+          "uniform": 0.75
+        },
+        "early_fifth_interval_half_open": [
+          120,
+          160
+        ],
+        "event_tail_steps": 0,
+        "gameplay_horizon": 200,
+        "late_fifth_interval_half_open": [
+          180,
+          200
+        ],
+        "legacy_sampling_path": false,
+        "low_prefix_context": {
+          "fifth": "Uniform(0,1) price",
+          "first_four": "four independent Uniform(0,0.25) prices"
+        },
+        "mode": "temporal-marginal-v1",
+        "schedule_context_rngs_independent": true,
+        "schedule_stratum_weights": {
+          "early_fifth": 0.25,
+          "late_fifth": 0.25,
+          "unconditional": 0.5
+        },
+        "uniform_context": "five independent Uniform(0,1) prices"
+      },
+      "e0b_source_provenance": {
+        "checkpoint": "/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+        "critic_transferred": false,
+        "modules": [
+          "features_extractor",
+          "game_action_net"
+        ],
+        "sha256": "3a9ded5c53e10bf0b2215f1223f7bde15ba23d197dd0c651590bcd980c375ca3",
+        "source_economic_input_mode": "full",
+        "source_economic_role": "gameplay",
+        "source_pretrained_lr_scale": 0.1,
+        "zero_initialized_actor_state_indices": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "zero_initialized_actor_state_inputs": [
+          "opponent_commitment"
+        ]
+      },
+      "economic_input_mode": "full",
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "role": "buyer",
+      "sampler_contract_inferred_for_legacy_checkpoint": false,
+      "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79",
+      "training_config": {
+        "actor_loss_mode": "balanced",
+        "algorithm": "PPO",
+        "batch_size": 820,
+        "clip_range_at_start": 0.1,
+        "critic_hidden": 256,
+        "economic_head_initialization": {
+          "concentration": 10.0,
+          "mean": 0.95
+        },
+        "economic_hidden": 64,
+        "entropy_coefficient": 0.01,
+        "gae_lambda": 1.0,
+        "gamma": 1.0,
+        "learning_rate": 0.0001,
+        "max_grad_norm": 0.5,
+        "n_epochs": 4,
+        "n_steps": 205,
+        "policy_class": "stackelberg_pomdp.atari.stackpomdp_policy.StackPOMDPAtariPolicy",
+        "pretrained_lr_scale": 0.1,
+        "seed": 1,
+        "state_features": 64,
+        "target_kl": null,
+        "value_coefficient": 0.5,
+        "visual_features": 512
+      },
+      "training_timesteps": 2400960
+    },
+    "eligible_count": 1,
+    "fallback_allowed": false,
+    "selection_basis": "immutable temporal-v1 common-screen rank one"
+  },
+  "created_utc": "2026-07-29T20:45:38.862355+00:00",
+  "decision_record": {
+    "criterion_change_after_observing_timing_failure": true,
+    "no_timing_optimality_claim": true,
+    "primary_criterion": "unchanged first 16 buyer economic checks",
+    "secondary_timing_release_blocking": false,
+    "secondary_timing_status": "failed"
+  },
+  "economic_check_names": [
+    "random buyer net payoff",
+    "low/mid-price mean purchases",
+    "low/mid-price mean shots",
+    "price 0.5 purchases",
+    "price 0.5 shots",
+    "price 0.5 purchased bullets used",
+    "price 0.5 buyer net payoff",
+    "price 1 demand",
+    "low-to-high demand drop",
+    "largest adjacent demand reversal",
+    "price 0.0 buyer net payoff",
+    "price 0.1 buyer net payoff",
+    "price 0.2 buyer net payoff",
+    "price 0.3 buyer net payoff",
+    "price 0.4 buyer net payoff",
+    "price 0.5 buyer net payoff"
+  ],
+  "evaluation_semantics": {
+    "buyer_game_reward_scale": 1.0,
+    "clip_game_rewards": true,
+    "deterministic_action": "masked Atari argmax and Beta mean",
+    "episodic_life": true,
+    "event_tail_steps": 0,
+    "frame_skip": 4,
+    "frame_stack": 4,
+    "gameplay_horizon": 200,
+    "gameplay_transitions": 200,
+    "max_frames": 100000,
+    "noop_max": 30,
+    "outer_transitions": 205,
+    "seller_game_reward_scale": 0.1,
+    "trade_transitions": 5
+  },
+  "evaluator": "clean_atari_e1_primary_economic_confirmation_v1",
+  "evaluator_code_revision": "d67d35fcb36594aa948ff7e5ad1fe271723254f9",
+  "execution": {
+    "device": "cpu"
+  },
+  "holdout": {
+    "fixed_grid": {
+      "episodes_per_value": 20,
+      "event_steps": [
+        20,
+        50,
+        80,
+        110,
+        140
+      ],
+      "seed_end": 8100020,
+      "seed_start": 8100001,
+      "shared_seeds": true,
+      "values": [
+        0.0,
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.9,
+        1.0
+      ]
+    },
+    "random": {
+      "context": "evaluator.random_context(seed)",
+      "episodes": 100,
+      "schedule": "canonical seeded ExactFiveEventSchedule",
+      "seed_end": 8000100,
+      "seed_start": 8000001
+    },
+    "timing_evaluation_run": false
+  },
+  "kind": "stackpomdp.atari.e1_buyer_primary_economic_protocol.v1",
+  "role": "buyer",
+  "sampler_mode": "temporal-marginal-v1",
+  "schema_version": 1,
+  "source_kind": "primary_economic_v1",
+  "sources": {
+    "activation": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_activation_v1.json",
+      "sha256": "6d63d7ba37db93d73e0ae5005e8214be0375a360ab87ccde475c9f261bcbabea"
+    },
+    "e0b": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+      "sha256": "3a9ded5c53e10bf0b2215f1223f7bde15ba23d197dd0c651590bcd980c375ca3"
+    },
+    "eligible_checkpoint_metadata": {
+      "atari_e1_sampler_history": [
+        {
+          "inferred_for_legacy_checkpoint": true,
+          "resume_sources": [],
+          "sampler": {
+            "context": "five independent Uniform(0,1) prices",
+            "event_tail_steps": 0,
+            "gameplay_horizon": 200,
+            "legacy_sampling_path": true,
+            "mode": "uniform",
+            "schedule": "ExactFiveEventSchedule.sample",
+            "schedule_context_rngs_independent": false
+          },
+          "start_total_timesteps": 0
+        },
+        {
+          "inferred_for_legacy_checkpoint": false,
+          "resume_sources": [
+            {
+              "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
+              "resume_total_timesteps": 2000800,
+              "sha256": "db8435016138947dda5b09b80f4ec2b5efe71684e58ca5cf9afef06d54e47cff",
+              "training_total_timesteps": 2000800
+            }
+          ],
+          "sampler": {
+            "conditional_schedule_method": "rejection sample from ExactFiveEventSchedule",
+            "context_stratum_weights": {
+              "low_prefix": 0.25,
+              "uniform": 0.75
+            },
+            "early_fifth_interval_half_open": [
+              120,
+              160
+            ],
+            "event_tail_steps": 0,
+            "gameplay_horizon": 200,
+            "late_fifth_interval_half_open": [
+              180,
+              200
+            ],
+            "legacy_sampling_path": false,
+            "low_prefix_context": {
+              "fifth": "Uniform(0,1) price",
+              "first_four": "four independent Uniform(0,0.25) prices"
+            },
+            "mode": "temporal-marginal-v1",
+            "schedule_context_rngs_independent": true,
+            "schedule_stratum_weights": {
+              "early_fifth": 0.25,
+              "late_fifth": 0.25,
+              "unconditional": 0.5
+            },
+            "uniform_context": "five independent Uniform(0,1) prices"
+          },
+          "start_total_timesteps": 2000800
+        }
+      ],
+      "atari_e1_sampler_provenance": {
+        "conditional_schedule_method": "rejection sample from ExactFiveEventSchedule",
+        "context_stratum_weights": {
+          "low_prefix": 0.25,
+          "uniform": 0.75
+        },
+        "early_fifth_interval_half_open": [
+          120,
+          160
+        ],
+        "event_tail_steps": 0,
+        "gameplay_horizon": 200,
+        "late_fifth_interval_half_open": [
+          180,
+          200
+        ],
+        "legacy_sampling_path": false,
+        "low_prefix_context": {
+          "fifth": "Uniform(0,1) price",
+          "first_four": "four independent Uniform(0,0.25) prices"
+        },
+        "mode": "temporal-marginal-v1",
+        "schedule_context_rngs_independent": true,
+        "schedule_stratum_weights": {
+          "early_fifth": 0.25,
+          "late_fifth": 0.25,
+          "unconditional": 0.5
+        },
+        "uniform_context": "five independent Uniform(0,1) prices"
+      },
+      "e0b_source_provenance": {
+        "checkpoint": "/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+        "critic_transferred": false,
+        "modules": [
+          "features_extractor",
+          "game_action_net"
+        ],
+        "sha256": "3a9ded5c53e10bf0b2215f1223f7bde15ba23d197dd0c651590bcd980c375ca3",
+        "source_economic_input_mode": "full",
+        "source_economic_role": "gameplay",
+        "source_pretrained_lr_scale": 0.1,
+        "zero_initialized_actor_state_indices": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "zero_initialized_actor_state_inputs": [
+          "opponent_commitment"
+        ]
+      },
+      "economic_input_mode": "full",
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "role": "buyer",
+      "sampler_contract_inferred_for_legacy_checkpoint": false,
+      "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79",
+      "training_config": {
+        "actor_loss_mode": "balanced",
+        "algorithm": "PPO",
+        "batch_size": 820,
+        "clip_range_at_start": 0.1,
+        "critic_hidden": 256,
+        "economic_head_initialization": {
+          "concentration": 10.0,
+          "mean": 0.95
+        },
+        "economic_hidden": 64,
+        "entropy_coefficient": 0.01,
+        "gae_lambda": 1.0,
+        "gamma": 1.0,
+        "learning_rate": 0.0001,
+        "max_grad_norm": 0.5,
+        "n_epochs": 4,
+        "n_steps": 205,
+        "policy_class": "stackelberg_pomdp.atari.stackpomdp_policy.StackPOMDPAtariPolicy",
+        "pretrained_lr_scale": 0.1,
+        "seed": 1,
+        "state_features": 64,
+        "target_kl": null,
+        "value_coefficient": 0.5,
+        "visual_features": 512
+      },
+      "training_timesteps": 2400960
+    },
+    "preflight": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_preflight_v1.json",
+      "sha256": "0a34e2447ea07665170d6b2fff6ee1e95c384203e996074c80af26a044b4c3c7"
+    },
+    "rom": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/stackelberg_pomdp/atari/roms/space_invaders.bin",
+      "sha256": "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
+    },
+    "source_checkpoint": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79"
+    },
+    "source_report": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_balanced_temporal_mix_v1_all6_selector_v2.json",
+      "sha256": "74c363ff3bee2a70d37153813d09bb899eb7015718eb7f291811d6bdf5c18de4"
+    },
+    "timing_diagnostic": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_all6_timing_diagnostic_v1.json",
+      "sha256": "dec463cc7f3a13c038cc83869e22d8f4971db3a7ecb8ef74833079498c7a907b"
+    },
+    "timing_limitation": {
+      "data_calibration_passed": true,
+      "no_timing_optimality_claim": true,
+      "rank_one_metrics": {
+        "acceptance_drop": 0.0,
+        "early_acceptance": 0.0,
+        "early_forced_buy_advantage": 0.25,
+        "early_regret": 0.25,
+        "late_acceptance": 0.0,
+        "late_forced_reject_advantage": 0.75,
+        "late_regret": 0.0
+      },
+      "release_blocking": false,
+      "status": "failed",
+      "timing_behavior_passed": false
+    },
+    "training_family": {
+      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_family_v1.json",
+      "sha256": "79dc19e3590f9ae6b568b20f124e4b23b931053caa973e51276cf24eb9220700"
+    }
+  }
+}
