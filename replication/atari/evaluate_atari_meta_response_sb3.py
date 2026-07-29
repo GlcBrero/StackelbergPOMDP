@@ -1045,6 +1045,93 @@ def _check(name, actual, relation, target):
     return {"name": name, "actual": float(actual), "relation": relation, "target": float(target), "passed": bool(passed)}
 
 
+def buyer_primary_economic_gate(*, random_result, fixed_results):
+    """Evaluate the original buyer gate without the later timing diagnostic.
+
+    These are exactly the first sixteen checks historically returned by
+    :func:`behavioral_gate`: ten aggregate demand/use/payoff checks followed
+    by the six positive-payoff checks for fixed prices 0.0 through 0.5.  The
+    helper is intentionally pure so a preregistered holdout can reuse the
+    original economic criterion without silently redefining it.
+    """
+
+    by_value = {
+        round(row["opponent_value"], 6): row["summary"]
+        for row in fixed_results
+    }
+    required = (0.0, 0.5, 1.0)
+    missing = [value for value in required if value not in by_value]
+    if missing:
+        return {
+            "passed": False,
+            "mechanics_passed": False,
+            "checks": [],
+            "error": f"fixed grid missing {missing}",
+        }
+    zero, mid, one = (by_value[value] for value in required)
+    ordered_values = sorted(by_value)
+    curves = [by_value[value] for value in ordered_values]
+    low = [by_value[value] for value in ordered_values if value <= 0.5]
+    purchases = float(np.mean([row["mean_purchases"] for row in low]))
+    shots = float(np.mean([row["mean_buyer_shots_fired"] for row in low]))
+    max_up = max(
+        later["mean_purchases"] - earlier["mean_purchases"]
+        for earlier, later in zip(curves, curves[1:])
+    )
+    checks = [
+        _check(
+            "random buyer net payoff",
+            random_result["summary"]["mean_controlled_payoff"],
+            ">",
+            0.0,
+        ),
+        _check("low/mid-price mean purchases", purchases, ">=", 4.5),
+        _check("low/mid-price mean shots", shots, ">=", 4.25),
+        _check("price 0.5 purchases", mid["mean_purchases"], ">=", 4.5),
+        _check(
+            "price 0.5 shots", mid["mean_buyer_shots_fired"], ">=", 4.25
+        ),
+        _check(
+            "price 0.5 purchased bullets used",
+            mid["mean_purchases"] - mid["mean_buyer_shots_fired"],
+            "<=",
+            0.5,
+        ),
+        _check(
+            "price 0.5 buyer net payoff",
+            mid["mean_controlled_payoff"],
+            ">",
+            0.0,
+        ),
+        _check("price 1 demand", one["mean_purchases"], "<=", 0.5),
+        _check(
+            "low-to-high demand drop",
+            zero["mean_purchases"] - one["mean_purchases"],
+            ">=",
+            4.0,
+        ),
+        _check("largest adjacent demand reversal", max_up, "<=", 0.5),
+    ]
+    checks.extend(
+        _check(
+            f"price {value:.1f} buyer net payoff",
+            by_value[value]["mean_controlled_payoff"],
+            ">",
+            0.0,
+        )
+        for value in ordered_values
+        if value <= 0.5
+    )
+    mechanics = random_result["protocol"]["passed"] and all(
+        result["protocol"]["passed"] for result in fixed_results
+    )
+    return {
+        "passed": bool(mechanics and all(row["passed"] for row in checks)),
+        "mechanics_passed": bool(mechanics),
+        "checks": checks,
+    }
+
+
 def behavioral_gate(
         *,
         role,
@@ -1104,45 +1191,11 @@ def behavioral_gate(
                     f"{missing_timing}"
                 ),
             }
-        low = [by_value[value] for value in sorted(by_value) if value <= 0.5]
-        purchases = float(np.mean([row["mean_purchases"] for row in low]))
-        shots = float(np.mean([row["mean_buyer_shots_fired"] for row in low]))
-        max_up = max(
-            later["mean_purchases"] - earlier["mean_purchases"]
-            for earlier, later in zip(curves, curves[1:])
+        primary_gate = buyer_primary_economic_gate(
+            random_result=random_result,
+            fixed_results=fixed_results,
         )
-        checks.extend([
-            _check("random buyer net payoff", random_result["summary"]["mean_controlled_payoff"], ">", 0.0),
-            _check("low/mid-price mean purchases", purchases, ">=", 4.5),
-            _check("low/mid-price mean shots", shots, ">=", 4.25),
-            _check("price 0.5 purchases", mid["mean_purchases"], ">=", 4.5),
-            _check(
-                "price 0.5 shots",
-                mid["mean_buyer_shots_fired"],
-                ">=",
-                4.25,
-            ),
-            _check(
-                "price 0.5 purchased bullets used",
-                mid["mean_purchases"] - mid["mean_buyer_shots_fired"],
-                "<=",
-                0.5,
-            ),
-            _check("price 0.5 buyer net payoff", mid["mean_controlled_payoff"], ">", 0.0),
-            _check("price 1 demand", one["mean_purchases"], "<=", 0.5),
-            _check("low-to-high demand drop", zero["mean_purchases"] - one["mean_purchases"], ">=", 4.0),
-            _check("largest adjacent demand reversal", max_up, "<=", 0.5),
-        ])
-        checks.extend(
-            _check(
-                f"price {value:.1f} buyer net payoff",
-                by_value[value]["mean_controlled_payoff"],
-                ">",
-                0.0,
-            )
-            for value in ordered_values
-            if value <= 0.5
-        )
+        checks.extend(primary_gate["checks"])
         price = CANONICAL_TIMING_CALIBRATION_PRICE
         early_actual = timing_by_key[("early", price, "actual")]["summary"]
         late_actual = timing_by_key[("late", price, "actual")]["summary"]
