@@ -41,6 +41,23 @@ E1_SELLER_RECOVERY_GATE_NAME = (
 E1_SELLER_RECOVERY_MODULE_NAME = (
     "validate_atari_e1_seller_conditioning_recovery.py"
 )
+E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND = (
+    "seller_conditioning_recovery_v2_threshold_residual_v1"
+)
+E1_SELLER_THRESHOLD_RESIDUAL_ACTIVATION_NAME = (
+    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_activation.json"
+)
+E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME = (
+    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_"
+    "all6_selector_v2.json"
+)
+E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME = (
+    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_"
+    "all6_selector_v2.gate.json"
+)
+E1_SELLER_THRESHOLD_RESIDUAL_MODULE_NAME = (
+    "validate_atari_e1_seller_threshold_residual_recovery.py"
+)
 E1_PRIMARY_PROTOCOL_NAME = (
     "e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json"
 )
@@ -80,6 +97,7 @@ E1_PRIMARY_CHECK_NAMES = (
     "price 0.5 buyer net payoff",
 )
 E2_ORCHESTRATION_SCHEMA = "stackpomdp.atari.e2_sequential_orchestration.v1"
+E2_NAMESPACE = "e1seller_threshold_residual_v2"
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
 )
@@ -189,6 +207,22 @@ def expect_equal(actual: object, expected: object, *, label: str) -> None:
         fail(f"{label}: expected {expected!r}, observed {actual!r}")
 
 
+def configured_e2_code_head() -> str:
+    """Read the single E2 pin owned by the shared launcher contract."""
+
+    common = Path(__file__).resolve().with_name("atari_e2_pipeline_common.zsh")
+    if common.is_symlink() or not common.is_file():
+        fail(f"E2 pipeline common file is unavailable or unsafe: {common}")
+    matches = re.findall(
+        r"^typeset -gr EXPECTED_HEAD=([0-9a-f]{40})$",
+        common.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if len(matches) != 1:
+        fail("E2 pipeline common file has no unique full expected HEAD")
+    return matches[0]
+
+
 def validate_code_root() -> str:
     try:
         head = subprocess.run(
@@ -199,7 +233,7 @@ def validate_code_root() -> str:
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError) as error:
         fail(f"cannot validate E2 code root {REPOSITORY_ROOT}: {error}")
-    expected = "7a193ba14b91f6ab116da29ff288e3e577d73b88"
+    expected = configured_e2_code_head()
     expect_equal(head, expected, label="E2 code HEAD")
     return head
 
@@ -793,14 +827,16 @@ def _validate_temporal_gate_support(
     }
 
 
-def _run_seller_recovery_validator(arguments: list[str]) -> dict:
-    """Run the active immutable recovery validator outside pinned E2 imports."""
+def _run_active_seller_validator(
+        module_name: str, arguments: list[str], *, label: str,
+) -> dict:
+    """Run one active immutable seller validator outside pinned E2 imports."""
 
     module_path = (
-        Path(__file__).expanduser().parent / E1_SELLER_RECOVERY_MODULE_NAME
+        Path(__file__).expanduser().parent / module_name
     )
     if module_path.is_symlink() or not module_path.resolve().is_file():
-        fail(f"seller-recovery validator is unavailable or unsafe: {module_path}")
+        fail(f"{label} validator is unavailable or unsafe: {module_path}")
     module_path = module_path.resolve()
     environment = os.environ.copy()
     environment.pop("STACKPOMDP_CODE_ROOT", None)
@@ -817,7 +853,7 @@ def _run_seller_recovery_validator(arguments: list[str]) -> dict:
         )
     except (OSError, subprocess.CalledProcessError) as error:
         stderr = getattr(error, "stderr", "")
-        fail(f"seller-recovery validation failed: {stderr or error}")
+        fail(f"{label} validation failed: {stderr or error}")
     values = []
     for line in completed.stdout.splitlines():
         try:
@@ -827,8 +863,115 @@ def _run_seller_recovery_validator(arguments: list[str]) -> dict:
         if isinstance(record, dict) and isinstance(record.get("value"), dict):
             values.append(record["value"])
     if len(values) != 1:
-        fail("seller-recovery validator emitted no unique JSON result")
+        fail(f"{label} validator emitted no unique JSON result")
     return values[0]
+
+
+def _run_seller_recovery_validator(arguments: list[str]) -> dict:
+    return _run_active_seller_validator(
+        E1_SELLER_RECOVERY_MODULE_NAME,
+        arguments,
+        label="seller-recovery v1",
+    )
+
+
+def _run_seller_threshold_residual_validator(arguments: list[str]) -> dict:
+    return _run_active_seller_validator(
+        E1_SELLER_THRESHOLD_RESIDUAL_MODULE_NAME,
+        arguments,
+        label="seller threshold-residual recovery v2",
+    )
+
+
+def canonical_seller_threshold_residual_architecture() -> dict:
+    from stackelberg_pomdp.atari.stackpomdp_policy import (
+        threshold_residual_architecture_provenance,
+    )
+
+    return threshold_residual_architecture_provenance(state_features=64)
+
+
+def _validate_seller_threshold_residual_gate(args: argparse.Namespace) -> dict:
+    """Normalize the authoritative v2 gate for generic E2 manifests."""
+
+    if args.role != "seller" or args.actor_loss_mode != "balanced":
+        fail("the seller threshold-residual recovery is balanced-seller only")
+    report = Path(args.report).expanduser().resolve()
+    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    if report.name != E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME:
+        fail(f"unexpected threshold-residual report name: {report.name}")
+    gate_path = report.with_name(E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME)
+    gate = _run_seller_threshold_residual_validator([
+        "validate-selection-gate",
+        "--gate", str(gate_path),
+        "--report", str(report),
+        "--selected", str(checkpoint),
+    ])
+    digest = validate_zip(checkpoint)
+    expect_equal(
+        gate.get("selected_checkpoint", {}).get("sha256"),
+        digest,
+        label="threshold-residual selected SHA-256",
+    )
+    architecture = canonical_seller_threshold_residual_architecture()
+    expect_equal(
+        gate.get("economic_architecture"),
+        architecture,
+        label="threshold-residual seller architecture",
+    )
+    candidate_hashes = gate.get("training_family", {}).get("candidate_sha256")
+    if not isinstance(candidate_hashes, list) or len(candidate_hashes) != 6:
+        fail("threshold-residual seller gate does not bind six candidates")
+
+    from replication.atari.train_atari_stackpomdp_leader_sb3 import (
+        checkpoint_policy_metadata,
+    )
+
+    metadata = checkpoint_policy_metadata(
+        checkpoint, device="cpu", label="selected v2 E1 seller"
+    )
+    expect_equal(metadata.get("sha256"), digest, label="loaded v2 seller SHA")
+    expect_equal(
+        metadata.get("economic_architecture"),
+        architecture,
+        label="loaded v2 seller architecture",
+    )
+    training_code_revision = metadata.get("e1_training_code_revision")
+    expect_equal(
+        training_code_revision,
+        gate.get("activation", {}).get("code_revision"),
+        label="v2 seller checkpoint versus activation training revision",
+    )
+    expect_equal(
+        gate.get("e1_training_code_revision"),
+        training_code_revision,
+        label="v2 seller gate training revision",
+    )
+    support = {
+        "seller_threshold_residual_recovery_gate": {
+            "path": str(gate_path), "sha256": sha256_file(gate_path),
+        },
+        "training_family": dict(gate["training_family"]),
+        "activation": dict(gate["activation"]),
+        "prerequisite_v1_failure": dict(gate["prerequisite_v1_failure"]),
+        "warmup_probe": dict(gate["warmup_probe"]),
+        "seller_release": dict(gate["seller_release"]),
+        "economic_architecture": architecture,
+        "e1_training_code_revision": training_code_revision,
+    }
+    return {
+        "kind": "e1_gate",
+        "role": "seller",
+        "report": str(report),
+        "checkpoint": str(checkpoint),
+        "sha256": digest,
+        "actor_loss_mode": "balanced",
+        "source_kind": E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND,
+        "sampler_mode": E1_UNIFORM_SAMPLER,
+        "support_artifacts": support,
+        "candidate_sha256": candidate_hashes,
+        "passed": True,
+    }
 
 
 def _validate_seller_recovery_gate(args: argparse.Namespace) -> dict:
@@ -889,11 +1032,12 @@ def _run_primary_economic_gate_validator(
 ) -> dict:
     """Validate the active E1 release in a process isolated from pinned E2.
 
-    E2 deliberately imports policy code from detached commit 7a193ba.  The
-    release validator and its evaluator dependencies are newer active
-    automation, so importing them into this process would either fail or mix
-    scientific runtimes.  A short child process receives the active source
-    root explicitly; this process and every subsequent E2 import remain pinned.
+    E2 deliberately imports policy code from the detached commit named by the
+    shared launcher contract.  The release validator and its evaluator
+    dependencies are newer active automation, so importing them into this
+    process would either fail or mix scientific runtimes.  A short child
+    process receives the active source root explicitly; this process and every
+    subsequent E2 import remain pinned.
     """
 
     module_path = Path(__file__).expanduser().parent / E1_PRIMARY_MODULE_NAME
@@ -1205,6 +1349,12 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     if (
             args.role == "seller"
             and Path(args.report).expanduser().resolve().name
+            == E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME
+    ):
+        return _validate_seller_threshold_residual_gate(args)
+    if (
+            args.role == "seller"
+            and Path(args.report).expanduser().resolve().name
             == E1_SELLER_RECOVERY_REPORT_NAME
     ):
         return _validate_seller_recovery_gate(args)
@@ -1396,6 +1546,84 @@ def _discover_authoritative_primary_buyer_gate(
     }
 
 
+def _discover_authoritative_seller_threshold_residual_gate(
+        *, output_dir: Path, override_report: str | None,
+) -> dict | None:
+    """Make a published v2 activation authoritative over all older sellers."""
+
+    activation_path = output_dir / E1_SELLER_THRESHOLD_RESIDUAL_ACTIVATION_NAME
+    report_path = output_dir / E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME
+    gate_path = output_dir / E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME
+    paths_exist = any(
+        os.path.lexists(path)
+        for path in (activation_path, report_path, gate_path)
+    )
+    if not os.path.lexists(activation_path):
+        if paths_exist:
+            fail(
+                "seller threshold-residual artifacts exist without their "
+                f"authoritative activation: {activation_path}"
+            )
+        return None
+    _run_seller_threshold_residual_validator([
+        "validate-activation", "--activation", str(activation_path),
+    ])
+    if override_report:
+        override = Path(override_report).expanduser().resolve()
+        if override != report_path:
+            fail(
+                "the active seller threshold-residual recovery forbids "
+                f"overriding its report: {override}"
+            )
+    if os.path.lexists(gate_path) and not os.path.lexists(report_path):
+        fail("threshold-residual gate exists before its required report")
+    if not os.path.lexists(report_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND,
+            "state": "threshold_residual_training_or_selection_pending",
+        }
+    report = load_json(report_path)
+    passed = report.get("passed")
+    if type(passed) is not bool:
+        fail("authoritative threshold-residual report has no Boolean outcome")
+    expect_equal(report.get("role"), "seller", label="threshold-residual role")
+    expect_equal(
+        report.get("evaluator"), E1_EVALUATOR,
+        label="threshold-residual evaluator",
+    )
+    if passed is False:
+        fail("authoritative seller threshold-residual confirmation failed")
+    if not os.path.lexists(gate_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND,
+            "state": "threshold_residual_gate_publication_pending",
+        }
+    gate = load_json(gate_path)
+    selected = Path(
+        gate.get("selected_checkpoint", {}).get("path", "")
+    ).expanduser().resolve()
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report_path), checkpoint=str(selected), role="seller",
+        actor_loss_mode="balanced",
+    ))
+    return {
+        "kind": "e1_gate_discovery",
+        "found": True,
+        "role": "seller",
+        "report": validated["report"],
+        "checkpoint": validated["checkpoint"],
+        "checkpoint_sha256": validated["sha256"],
+        "actor_loss_mode": validated["actor_loss_mode"],
+        "source_kind": validated["source_kind"],
+        "sampler_mode": validated["sampler_mode"],
+        "support_artifacts": validated["support_artifacts"],
+    }
+
+
 def _discover_authoritative_seller_recovery_gate(
         *, output_dir: Path, override_report: str | None,
 ) -> dict | None:
@@ -1477,6 +1705,14 @@ def _discover_authoritative_seller_recovery_gate(
 def discover_e1_gate(args: argparse.Namespace) -> dict:
     output_dir = Path(args.output_dir).expanduser().resolve()
     if args.role == "seller":
+        threshold_residual = (
+            _discover_authoritative_seller_threshold_residual_gate(
+                output_dir=output_dir,
+                override_report=args.override_report,
+            )
+        )
+        if threshold_residual is not None:
+            return threshold_residual
         recovery = _discover_authoritative_seller_recovery_gate(
             output_dir=output_dir, override_report=args.override_report,
         )
@@ -1669,40 +1905,53 @@ def validated_e1_gate_cohort(path: Path) -> dict:
         fail("E2 gate cohort requires the authoritative primary-economic buyer")
     if gates["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
-    # A published recovery activation supersedes every older seller gate,
-    # including one already cached in a cohort.  Re-discover the authoritative
-    # seller from the cohort report directory and require byte-identical gate
-    # provenance before an E2 restart may reuse the cohort.
-    seller_report = Path(gates["seller"]["report"]).expanduser().resolve()
-    recovery_activation = (
-        seller_report.parent / E1_SELLER_RECOVERY_ACTIVATION_NAME
-    )
-    if os.path.lexists(recovery_activation):
-        recovery = _discover_authoritative_seller_recovery_gate(
-            output_dir=seller_report.parent,
-            override_report=None,
-        )
-        if not isinstance(recovery, dict) or recovery.get("found") is not True:
-            fail(
-                "active seller-conditioning recovery has not released an "
-                "authoritative E2 gate"
-            )
-        comparisons = {
-            "report": recovery.get("report"),
-            "report_sha256": sha256_file(recovery.get("report", "")),
-            "checkpoint": recovery.get("checkpoint"),
-            "checkpoint_sha256": recovery.get("checkpoint_sha256"),
-            "actor_loss_mode": recovery.get("actor_loss_mode"),
-            "source_kind": recovery.get("source_kind"),
-            "sampler_mode": recovery.get("sampler_mode"),
-            "support_artifacts": recovery.get("support_artifacts"),
-        }
-        expect_equal(
-            gates["seller"], comparisons,
-            label="cohort seller versus authoritative recovery",
-        )
+    _validate_authoritative_seller_gate_record(gates["seller"])
     _validate_cohort_seller_release_binding(value, gates)
     return value
+
+
+def _validate_authoritative_seller_gate_record(gate: dict) -> dict | None:
+    """Reject a cached seller as soon as a newer recovery is activated."""
+
+    seller_report = Path(gate.get("report", "")).expanduser().resolve()
+    output_dir = seller_report.parent
+    authoritative = _discover_authoritative_seller_threshold_residual_gate(
+        output_dir=output_dir,
+        override_report=None,
+    )
+    if authoritative is not None:
+        label = "threshold-residual recovery v2"
+    else:
+        authoritative = _discover_authoritative_seller_recovery_gate(
+            output_dir=output_dir,
+            override_report=None,
+        )
+        label = "recovery v1"
+    if authoritative is None:
+        return None
+    if (
+            not isinstance(authoritative, dict)
+            or authoritative.get("found") is not True
+    ):
+        fail(
+            f"active seller {label} has not released an authoritative E2 gate"
+        )
+    comparison = {
+        "report": authoritative.get("report"),
+        "report_sha256": sha256_file(authoritative.get("report", "")),
+        "checkpoint": authoritative.get("checkpoint"),
+        "checkpoint_sha256": authoritative.get("checkpoint_sha256"),
+        "actor_loss_mode": authoritative.get("actor_loss_mode"),
+        "source_kind": authoritative.get("source_kind"),
+        "sampler_mode": authoritative.get("sampler_mode"),
+        "support_artifacts": authoritative.get("support_artifacts"),
+    }
+    expect_equal(
+        gate,
+        comparison,
+        label=f"cohort seller versus authoritative {label}",
+    )
+    return authoritative
 
 
 def _validate_cohort_seller_release_binding(value: dict, gates: dict) -> dict:
@@ -1758,6 +2007,7 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
         fail("E2 gate cohort requires the balanced E1 seller")
     if entries["buyer"]["source_kind"] != E1_PRIMARY_SOURCE_KIND:
         fail("E2 gate cohort requires the authoritative primary-economic buyer")
+    _validate_authoritative_seller_gate_record(entries["seller"])
     seller_release = entries["seller"]["support_artifacts"].get(
         "seller_release"
     )
@@ -2077,6 +2327,7 @@ def inspect_e2_checkpoint(args: argparse.Namespace) -> tuple[dict, str]:
     from replication.atari.sb3_common import model_actor_loss_mode
     from replication.atari.train_atari_stackpomdp_leader_sb3 import (
         E2_PROVENANCE_ATTRIBUTE,
+        checkpoint_policy_metadata,
         validate_e2_provenance_manifest,
     )
 
@@ -2171,6 +2422,28 @@ def inspect_e2_checkpoint(args: argparse.Namespace) -> tuple[dict, str]:
         label="E2 policy input mode",
     )
     artifacts = manifest.get("artifacts", {})
+    fresh_response = checkpoint_policy_metadata(
+        response, device="cpu", label="E2 frozen E1 response"
+    )
+    fresh_leader_e1 = checkpoint_policy_metadata(
+        leader_e1, device="cpu", label="E2 same-role E1 initialization"
+    )
+    expect_equal(
+        artifacts.get("frozen_response"),
+        {
+            "sha256": fresh_response["sha256"],
+            "policy": fresh_response["policy_metadata"],
+        },
+        label="E2 embedded frozen-response policy provenance",
+    )
+    expect_equal(
+        artifacts.get("same_role_e1_initialization"),
+        {
+            "sha256": fresh_leader_e1["sha256"],
+            "policy": fresh_leader_e1["policy_metadata"],
+        },
+        label="E2 embedded same-role policy provenance",
+    )
     expect_equal(
         artifacts.get("frozen_response", {}).get("sha256"),
         response_digest,
@@ -2570,7 +2843,8 @@ def _e2_orchestration_role_record(
         }
 
     stem = checkpoint_root / (
-        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain"
+        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain_"
+        f"{E2_NAMESPACE}"
     )
     base = stem.with_suffix(".zip")
     input_manifest = stem.with_suffix(".pipeline_inputs.json")
@@ -2603,10 +2877,11 @@ def _e2_orchestration_role_record(
         base_checkpoint=str(base),
     ))
 
-    run_name = f"e2_{role}_balanced_all6_selector_v2"
+    run_name = f"e2_{role}_balanced_all6_selector_v2_{E2_NAMESPACE}"
     report = result_root / f"{run_name}.json"
     selected = checkpoint_root / (
-        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain_selected.zip"
+        f"leader_{role}_e2_ppo_balanced_seed1_firefix_retrain_"
+        f"{E2_NAMESPACE}_selected.zip"
     )
     if selector_exit_code in (0, 2):
         validate_e2_report(argparse.Namespace(

@@ -584,7 +584,10 @@ def init_wandb(args, *, stage, checkpoint):
     run = wandb.init(
         project=getattr(args, "wandb_project", WANDB_PROJECT),
         group=getattr(args, "wandb_group", WANDB_GROUP),
-        job_type=f"atari_{stage}",
+        job_type=(
+            getattr(args, "wandb_job_type", None)
+            or f"atari_{stage}"
+        ),
         name=(
             getattr(args, "wandb_name", None)
             or f"atari_{stage}_{Path(checkpoint).stem}"

@@ -16,6 +16,7 @@ import math
 import os
 import platform
 from pathlib import Path
+import re
 import tempfile
 import uuid
 
@@ -70,6 +71,12 @@ E2_PROTOCOL_IMPLEMENTATION = "clean_atari_stackpomdp_e2_v1"
 E2_ACTOR_TRANSFER_MODULES = ("features_extractor", "game_action_net")
 E2_ECONOMIC_INIT_MEAN = 0.5
 E2_ECONOMIC_INIT_CONCENTRATION = 2.0
+E1_ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
+    "atari_e1_economic_architecture_provenance"
+)
+E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
+    "atari_e1_threshold_residual_training_code_revision"
+)
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
     "replication/atari/sb3_common.py",
@@ -253,6 +260,33 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             "actor_loss_mode": actor_loss_mode,
             "economic_head_initialization": economic_initialization,
         }
+        economic_architecture = None
+        if bool(getattr(policy, "economic_threshold_residual", False)):
+            economic_architecture = (
+                policy.economic_architecture_provenance()
+            )
+            recorded_architecture = getattr(
+                model, E1_ECONOMIC_ARCHITECTURE_ATTRIBUTE, None
+            )
+            if recorded_architecture != economic_architecture:
+                raise ValueError(
+                    f"{label} threshold-residual policy lacks exact saved "
+                    "economic architecture provenance"
+                )
+            training_code_revision = getattr(
+                model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
+            )
+            if not isinstance(training_code_revision, str) or re.fullmatch(
+                    r"[0-9a-f]{40}", training_code_revision
+            ) is None:
+                raise ValueError(
+                    f"{label} threshold-residual policy lacks a full saved "
+                    "training code revision"
+                )
+            policy_metadata["economic_architecture"] = economic_architecture
+            policy_metadata["e1_training_code_revision"] = (
+                training_code_revision
+            )
         result = {
             "path": str(resolved),
             "sha256": _sha256_file(resolved),
@@ -262,6 +296,9 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             "economic_head_initialization": economic_initialization,
             "policy_metadata": policy_metadata,
         }
+        if economic_architecture is not None:
+            result["economic_architecture"] = economic_architecture
+            result["e1_training_code_revision"] = training_code_revision
         manifest = getattr(model, E2_PROVENANCE_ATTRIBUTE, None)
         if manifest is not None:
             result["e2_provenance_manifest"] = _canonical_json_copy(manifest)
@@ -703,6 +740,13 @@ def _new_model(args, vec_env, *, provenance_manifest):
             != source_policy.get("economic_role")
             or provenance.get("source_economic_input_mode")
             != source_policy.get("economic_input_mode")
+            or bool(provenance.get(
+                "source_economic_threshold_residual", False
+            )) != (
+                source_policy.get("economic_architecture", {}).get(
+                    "parameterization"
+                ) == "seller_threshold_residual_beta_v1"
+            )
     ):
         raise RuntimeError(
             "same-role E1 actor identity changed during E2 transfer"
@@ -923,6 +967,10 @@ def parse_args(argv=None):
     )
     parser.add_argument("--wandb-project", default=WANDB_PROJECT)
     parser.add_argument("--wandb-group", default=WANDB_GROUP)
+    parser.add_argument(
+        "--wandb-job-type",
+        help="Optional explicit W&B job type for collision-safe pipelines.",
+    )
     parser.add_argument("--wandb-name")
     args = parser.parse_args(argv)
 

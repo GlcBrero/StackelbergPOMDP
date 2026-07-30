@@ -12,7 +12,7 @@ trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
 e2_prepare_runtime
 
-typeset -gr SUMMARY="$E2_OUTPUT/e2_sequential_orchestration_v1.json"
+typeset -gr SUMMARY="$E2_OUTPUT/e2_sequential_orchestration_v1_${E2_NAMESPACE}.json"
 typeset -A training_status selector_status
 
 e2_wait_for_both_e1_gates

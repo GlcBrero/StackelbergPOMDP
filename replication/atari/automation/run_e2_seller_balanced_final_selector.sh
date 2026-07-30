@@ -8,5 +8,5 @@ trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 130' INT
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
 e2_prepare_runtime
-export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e2-seller-final-selector
+export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e2-threshold-residual-v2-seller-final-selector
 e2_run_final_selector seller

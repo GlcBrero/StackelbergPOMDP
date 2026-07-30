@@ -18,10 +18,12 @@ typeset -gr WANDB_ROOT="$CHECKPOINT_ROOT/wandb_runs"
 typeset -gr LOG_ROOT="$ROOT/replication/atari/results/run_logs/clean_20260728"
 typeset -gr E1_OUTPUT="$ROOT/replication/atari/results/e1_selections"
 typeset -gr E2_OUTPUT="$ROOT/replication/atari/results/e2_selections"
-typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort.json"
+typeset -gr E2_NAMESPACE=e1seller_threshold_residual_v2
+typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v2_threshold_residual_v1
+typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort_${E2_NAMESPACE}.json"
 typeset -gr ROM="$ROOT/stackelberg_pomdp/atari/roms/space_invaders.bin"
 typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301
-typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-sequential.lock
+typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-threshold-residual-v2-sequential.lock
 
 typeset -gra E2_STEPS=(400680 800520 1200360 1600200 2000040)
 typeset -gr E2_TIMESTEPS=2000040
@@ -207,6 +209,8 @@ function e2_prepare_runtime() {
     replication/atari/automation \
     replication/atari/evaluate_atari_meta_response_sb3.py \
     replication/atari/evaluate_atari_stackpomdp_leader_sb3.py \
+    replication/atari/probe_atari_e1_seller_conditioning.py \
+    replication/atari/probe_atari_e1_seller_threshold_residual.py \
     replication/atari/train_atari_meta_response_sb3.py \
     replication/atari/train_atari_stackpomdp_leader_sb3.py \
     replication/atari/sb3_common.py \
@@ -321,8 +325,8 @@ function e2_refuse_role_pipeline_outputs() {
   for step in $E2_STEPS; do
     e2_refuse_path "${stem}_step${step}.zip"
   done
-  run_name="e2_${role}_balanced_all6_selector_v2"
-  selected="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_selected.zip"
+  run_name="e2_${role}_balanced_all6_selector_v2_${E2_NAMESPACE}"
+  selected="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_${E2_NAMESPACE}_selected.zip"
   selector_log="$LOG_ROOT/${run_name}.log"
   e2_refuse_path "$selected"
   e2_refuse_path "$selector_log"
@@ -334,7 +338,7 @@ function e2_refuse_role_pipeline_outputs() {
 
 function e2_resolve_e1_gate() {
   local role="$1"
-  local require_mode override choice exit_code found
+  local require_mode override choice exit_code found source_kind
   case "$role" in
     buyer)
       require_mode=""
@@ -368,6 +372,13 @@ function e2_resolve_e1_gate() {
     fi
     found=$(print -r -- "$choice" | jq -r '.found')
     if [[ "$found" == true ]]; then
+      source_kind=$(print -r -- "$choice" | jq -r '.source_kind')
+      if [[ "$role" == seller \
+          && "$source_kind" != "$E1_REQUIRED_SELLER_SOURCE_KIND" ]]; then
+        print "waiting for the authoritative threshold-residual v2 E1 seller gate"
+        sleep 20
+        continue
+      fi
       case "$role" in
         buyer)
           typeset -g E1_BUYER_REPORT=$(print -r -- "$choice" | jq -r '.report')
@@ -402,6 +413,11 @@ function e2_load_e1_cohort() {
   typeset -g E1_SELLER=$(print -r -- "$choice" | jq -r '.e1_gates.seller.checkpoint')
   typeset -g E1_SELLER_MODE=$(print -r -- "$choice" | jq -r '.e1_gates.seller.actor_loss_mode')
   typeset -g E1_SELLER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.seller.source_kind')
+  if [[ "$E1_SELLER_SOURCE_KIND" != "$E1_REQUIRED_SELLER_SOURCE_KIND" ]]; then
+    print -u2 \
+      "E2 cohort does not contain the required threshold-residual v2 seller"
+    return 1
+  fi
 }
 
 function e2_wait_for_both_e1_gates() {
@@ -469,9 +485,9 @@ function e2_role_paths() {
       return 1
       ;;
   esac
-  E2_BASE="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain.zip"
+  E2_BASE="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_${E2_NAMESPACE}.zip"
   E2_INPUT_MANIFEST="${E2_BASE%.zip}.pipeline_inputs.json"
-  E2_RUN_NAME="atari_clean_e2_${role}_balanced_seed1_firefix_retrain_2m_local_e1buyer${E1_BUYER_MODE}_${E1_BUYER_SOURCE_KIND}"
+  E2_RUN_NAME="atari_clean_e2_${role}_balanced_seed1_firefix_retrain_2m_local_e1buyer${E1_BUYER_MODE}_${E1_BUYER_SOURCE_KIND}_e1seller${E1_SELLER_MODE}_${E1_SELLER_SOURCE_KIND}"
   E2_TRAIN_LOG="$LOG_ROOT/${E2_RUN_NAME}.log"
 }
 
@@ -488,7 +504,7 @@ function e2_write_input_manifest() {
 function e2_load_input_manifest() {
   local role="$1"
   local manifest choice
-  manifest="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain.pipeline_inputs.json"
+  manifest="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_${E2_NAMESPACE}.pipeline_inputs.json"
   e2_wait_for_file "$manifest" "immutable E2 $role pipeline-input manifest"
   choice=$("$PYTHON" "$VALIDATOR" read-e2-input-manifest \
     --role "$role" --input-manifest "$manifest")
@@ -604,8 +620,8 @@ function e2_run_final_selector() {
   e2_validate_family "$role"
   checkpoint_args+=(--checkpoint "$E2_BASE")
 
-  run_name="e2_${role}_balanced_all6_selector_v2"
-  selected="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_selected.zip"
+  run_name="e2_${role}_balanced_all6_selector_v2_${E2_NAMESPACE}"
+  selected="$CHECKPOINT_ROOT/leader_${role}_e2_ppo_balanced_seed1_firefix_retrain_${E2_NAMESPACE}_selected.zip"
   report="$E2_OUTPUT/${run_name}.json"
   log="$LOG_ROOT/${run_name}.log"
   if [[ -f "$report" ]]; then

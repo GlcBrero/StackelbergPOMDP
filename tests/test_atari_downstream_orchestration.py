@@ -2,6 +2,7 @@ from argparse import Namespace
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 from types import SimpleNamespace
@@ -728,7 +729,7 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
         / "run_atari_clean_e1_primary_economic_to_e2_sequential.sh"
     ).read_text(encoding="utf-8")
     seller_stage = master.index(
-        'run_required_stage "E1 seller conditioning recovery and selection"'
+        'run_required_stage "E1 seller threshold-residual recovery and selection"'
     )
     e2_stage = master.index(
         'run_required_stage "sequential E2 buyer/seller training and selection"'
@@ -742,8 +743,29 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
     common = (automation / "atari_e2_pipeline_common.zsh").read_text(
         encoding="utf-8"
     )
-    assert "CODE_ROOT=/private/tmp/stackpomdp-e2-code-7a193ba" in common
-    assert "EXPECTED_HEAD=7a193ba14b91f6ab116da29ff288e3e577d73b88" in common
+    expected = re.search(
+        r"^typeset -gr EXPECTED_HEAD=([0-9a-f]{40})$", common,
+        flags=re.MULTILINE,
+    ).group(1)
+    code_suffix = re.search(
+        r"^typeset -gr CODE_ROOT=/private/tmp/stackpomdp-e2-code-([0-9a-f]{7})$",
+        common,
+        flags=re.MULTILINE,
+    ).group(1)
+    assert code_suffix == expected[:7]
+    assert validator.configured_e2_code_head() == expected
+    assert "E2_NAMESPACE=e1seller_threshold_residual_v2" in common
+    assert (
+        "E1_REQUIRED_SELLER_SOURCE_KIND="
+        "seller_conditioning_recovery_v2_threshold_residual_v1"
+    ) in common
+    assert "e2_e1_gate_cohort_${E2_NAMESPACE}.json" in common
+    assert (
+        "stackpomdp-atari-e2-threshold-residual-v2-sequential.lock" in common
+    )
+    assert "_${E1_SELLER_SOURCE_KIND}" in common
+    assert "probe_atari_e1_seller_conditioning.py" in common
+    assert "probe_atari_e1_seller_threshold_residual.py" in common
     assert "WANDB_MODE=online" in common
     assert "EPOCHSECONDS" not in common
     assert '"E2 pipeline" || return $?' in common
@@ -753,11 +775,58 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
         "if ! e2_release_transient_lock; then", cohort_write
     )
     for name in (
-        "run_atari_clean_e1_seller_after_buyer_gate.sh",
+        "run_atari_clean_e1_seller_threshold_residual_recovery.sh",
         "run_atari_clean_e2_buyer_balanced_2m.sh",
         "run_atari_clean_e2_seller_balanced_2m.sh",
     ):
         assert "--wandb" in (automation / name).read_text(encoding="utf-8")
+
+
+def test_e2_pin_update_is_an_atomic_two_assignment_commit_once_advanced():
+    root = Path(__file__).resolve().parents[1]
+    common_path = Path("replication/atari/automation/atari_e2_pipeline_common.zsh")
+    common = (root / common_path).read_text(encoding="utf-8")
+    expected = re.search(
+        r"^typeset -gr EXPECTED_HEAD=([0-9a-f]{40})$", common,
+        flags=re.MULTILINE,
+    ).group(1)
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    parent = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD^"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if parent != expected:
+        # Commit A intentionally retains the previous reviewed E2 pin. Commit
+        # B activates A and is checked by the strict branch below.
+        assert head != expected
+        return
+
+    changed = subprocess.run(
+        [
+            "git", "-C", str(root), "diff-tree", "--no-commit-id",
+            "--name-only", "-r", "HEAD",
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert changed == [str(common_path)]
+    diff = subprocess.run(
+        [
+            "git", "-C", str(root), "diff", "--unified=0", "HEAD^", "HEAD",
+            "--", str(common_path),
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assignments = [
+        line[1:]
+        for line in diff
+        if line.startswith(("+typeset -gr", "-typeset -gr"))
+    ]
+    assert len(assignments) == 4
+    assert sum(" CODE_ROOT=" in line for line in assignments) == 2
+    assert sum(" EXPECTED_HEAD=" in line for line in assignments) == 2
 
 
 def test_seller_selector_is_one_pinned_all_six_run():

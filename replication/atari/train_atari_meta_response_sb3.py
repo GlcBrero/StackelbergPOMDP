@@ -6,6 +6,8 @@ import hashlib
 import math
 import os
 from pathlib import Path
+import re
+import subprocess
 import tempfile
 
 import numpy as np
@@ -65,6 +67,12 @@ BUYER_INIT_MEAN = 0.95
 BUYER_INIT_CONCENTRATION = 10.0
 SELLER_INIT_MEAN = 0.5
 SELLER_INIT_CONCENTRATION = 2.0
+ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
+    "atari_e1_economic_architecture_provenance"
+)
+E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
+    "atari_e1_threshold_residual_training_code_revision"
+)
 
 
 def _actor_loss_mode(args):
@@ -73,6 +81,10 @@ def _actor_loss_mode(args):
 
 def _e1_sampler_mode(args):
     return str(getattr(args, "e1_sampler_mode", UNIFORM_E1_SAMPLER))
+
+
+def _economic_threshold_residual(args):
+    return bool(getattr(args, "economic_threshold_residual", False))
 
 
 def _economic_initialization(args):
@@ -109,6 +121,8 @@ def _run_variant_suffix(args):
         )
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
+    if _economic_threshold_residual(args):
+        parts.append("threshold_residual_v1")
     if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
         parts.append("all_equal_v1")
     elif _e1_sampler_mode(args) == TEMPORAL_MIX_E1_SAMPLER:
@@ -126,6 +140,11 @@ def _validate_e0b_source(provenance):
         )
     if provenance["source_economic_input_mode"] != "full":
         raise ValueError("E1 actor sources must use economic_input_mode='full'")
+    if bool(provenance.get("source_economic_threshold_residual", False)):
+        raise ValueError(
+            "E1 actor sources must be ordinary E0b gameplay checkpoints "
+            "without the seller-only threshold-residual transform"
+        )
     if not math.isclose(
             float(provenance["source_pretrained_lr_scale"]),
             0.1,
@@ -223,6 +242,77 @@ def _attach_sampler_contract(
     )
 
 
+def _attach_economic_architecture_contract(model):
+    """Persist and verify the exact optional E1 economic actor architecture."""
+
+    current = model.policy.economic_architecture_provenance()
+    existing = getattr(model, ECONOMIC_ARCHITECTURE_ATTRIBUTE, None)
+    if current is None:
+        if existing is not None:
+            raise ValueError(
+                "ordinary E1 checkpoint unexpectedly stores a seller-only "
+                "economic architecture contract"
+            )
+        return None
+    if existing is not None and existing != current:
+        raise ValueError(
+            "E1 economic architecture differs from its saved provenance"
+        )
+    setattr(model, ECONOMIC_ARCHITECTURE_ATTRIBUTE, dict(current))
+    return current
+
+
+def _current_training_code_revision():
+    """Return the committed code revision used by residual E1 training."""
+
+    revision = subprocess.run(
+        ["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeError("E1 training code revision is not a full Git SHA")
+    return revision
+
+
+def _attach_training_code_revision(model, *, initialize):
+    """Bind residual checkpoints to one immutable training revision.
+
+    Ordinary E0/E1 policies deliberately retain their historical schema.  A
+    residual seller may initialize this field only when it is created fresh;
+    resume must find and preserve the exact saved revision.
+    """
+
+    enabled = bool(getattr(
+        model.policy, "economic_threshold_residual", False
+    ))
+    saved = getattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None)
+    if not enabled:
+        if saved is not None:
+            raise ValueError(
+                "ordinary E1 checkpoint unexpectedly stores a residual "
+                "training code revision"
+            )
+        return None
+    current = _current_training_code_revision()
+    if saved is None:
+        if not initialize:
+            raise ValueError(
+                "residual E1 resume is missing its training code revision"
+            )
+        setattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, current)
+        return current
+    if re.fullmatch(r"[0-9a-f]{40}", str(saved)) is None:
+        raise ValueError("residual E1 checkpoint has an invalid code revision")
+    if saved != current:
+        raise ValueError(
+            "residual E1 resume code revision differs from the current "
+            f"training checkout ({saved} != {current})"
+        )
+    return saved
+
+
 def bilateral_config(args, *, seed):
     return BilateralAtariConfig(
         seed=int(seed),
@@ -266,6 +356,9 @@ def _new_model(args, vec_env):
             "economic_hidden": 64,
             "critic_hidden": 256,
             "pretrained_lr_scale": args.pretrained_lr_scale,
+            "economic_threshold_residual": (
+                _economic_threshold_residual(args)
+            ),
         },
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
@@ -315,6 +408,8 @@ def _new_model(args, vec_env):
         economic_init_concentration=initialization["concentration"],
     )
     _attach_sampler_contract(model, args)
+    _attach_economic_architecture_contract(model)
+    _attach_training_code_revision(model, initialize=True)
     print({"actor_transfer": provenance}, flush=True)
     return model
 
@@ -347,6 +442,14 @@ def _resumed_model(args, vec_env):
         raise ValueError("--resume role does not match --role")
     if policy.economic_input_mode != "full":
         raise ValueError("--resume is not a full-state E1 response")
+    saved_threshold_residual = bool(getattr(
+        policy, "economic_threshold_residual", False
+    ))
+    if saved_threshold_residual != _economic_threshold_residual(args):
+        raise ValueError(
+            "--economic-threshold-residual must match the saved E1 "
+            f"checkpoint ({saved_threshold_residual})"
+        )
     expected_target_kl = getattr(args, "target_kl", None)
     saved_target_kl = getattr(model, "target_kl", None)
     if (
@@ -428,6 +531,8 @@ def _resumed_model(args, vec_env):
         resume_source=resume_source,
         preserve_existing_sampler=bool(getattr(args, "eval_only", False)),
     )
+    _attach_economic_architecture_contract(model)
+    _attach_training_code_revision(model, initialize=False)
     return model
 
 
@@ -583,6 +688,16 @@ def parse_args(argv=None):
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
     parser.add_argument(
+        "--economic-threshold-residual",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "seller-only E1 parameterization: keep the ordinary 64-input "
+            "economic head, then blend its Beta mean equally with the "
+            "current event's opponent threshold"
+        ),
+    )
+    parser.add_argument(
         "--actor-loss-mode",
         choices=ACTOR_LOSS_MODES,
         default=STANDARD_ACTOR_LOSS_MODE,
@@ -618,6 +733,13 @@ def parse_args(argv=None):
     )
     parser.add_argument("--wandb-project", default=WANDB_PROJECT)
     parser.add_argument("--wandb-group", default=WANDB_GROUP)
+    parser.add_argument(
+        "--wandb-job-type",
+        help=(
+            "optional separately versioned W&B job type; ordinary E1 runs "
+            "retain the atari_e1_<role> default"
+        ),
+    )
     parser.add_argument("--wandb-name")
     args = parser.parse_args(argv)
     try:
@@ -664,6 +786,11 @@ def parse_args(argv=None):
         )
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
+    if args.economic_threshold_residual and args.role != SELLER:
+        parser.error(
+            "--economic-threshold-residual is reserved for E1 seller "
+            "response policies"
+        )
     if args.n_steps != transitions:
         parser.error(f"--n-steps must equal one full E1 episode ({transitions})")
     if args.batch_size <= 0 or args.batch_size > buffer_size:
@@ -723,22 +850,31 @@ def main(argv=None):
     try:
         model = build_model(args, vec_env)
         source_provenance = dict(model.atari_e1_source_provenance)
+        economic_architecture = getattr(
+            model, ECONOMIC_ARCHITECTURE_ATTRIBUTE, None
+        )
+        training_code_revision = getattr(
+            model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
+        )
         if run is not None:
-            run.config.update(
-                {
-                    "e0b_source_provenance": source_provenance,
-                    "e1_sampler_provenance": dict(
-                        model.atari_e1_sampler_provenance
-                    ),
-                    "e1_sampler_history": list(
-                        model.atari_e1_sampler_history
-                    ),
-                    "e1_resume_source_provenance": getattr(
-                        model, "atari_e1_resume_source_provenance", None
-                    ),
-                },
-                allow_val_change=True,
-            )
+            wandb_provenance = {
+                "e0b_source_provenance": source_provenance,
+                "e1_sampler_provenance": dict(
+                    model.atari_e1_sampler_provenance
+                ),
+                "e1_sampler_history": list(model.atari_e1_sampler_history),
+                "e1_resume_source_provenance": getattr(
+                    model, "atari_e1_resume_source_provenance", None
+                ),
+            }
+            if economic_architecture is not None:
+                wandb_provenance["economic_architecture_provenance"] = (
+                    economic_architecture
+                )
+                wandb_provenance["e1_training_code_revision"] = (
+                    training_code_revision
+                )
+            run.config.update(wandb_provenance, allow_val_change=True)
         if not args.eval_only:
             callback = EpisodeCheckpointCallback(
                 checkpoint=args.checkpoint,
@@ -754,7 +890,7 @@ def main(argv=None):
             )
             model.save(args.checkpoint)
         evaluation = evaluate_response(model, args)
-        evaluation["provenance"] = {
+        evaluation_provenance = {
             "e0b_source": source_provenance,
             "training_sampler": dict(model.atari_e1_sampler_provenance),
             "training_sampler_history": list(model.atari_e1_sampler_history),
@@ -780,6 +916,14 @@ def main(argv=None):
                 ),
             ),
         }
+        if economic_architecture is not None:
+            evaluation_provenance["economic_architecture"] = (
+                economic_architecture
+            )
+            evaluation_provenance["e1_training_code_revision"] = (
+                training_code_revision
+            )
+        evaluation["provenance"] = evaluation_provenance
         write_csv(
             fixed_context_csv_path(args.checkpoint),
             evaluation["fixed_contexts"],

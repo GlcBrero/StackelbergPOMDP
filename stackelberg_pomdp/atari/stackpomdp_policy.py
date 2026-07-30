@@ -33,11 +33,86 @@ from stackelberg_pomdp.atari.protocol import (
     EVENT_SLICE,
     FULL_ACTION_DIM,
     IMAGE,
+    OPPONENT_COMMITMENT_SLICE,
 )
 
 
 ECONOMIC_ROLES = {"buyer", "seller", "gameplay"}
 ECONOMIC_INPUT_MODES = {"full", "event_only"}
+BETA_PARAMETER_EPSILON = 1.0e-4
+THRESHOLD_RESIDUAL_BLEND_WEIGHT = 0.5
+THRESHOLD_RESIDUAL_EPSILON = 1.0e-4
+
+
+def current_event_threshold(actor_state_values):
+    """Select the current threshold from the canonical actor state.
+
+    This is deliberately a deterministic view, not a new observation: the
+    five-entry event one-hot selects the matching entry of the five-entry
+    opponent commitment already present in ``actor_state``.
+    """
+
+    if not th.is_tensor(actor_state_values):
+        raise TypeError("current threshold selector requires a torch Tensor")
+    if (
+            actor_state_values.ndim < 1
+            or actor_state_values.shape[-1] != ACTOR_STATE_DIM
+    ):
+        raise ValueError(
+            "current threshold selector requires actor_state with final "
+            f"dimension {ACTOR_STATE_DIM}"
+        )
+    event = actor_state_values[..., EVENT_SLICE]
+    commitment = actor_state_values[..., OPPONENT_COMMITMENT_SLICE]
+    return th.sum(event * commitment, dim=-1, keepdim=True)
+
+
+def threshold_residual_architecture_provenance(*, state_features):
+    """Return the exact pure-64 seller residual architecture contract."""
+
+    return {
+        "schema": "stackpomdp.atari.economic_actor_architecture.v2",
+        "economic_role": "seller",
+        "economic_input_mode": "full",
+        "parameterization": "seller_threshold_residual_beta_v1",
+        "base_head_input_features": int(state_features),
+        "direct_extra_input_features": 0,
+        "base_head_outputs": [
+            "raw_alpha_parameter", "raw_beta_parameter"
+        ],
+        "base_positivity_transform": {
+            "formula": "softplus(raw_parameter) + epsilon",
+            "epsilon": BETA_PARAMETER_EPSILON,
+        },
+        "current_threshold": {
+            "definition": (
+                "dot(actor_state[event_one_hot], "
+                "actor_state[opponent_commitment])"
+            ),
+            "deterministic_from_existing_actor_state": True,
+            "new_observation_fields": [],
+        },
+        "mean_transform": {
+            "formula": "mu = (1 - w) * mu_base + w * t_current",
+            "threshold_weight": THRESHOLD_RESIDUAL_BLEND_WEIGHT,
+            "base_weight": 1.0 - THRESHOLD_RESIDUAL_BLEND_WEIGHT,
+            "interpretation": (
+                "network learns a state/context-dependent markup or "
+                "discount around a fixed threshold anchor; the anchor "
+                "slope is an inductive bias, not a learned quantity"
+            ),
+            "unit_interval_clamp_epsilon": THRESHOLD_RESIDUAL_EPSILON,
+        },
+        "concentration_transform": (
+            "alpha + beta is preserved from the base head"
+        ),
+        "distribution": (
+            "Beta(mu * concentration, (1-mu) * concentration)"
+        ),
+        "state_encoder_uses_current_threshold_outside_existing_state": False,
+        "game_head_uses_transform": False,
+        "critic_uses_transform": False,
+    }
 
 
 class CompositeAtariFeaturesExtractor(BaseFeaturesExtractor):
@@ -196,6 +271,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
     ``economic_input_mode='full'`` is used for E1 meta-followers, whose
     price/threshold may depend on live state and the opponent commitment.
+    A full-input E1 seller may optionally retain the ordinary 64-input Beta
+    head but blend its mean with the current event's opponent threshold after
+    the head.  The default is disabled for checkpoint compatibility.
     ``'event_only'`` is used for E2 leaders: before the economic head, every
     state coordinate except the five-entry event identity is set to zero.
 
@@ -218,6 +296,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             economic_hidden=64,
             critic_hidden=256,
             pretrained_lr_scale=1.0,
+            economic_threshold_residual=False,
             **kwargs,
     ):
         if economic_role not in ECONOMIC_ROLES:
@@ -225,6 +304,20 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         if economic_input_mode not in ECONOMIC_INPUT_MODES:
             raise ValueError(
                 f"economic_input_mode must be one of {sorted(ECONOMIC_INPUT_MODES)}"
+            )
+        if not isinstance(economic_threshold_residual, (bool, np.bool_)):
+            raise TypeError("economic_threshold_residual must be Boolean")
+        if economic_threshold_residual and (
+                economic_role != "seller" or economic_input_mode != "full"
+        ):
+            raise ValueError(
+                "the threshold-residual parameterization is reserved for "
+                "full-input E1 seller response policies"
+            )
+        if economic_threshold_residual and int(state_features) != 64:
+            raise ValueError(
+                "the threshold-residual v1 contract requires exactly 64 "
+                "shared state features"
             )
         if not isinstance(observation_space, gym.spaces.Dict):
             raise TypeError("StackPOMDPAtariPolicy requires Dict observations")
@@ -240,6 +333,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.economic_hidden = int(economic_hidden)
         self.critic_hidden = int(critic_hidden)
         self.pretrained_lr_scale = float(pretrained_lr_scale)
+        self.economic_threshold_residual = bool(economic_threshold_residual)
         if min(
                 self.visual_features,
                 self.state_features,
@@ -327,13 +421,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.game_action_net = nn.Linear(
             actor_feature_dim, self.game_action_count
         )
-        self.economic_head = nn.Sequential(
-            nn.Linear(self.state_features, self.economic_hidden),
-            nn.Tanh(),
-            nn.Linear(self.economic_hidden, self.economic_hidden),
-            nn.Tanh(),
-            nn.Linear(self.economic_hidden, 2),
-        )
+        self.economic_head = self._make_economic_head(self.state_features)
         self.value_net = nn.Sequential(
             nn.Linear(actor_feature_dim + CRITIC_STATE_DIM, self.critic_hidden),
             nn.ReLU(),
@@ -358,6 +446,15 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                 pretrained_scale=self.pretrained_lr_scale,
             ),
             **self.optimizer_kwargs,
+        )
+
+    def _make_economic_head(self, input_features):
+        return nn.Sequential(
+            nn.Linear(int(input_features), self.economic_hidden),
+            nn.Tanh(),
+            nn.Linear(self.economic_hidden, self.economic_hidden),
+            nn.Tanh(),
+            nn.Linear(self.economic_hidden, 2),
         )
 
     def optimizer_parameter_groups(self, *, base_rate, pretrained_scale):
@@ -407,8 +504,18 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             "economic_hidden": self.economic_hidden,
             "critic_hidden": self.critic_hidden,
             "pretrained_lr_scale": self.pretrained_lr_scale,
+            "economic_threshold_residual": self.economic_threshold_residual,
         })
         return data
+
+    def economic_architecture_provenance(self):
+        """Return an exact, JSON-safe description of the economic actor path."""
+
+        if not self.economic_threshold_residual:
+            return None
+        return threshold_residual_architecture_provenance(
+            state_features=self.state_features
+        )
 
     @staticmethod
     def _inverse_softplus(value):
@@ -471,6 +578,14 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             )
         modules = ["features_extractor", "game_action_net"]
         if include_economic:
+            if (
+                    source.economic_threshold_residual
+                    != self.economic_threshold_residual
+            ):
+                raise ValueError(
+                    "economic-head transfer requires matching seller "
+                    "economic parameterizations"
+                )
             modules.append("economic_head")
         for name in modules:
             getattr(self, name).load_state_dict(
@@ -479,6 +594,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         source_economic_role = source.economic_role
         source_economic_input_mode = source.economic_input_mode
+        source_economic_threshold_residual = (
+            source.economic_threshold_residual
+        )
         source_pretrained_lr_scale = source.pretrained_lr_scale
         del source_model
         return {
@@ -488,6 +606,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             "critic_transferred": False,
             "source_economic_role": source_economic_role,
             "source_economic_input_mode": source_economic_input_mode,
+            "source_economic_threshold_residual": (
+                source_economic_threshold_residual
+            ),
             "source_pretrained_lr_scale": source_pretrained_lr_scale,
         }
 
@@ -527,8 +648,27 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             processed, state_features
         )
         parameters = self.economic_head(economic_features)
-        alpha = nn.functional.softplus(parameters[:, 0]) + 1.0e-4
-        beta = nn.functional.softplus(parameters[:, 1]) + 1.0e-4
+        alpha = (
+            nn.functional.softplus(parameters[:, 0]) + BETA_PARAMETER_EPSILON
+        )
+        beta = (
+            nn.functional.softplus(parameters[:, 1]) + BETA_PARAMETER_EPSILON
+        )
+        if self.economic_threshold_residual:
+            concentration = alpha + beta
+            base_mean = alpha / concentration
+            current_threshold = current_event_threshold(
+                processed[ACTOR_STATE]
+            ).reshape(-1)
+            mean = (
+                (1.0 - THRESHOLD_RESIDUAL_BLEND_WEIGHT) * base_mean
+                + THRESHOLD_RESIDUAL_BLEND_WEIGHT * current_threshold
+            ).clamp(
+                THRESHOLD_RESIDUAL_EPSILON,
+                1.0 - THRESHOLD_RESIDUAL_EPSILON,
+            )
+            alpha = mean * concentration
+            beta = (1.0 - mean) * concentration
         return GatedCompositeAtariDistribution(
             game_logits=logits,
             economic_alpha=alpha,
@@ -618,9 +758,14 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
 
 __all__ = [
+    "BETA_PARAMETER_EPSILON",
+    "THRESHOLD_RESIDUAL_BLEND_WEIGHT",
+    "THRESHOLD_RESIDUAL_EPSILON",
     "CompositeAtariFeaturesExtractor",
     "ECONOMIC_INPUT_MODES",
     "ECONOMIC_ROLES",
     "GatedCompositeAtariDistribution",
     "StackPOMDPAtariPolicy",
+    "current_event_threshold",
+    "threshold_residual_architecture_provenance",
 ]

@@ -593,6 +593,147 @@ def test_authoritative_recovery_keeps_e2_closed_until_gate(
     assert released["source_kind"] == "seller_conditioning_recovery_v1"
 
 
+def test_threshold_residual_recovery_keeps_e2_closed_until_gate(
+        monkeypatch, tmp_path,
+):
+    activation = (
+        tmp_path / downstream.E1_SELLER_THRESHOLD_RESIDUAL_ACTIVATION_NAME
+    )
+    activation.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        downstream,
+        "_run_seller_threshold_residual_validator",
+        lambda args: {},
+    )
+    pending = downstream._discover_authoritative_seller_threshold_residual_gate(
+        output_dir=tmp_path, override_report=None,
+    )
+    assert pending == {
+        "kind": "e1_gate_discovery",
+        "found": False,
+        "authoritative_source": (
+            downstream.E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND
+        ),
+        "state": "threshold_residual_training_or_selection_pending",
+    }
+
+    with pytest.raises(RuntimeError, match="forbids overriding"):
+        downstream._discover_authoritative_seller_threshold_residual_gate(
+            output_dir=tmp_path,
+            override_report=str(tmp_path / "legacy_seller.json"),
+        )
+
+    report = tmp_path / downstream.E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME
+    report.write_text(json.dumps({
+        "passed": False,
+        "role": "seller",
+        "evaluator": downstream.E1_EVALUATOR,
+    }), encoding="utf-8")
+    with pytest.raises(
+            RuntimeError,
+            match="threshold-residual confirmation failed",
+    ):
+        downstream._discover_authoritative_seller_threshold_residual_gate(
+            output_dir=tmp_path, override_report=None,
+        )
+
+    report.write_text(json.dumps({
+        "passed": True,
+        "role": "seller",
+        "evaluator": downstream.E1_EVALUATOR,
+    }), encoding="utf-8")
+    pending = downstream._discover_authoritative_seller_threshold_residual_gate(
+        output_dir=tmp_path, override_report=None,
+    )
+    assert pending["found"] is False
+    assert pending["state"] == "threshold_residual_gate_publication_pending"
+
+    selected = tmp_path / "residual_selected.zip"
+    selected.write_bytes(b"selected")
+    gate = tmp_path / downstream.E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME
+    gate.write_text(json.dumps({
+        "selected_checkpoint": {"path": str(selected.resolve())},
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        downstream,
+        "validate_e1_gate",
+        lambda args: {
+            "report": str(report.resolve()),
+            "checkpoint": str(selected.resolve()),
+            "sha256": "f" * 64,
+            "actor_loss_mode": "balanced",
+            "source_kind": (
+                downstream.E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND
+            ),
+            "sampler_mode": "uniform",
+            "support_artifacts": {},
+        },
+    )
+    released = downstream._discover_authoritative_seller_threshold_residual_gate(
+        output_dir=tmp_path, override_report=None,
+    )
+    assert released["found"] is True
+    assert released["source_kind"] == (
+        "seller_conditioning_recovery_v2_threshold_residual_v1"
+    )
+
+
+@pytest.mark.parametrize(
+    "artifact_name",
+    (
+        downstream.E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME,
+        downstream.E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME,
+    ),
+)
+def test_orphan_threshold_residual_artifacts_never_fall_back(
+        monkeypatch, tmp_path, artifact_name,
+):
+    (tmp_path / artifact_name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        downstream,
+        "_discover_authoritative_seller_recovery_gate",
+        lambda **kwargs: pytest.fail("orphan v2 artifact fell back to v1"),
+    )
+    with pytest.raises(
+            RuntimeError,
+            match="without their authoritative activation",
+    ):
+        downstream.discover_e1_gate(argparse.Namespace(
+            role="seller",
+            output_dir=str(tmp_path),
+            override_report=None,
+            require_mode="balanced",
+        ))
+
+
+def test_threshold_residual_discovery_has_priority_over_v1(monkeypatch, tmp_path):
+    expected = {
+        "kind": "e1_gate_discovery",
+        "found": False,
+        "authoritative_source": (
+            downstream.E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND
+        ),
+        "state": "threshold_residual_training_or_selection_pending",
+    }
+    monkeypatch.setattr(
+        downstream,
+        "_discover_authoritative_seller_threshold_residual_gate",
+        lambda **kwargs: expected,
+    )
+    monkeypatch.setattr(
+        downstream,
+        "_discover_authoritative_seller_recovery_gate",
+        lambda **kwargs: pytest.fail("v1 discovery ran after v2 activation"),
+    )
+    discovered = downstream.discover_e1_gate(argparse.Namespace(
+        role="seller",
+        output_dir=str(tmp_path),
+        override_report=None,
+        require_mode="balanced",
+    ))
+    assert discovered is expected
+
+
 def test_preexisting_e2_cohort_cannot_bypass_active_recovery(
         monkeypatch, tmp_path,
 ):
@@ -645,6 +786,56 @@ def test_preexisting_e2_cohort_cannot_bypass_active_recovery(
         },
     )
     with pytest.raises(RuntimeError, match="authoritative recovery"):
+        downstream.validated_e1_gate_cohort(cohort)
+
+
+def test_preexisting_e2_cohort_cannot_bypass_pending_threshold_residual(
+        monkeypatch, tmp_path,
+):
+    seller_report = tmp_path / "v1_seller.json"
+    seller_report.write_text("{}", encoding="utf-8")
+    (
+        tmp_path / downstream.E1_SELLER_THRESHOLD_RESIDUAL_ACTIVATION_NAME
+    ).write_text("{}", encoding="utf-8")
+    old_seller = {
+        "report": str(seller_report.resolve()),
+        "checkpoint": str((tmp_path / "v1.zip").resolve()),
+        "checkpoint_sha256": "a" * 64,
+        "actor_loss_mode": "balanced",
+        "source_kind": downstream.E1_SELLER_RECOVERY_SOURCE_KIND,
+        "sampler_mode": "uniform",
+        "support_artifacts": {},
+    }
+    buyer = {
+        "source_kind": downstream.E1_PRIMARY_SOURCE_KIND,
+        "actor_loss_mode": "balanced",
+    }
+    cohort = tmp_path / "cohort.json"
+    cohort.write_text(json.dumps({
+        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v3",
+        "code_head": "h" * 40,
+        "e1_gates": {"buyer": buyer, "seller": old_seller},
+    }), encoding="utf-8")
+    monkeypatch.setattr(downstream, "validate_code_root", lambda: "h" * 40)
+    monkeypatch.setattr(
+        downstream,
+        "validate_e1_gate_record",
+        lambda gate, role: deepcopy(gate),
+    )
+    monkeypatch.setattr(
+        downstream,
+        "_run_seller_threshold_residual_validator",
+        lambda args: {},
+    )
+    monkeypatch.setattr(
+        downstream,
+        "_discover_authoritative_seller_recovery_gate",
+        lambda **kwargs: pytest.fail("pending residual authority fell back to v1"),
+    )
+    with pytest.raises(
+            RuntimeError,
+            match="threshold-residual recovery v2 has not released",
+    ):
         downstream.validated_e1_gate_cohort(cohort)
 
 
@@ -703,7 +894,7 @@ def test_preexisting_e2_cohort_accepts_exact_authoritative_recovery(
     ] == seller
 
 
-def test_launchers_enforce_probe_stage_order_family_and_wandb():
+def test_v1_launchers_remain_historical_and_master_uses_residual_v2():
     root = Path(__file__).resolve().parents[1]
     automation = root / "replication/atari/automation"
     train = (
@@ -743,10 +934,70 @@ def test_launchers_enforce_probe_stage_order_family_and_wandb():
     assert "--screen-seed-start 9000001" in selector
     assert "--confirmation-seed-start 9100001" in selector
     assert "--fixed-seed-start 9200001" in selector
-    assert "run_atari_clean_e1_seller_conditioning_recovery.sh" in master
-    assert master.index("conditioning recovery and selection") < master.index(
+    assert "run_atari_clean_e1_seller_conditioning_recovery.sh" not in master
+    assert (
+        "run_atari_clean_e1_seller_threshold_residual_recovery.sh" in master
+    )
+    assert master.index("threshold-residual recovery and selection") < master.index(
         "sequential E2 buyer/seller training and selection"
     )
+
+
+def test_threshold_residual_launchers_enforce_stages_family_and_wandb():
+    root = Path(__file__).resolve().parents[1]
+    automation = root / "replication/atari/automation"
+    train = (
+        automation
+        / "run_atari_clean_e1_seller_threshold_residual_recovery.sh"
+    ).read_text(encoding="utf-8")
+    selector = (
+        automation / "run_e1_seller_threshold_residual_recovery_selector.sh"
+    ).read_text(encoding="utf-8")
+    common = (
+        automation / "atari_e1_seller_threshold_residual_recovery_common.zsh"
+    ).read_text(encoding="utf-8")
+
+    preflight = train.index("run_v2_pure64_preflight\ne1r2_activate")
+    activation = train.index("e1r2_activate", preflight)
+    runtime = train.index("e1r2_prepare_runtime", activation)
+    warmup_start = train.index('print "starting 400160-step', runtime)
+    warmup_mode = train.index("--e1-sampler-mode all-equal-v1", warmup_start)
+    warmup_budget = train.index("--timesteps 400160", warmup_mode)
+    warmup_probe = train.index("run_v2_warmup_probe", warmup_budget)
+    warmup_gate = train.index("e1r2_validate_warmup_stage", warmup_probe)
+    resume = train.index('--resume "$E1R2_WARMUP_BASE"', warmup_gate)
+    target_mode = train.index("--e1-sampler-mode uniform", resume)
+    target_budget = train.index("--timesteps 2000800", target_mode)
+    family = train.index("e1r2_validate_family", target_budget)
+    selector_exec = train.index(
+        "run_e1_seller_threshold_residual_recovery_selector.sh", family,
+    )
+    assert preflight < activation < runtime < warmup_start
+    assert warmup_start < warmup_mode < warmup_budget < warmup_probe
+    assert warmup_probe < warmup_gate < resume < target_mode
+    assert target_mode < target_budget < family < selector_exec
+    assert train.count("--economic-threshold-residual") == 3
+    assert "replication.atari.probe_atari_e1_seller_threshold_residual" in train
+    assert "--wandb-project StackPOMDP" in train
+    assert "--wandb-group atari_clean_curriculum" in train
+    assert "--wandb-job-type \"$E1R2_WARMUP_JOB_TYPE\"" in train
+    assert "--wandb-job-type \"$E1R2_TARGET_JOB_TYPE\"" in train
+
+    assert (
+        "E1R2_TOKEN=conditioning_recovery_v2_threshold_residual_v1" in common
+    )
+    assert "E1R2_TARGET_STEPS=(800320 1200480 1600640 2000800 2400960)" in common
+    assert "E1R2_LEARNING_RATE=0.0001" in common
+    assert "replication/atari/probe_atari_e1_seller_conditioning.py" in common
+    assert "replication/atari/probe_atari_e1_seller_threshold_residual.py" in common
+    assert 'checkpoint_arguments+=(--checkpoint "$candidate")' in selector
+    assert (
+        'checkpoint_arguments+=(--checkpoint "$E1R2_WARMUP_BASE")'
+        not in selector
+    )
+    assert "--screen-seed-start 9000001" in selector
+    assert "--confirmation-seed-start 9100001" in selector
+    assert "--fixed-seed-start 9200001" in selector
 
 
 def test_gate_schema_binds_probe_failure_release_and_family():
