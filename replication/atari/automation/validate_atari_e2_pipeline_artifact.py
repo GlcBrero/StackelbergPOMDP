@@ -144,7 +144,7 @@ E2_PROFILES = {
     E2_PROFILE_V5: {
         "namespace": "e1seller_shared_context_v5_exposure_v2",
         "required_seller_source_kind": E1_SELLER_V5_SOURCE_KIND,
-        "code_head": "c4a7dcd92b621c0884f3dcef0b170961e1ec625b",
+        "code_head": "180c84f51005d2f36ae86f1cd7319c0e71249065",
         "cohort_schema": "stackpomdp.atari.e2_e1_gate_cohort.v4",
         "input_schema": "stackpomdp.atari.e2_pipeline_inputs.v3",
         "orchestration_schema": (

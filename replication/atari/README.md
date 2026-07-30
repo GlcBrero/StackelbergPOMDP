@@ -400,7 +400,11 @@ a selected alias nor an E2-visible gate. A passing confirmation publishes:
 Together, the family, report, and release gate bind the exact candidate, E0b,
 ROM, primary-buyer release, training-code, and selector-code provenance. A
 rerun revalidates an existing family and passing gate and never overwrites an
-artifact.
+artifact. For exposure-v2, the selector first revalidates the diagnostics gate
+inside the exact `180c84f51005d2f36ae86f1cd7319c0e71249065` formal-training
+runtime. That gate records the preregistered validator-only bridge from the
+`c4a7dcd` diagnostic evidence and the shortened W&B job type
+`atari_e1_seller_v5_exposure_v2_formal`.
 
 Once that gate exists, the versioned v5 E2 pipeline can train and select both
 leader roles sequentially:

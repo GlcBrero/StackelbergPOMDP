@@ -25,7 +25,7 @@ typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384
 # disjoint namespace, cohort, code pin, lock, and W&B job-type family.
 typeset -gr E2_PROFILE="${STACKPOMDP_ATARI_E2_PROFILE:-v3-direct-threshold-residual}"
 typeset -gr E2_V3_EXPECTED_HEAD=87fc165000517e874881cac63850133b9982de7f
-typeset -gr E2_V5_EXPECTED_HEAD=c4a7dcd92b621c0884f3dcef0b170961e1ec625b
+typeset -gr E2_V5_EXPECTED_HEAD=180c84f51005d2f36ae86f1cd7319c0e71249065
 typeset -gr E1_PRIMARY_AUTHORITY_EXPECTED_HEAD=dedab3e3615642b292046c2f07b7f1d9dd4bbce0
 typeset -gr E1_PRIMARY_AUTHORITY_CODE_ROOT=/private/tmp/stackpomdp-atari-primary-code-dedab3e
 case "$E2_PROFILE" in
@@ -39,7 +39,7 @@ case "$E2_PROFILE" in
     typeset -gr E2_WANDB_SELLER_JOB_TYPE=atari_e2_direct_threshold_residual_v3_seller_leader
     ;;
   v5-shared-context-exposure-v2)
-    typeset -gr E2_ACTIVE_CODE_ROOT=/private/tmp/stackpomdp-e2-v5-shared-context-code-c4a7dcd
+    typeset -gr E2_ACTIVE_CODE_ROOT=/private/tmp/stackpomdp-e2-v5-shared-context-code-180c84f
     typeset -gr E2_ACTIVE_EXPECTED_HEAD="$E2_V5_EXPECTED_HEAD"
     typeset -gr E2_NAMESPACE=e1seller_shared_context_v5_exposure_v2
     typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v5_shared_context_exposure_v2

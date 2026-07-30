@@ -49,6 +49,12 @@ REAL_CANONICAL_SELLER_RELEASE = Path(
     "replication/atari/checkpoints/clean/"
     "meta_seller_e1_ppo_balanced_seed1_firefix_retrain.buyer_gate.json"
 )
+REAL_EXPOSURE_V2_DIAGNOSTICS_GATE = Path(
+    "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/"
+    "replication/atari/results/e1_selections/"
+    "e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_"
+    "diagnostics_gate.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +104,38 @@ def test_v5_selection_protocol_is_six_candidates_with_disjoint_holdouts():
     assert selection.SOURCE_KIND == e2.E1_SELLER_V5_SOURCE_KIND
     assert selection.REPORT_NAME == e2.E1_SELLER_V5_REPORT_NAME
     assert selection.SELECTION_GATE_NAME == e2.E1_SELLER_V5_GATE_NAME
+
+
+@pytest.mark.skipif(
+    not REAL_EXPOSURE_V2_DIAGNOSTICS_GATE.is_file(),
+    reason="current exposure-v2 diagnostics gate is unavailable",
+)
+def test_selector_accepts_real_180_runtime_gate_and_short_wandb_job_type():
+    """Exercise the validator bridge and formal contract used by the run."""
+
+    selection.configure_protocol(diagnostics.EXPOSURE_PROTOCOL)
+    gate = diagnostics.validate_gate(REAL_EXPOSURE_V2_DIAGNOSTICS_GATE)
+    assert gate["code_revision"] == (
+        "180c84f51005d2f36ae86f1cd7319c0e71249065"
+    )
+    assert gate["diagnostic_evidence_revision"] == (
+        diagnostics.EXPOSURE_V2_DIAGNOSTIC_REVISION
+    )
+    assert gate["validator_revision_bridge"] == {
+        "applied": True,
+        "reason": "float32_gradient_norm_validator_tolerance",
+        "evidence_revision": diagnostics.EXPOSURE_V2_DIAGNOSTIC_REVISION,
+        "runtime_revision": gate["code_revision"],
+        "changed_paths": list(diagnostics.VALIDATOR_REPAIR_ALLOWED_PATHS),
+        "training_implementation_changed": False,
+        "gradient_norm_absolute_tolerance": diagnostics.V5_GRADIENT_NORM_ATOL,
+    }
+    assert gate["formal_release"]["wandb"]["job_type"] == (
+        "atari_e1_seller_v5_exposure_v2_formal"
+    )
+    assert e2.E2_PROFILES[e2.E2_PROFILE_V5]["code_head"] == (
+        gate["code_revision"]
+    )
 
 
 def test_formal_family_binds_exact_ordered_six_and_rejects_duplicate_bytes(
@@ -501,7 +539,7 @@ def test_historical_seller_release_is_not_reinterpreted_as_current_e2_code(
 def test_current_v5_runtime_accepts_real_historical_buyer_seller_prerequisites(
         monkeypatch,
 ):
-    """Exercise both immutable E1 prerequisites through the c4 v5 contract."""
+    """Exercise both immutable E1 prerequisites through the v5 contract."""
 
     e2.configure_e2_profile(e2.E2_PROFILE_V5)
     current_v5_head = e2.E2_PROFILES[e2.E2_PROFILE_V5]["code_head"]
@@ -655,7 +693,7 @@ def test_e2_profiles_preserve_v3_and_add_disjoint_v5_contract():
     assert e2.E2_INPUT_SCHEMA == "stackpomdp.atari.e2_pipeline_inputs.v3"
     assert e2.E2_ORCHESTRATION_SCHEMA.endswith(".v2")
     assert e2.configured_e2_code_head() == (
-        "c4a7dcd92b621c0884f3dcef0b170961e1ec625b"
+        "180c84f51005d2f36ae86f1cd7319c0e71249065"
     )
 
 
@@ -760,6 +798,9 @@ def test_selection_launchers_use_exposure_namespace_and_no_fallback():
     launcher = SELECTION_LAUNCHER.read_text(encoding="utf-8")
     wrapper = SELECTION_EXPOSURE_WRAPPER.read_text(encoding="utf-8")
     assert "STACKPOMDP_E1V5_PROTOCOL=exposure_v2" in wrapper
+    assert launcher.index("e1v5_prepare_runtime") < launcher.index(
+        "e1v5s_prepare_runtime"
+    )
     assert "E1V5S_DIAGNOSTICS_VALIDATOR" in common
     assert (
         '"$E1V5_PYTHON" "$E1V5S_DIAGNOSTICS_VALIDATOR"' in launcher

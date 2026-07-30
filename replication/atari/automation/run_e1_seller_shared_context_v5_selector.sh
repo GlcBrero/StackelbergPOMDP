@@ -36,6 +36,12 @@ trap 'interrupt_e1v5_selector 129' HUP
 trap 'interrupt_e1v5_selector 130' INT
 trap 'interrupt_e1v5_selector 143' TERM
 
+# Revalidate the immutable diagnostics gate in the exact formal-training
+# runtime before moving to the newer selector runtime.  For exposure-v2 this
+# proves the preregistered c4a7dcd evidence -> 180c84f validator-only bridge,
+# including the shortened W&B job-type contract, without reinterpreting the
+# diagnostic evidence under later selector code.
+e1v5_prepare_runtime
 e1v5s_prepare_runtime
 (
   cd "$E1V5S_CODE_ROOT"
