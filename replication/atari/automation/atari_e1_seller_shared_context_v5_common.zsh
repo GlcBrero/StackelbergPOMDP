@@ -99,6 +99,10 @@ function e1v5_require_scoped_clean() {
     replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5.sh \
     replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5_exposure_v2.sh \
     replication/atari/automation/validate_atari_e1_seller_shared_context_v5.py \
+    replication/atari/automation/atari_e1_seller_shared_context_v5_selection_common.zsh \
+    replication/atari/automation/run_e1_seller_shared_context_v5_selector.sh \
+    replication/atari/automation/run_e1_seller_shared_context_v5_exposure_v2_selector.sh \
+    replication/atari/automation/validate_atari_e1_seller_shared_context_v5_selection.py \
     replication/atari/automation/atari_e2_pipeline_common.zsh \
     replication/atari/automation/validate_atari_e1_seller_conditioning_recovery.py \
     stackelberg_pomdp/atari)

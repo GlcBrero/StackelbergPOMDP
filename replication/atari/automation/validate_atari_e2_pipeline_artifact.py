@@ -59,6 +59,27 @@ E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME = (
 E1_SELLER_THRESHOLD_RESIDUAL_MODULE_NAME = (
     "validate_atari_e1_seller_direct_threshold_residual_recovery.py"
 )
+E1_SELLER_V5_SOURCE_KIND = (
+    "seller_conditioning_recovery_v5_shared_context_exposure_v2"
+)
+E1_SELLER_V5_DIAGNOSTICS_GATE_NAME = (
+    "e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_"
+    "diagnostics_gate.json"
+)
+E1_SELLER_V5_REPORT_NAME = (
+    "e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_"
+    "all6_selector_v1.json"
+)
+E1_SELLER_V5_GATE_NAME = (
+    "e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_"
+    "all6_selector_v1.gate.json"
+)
+E1_SELLER_V5_MODULE_NAME = (
+    "validate_atari_e1_seller_shared_context_v5_selection.py"
+)
+E1_SELLER_V5_DIAGNOSTICS_MODULE_NAME = (
+    "validate_atari_e1_seller_shared_context_v5.py"
+)
 E1_PRIMARY_PROTOCOL_NAME = (
     "e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json"
 )
@@ -97,8 +118,60 @@ E1_PRIMARY_CHECK_NAMES = (
     "price 0.4 buyer net payoff",
     "price 0.5 buyer net payoff",
 )
-E2_ORCHESTRATION_SCHEMA = "stackpomdp.atari.e2_sequential_orchestration.v1"
-E2_NAMESPACE = "e1seller_direct_threshold_residual_v3"
+E2_PROFILE_V3 = "v3-direct-threshold-residual"
+E2_PROFILE_V5 = "v5-shared-context-exposure-v2"
+E2_PROFILES = {
+    E2_PROFILE_V3: {
+        "namespace": "e1seller_direct_threshold_residual_v3",
+        "required_seller_source_kind": (
+            E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND
+        ),
+        "code_head": "87fc165000517e874881cac63850133b9982de7f",
+        "cohort_schema": "stackpomdp.atari.e2_e1_gate_cohort.v3",
+        "input_schema": "stackpomdp.atari.e2_pipeline_inputs.v2",
+        "orchestration_schema": (
+            "stackpomdp.atari.e2_sequential_orchestration.v1"
+        ),
+        "shell_head_variable": "E2_V3_EXPECTED_HEAD",
+    },
+    E2_PROFILE_V5: {
+        "namespace": "e1seller_shared_context_v5_exposure_v2",
+        "required_seller_source_kind": E1_SELLER_V5_SOURCE_KIND,
+        "code_head": "c4a7dcd92b621c0884f3dcef0b170961e1ec625b",
+        "cohort_schema": "stackpomdp.atari.e2_e1_gate_cohort.v4",
+        "input_schema": "stackpomdp.atari.e2_pipeline_inputs.v3",
+        "orchestration_schema": (
+            "stackpomdp.atari.e2_sequential_orchestration.v2"
+        ),
+        "shell_head_variable": "E2_V5_EXPECTED_HEAD",
+    },
+}
+
+
+def configure_e2_profile(name: str) -> dict:
+    if name not in E2_PROFILES:
+        raise RuntimeError(f"unknown Atari E2 profile: {name}")
+    config = dict(E2_PROFILES[name])
+    global E2_PROFILE
+    global E2_NAMESPACE
+    global E1_REQUIRED_SELLER_SOURCE_KIND
+    global E2_COHORT_SCHEMA
+    global E2_INPUT_SCHEMA
+    global E2_ORCHESTRATION_SCHEMA
+    E2_PROFILE = name
+    E2_NAMESPACE = config["namespace"]
+    E1_REQUIRED_SELLER_SOURCE_KIND = config[
+        "required_seller_source_kind"
+    ]
+    E2_COHORT_SCHEMA = config["cohort_schema"]
+    E2_INPUT_SCHEMA = config["input_schema"]
+    E2_ORCHESTRATION_SCHEMA = config["orchestration_schema"]
+    return config
+
+
+configure_e2_profile(os.environ.get(
+    "STACKPOMDP_ATARI_E2_PROFILE", E2_PROFILE_V3
+))
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
 )
@@ -214,14 +287,20 @@ def configured_e2_code_head() -> str:
     common = Path(__file__).resolve().with_name("atari_e2_pipeline_common.zsh")
     if common.is_symlink() or not common.is_file():
         fail(f"E2 pipeline common file is unavailable or unsafe: {common}")
+    variable = E2_PROFILES[E2_PROFILE]["shell_head_variable"]
     matches = re.findall(
-        r"^typeset -gr EXPECTED_HEAD=([0-9a-f]{40})$",
+        rf"^typeset -gr {re.escape(variable)}=([0-9a-f]{{40}})$",
         common.read_text(encoding="utf-8"),
         flags=re.MULTILINE,
     )
     if len(matches) != 1:
-        fail("E2 pipeline common file has no unique full expected HEAD")
-    return matches[0]
+        fail(
+            "E2 pipeline common file has no unique profile-specific full "
+            "expected HEAD"
+        )
+    expected = E2_PROFILES[E2_PROFILE]["code_head"]
+    expect_equal(matches[0], expected, label="profile E2 code HEAD pin")
+    return expected
 
 
 def validate_code_root() -> str:
@@ -884,6 +963,22 @@ def _run_seller_threshold_residual_validator(arguments: list[str]) -> dict:
     )
 
 
+def _run_seller_v5_validator(arguments: list[str]) -> dict:
+    return _run_active_seller_validator(
+        E1_SELLER_V5_MODULE_NAME,
+        ["--protocol", "exposure_v2", *arguments],
+        label="seller shared-context v5 selection",
+    )
+
+
+def _run_seller_v5_diagnostics_validator(arguments: list[str]) -> dict:
+    return _run_active_seller_validator(
+        E1_SELLER_V5_DIAGNOSTICS_MODULE_NAME,
+        ["--protocol", "exposure_v2", *arguments],
+        label="seller shared-context v5 diagnostics",
+    )
+
+
 def canonical_seller_threshold_residual_architecture() -> dict:
     from stackelberg_pomdp.atari.stackpomdp_policy import (
         direct_threshold_residual_architecture_provenance,
@@ -892,6 +987,168 @@ def canonical_seller_threshold_residual_architecture() -> dict:
     return direct_threshold_residual_architecture_provenance(
         state_features=64
     )
+
+
+def canonical_seller_v5_architecture() -> dict:
+    from stackelberg_pomdp.atari.stackpomdp_policy import (
+        seller_shared_context_architecture_provenance,
+    )
+
+    return seller_shared_context_architecture_provenance()
+
+
+def canonical_seller_v5_initialization() -> dict:
+    from replication.atari.train_atari_meta_response_sb3 import (
+        shared_context_initialization_contract,
+    )
+
+    return shared_context_initialization_contract()
+
+
+def _validate_seller_v5_gate(args: argparse.Namespace) -> dict:
+    """Normalize the authoritative v5 seller gate for E2 manifests."""
+
+    if args.role != "seller" or args.actor_loss_mode != "balanced":
+        fail("the seller shared-context v5 gate is balanced-seller only")
+    report = Path(args.report).expanduser().resolve()
+    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    if report.name != E1_SELLER_V5_REPORT_NAME:
+        fail(f"unexpected seller-v5 report name: {report.name}")
+    gate_path = report.with_name(E1_SELLER_V5_GATE_NAME)
+    gate = _run_seller_v5_validator([
+        "validate-selection-gate",
+        "--gate", str(gate_path),
+        "--report", str(report),
+        "--selected", str(checkpoint),
+    ])
+    digest = validate_zip(checkpoint)
+    expect_equal(
+        gate.get("selected_checkpoint", {}).get("sha256"),
+        digest,
+        label="seller-v5 selected SHA-256",
+    )
+    expect_equal(
+        gate.get("source_kind"),
+        E1_SELLER_V5_SOURCE_KIND,
+        label="seller-v5 source kind",
+    )
+    architecture = canonical_seller_v5_architecture()
+    initialization = canonical_seller_v5_initialization()
+    expect_equal(
+        gate.get("economic_architecture"),
+        architecture,
+        label="seller-v5 architecture",
+    )
+    expect_equal(
+        gate.get("shared_context_initialization"),
+        initialization,
+        label="seller-v5 initialization",
+    )
+    candidate_hashes = gate.get("training_family", {}).get(
+        "candidate_sha256"
+    )
+    if (
+            not isinstance(candidate_hashes, list)
+            or len(candidate_hashes) != 6
+            or len(set(candidate_hashes)) != 6
+    ):
+        fail("seller-v5 gate does not bind six byte-distinct candidates")
+
+    from replication.atari.train_atari_stackpomdp_leader_sb3 import (
+        checkpoint_policy_metadata,
+    )
+
+    metadata = checkpoint_policy_metadata(
+        checkpoint, device="cpu", label="selected seller-v5 E1 policy"
+    )
+    expect_equal(metadata.get("sha256"), digest, label="loaded seller-v5 SHA")
+    expect_equal(
+        metadata.get("economic_architecture"),
+        architecture,
+        label="loaded seller-v5 architecture",
+    )
+    expect_equal(
+        metadata.get("shared_context_initialization"),
+        initialization,
+        label="loaded seller-v5 initialization",
+    )
+    training_revision = metadata.get("e1_training_code_revision")
+    expect_equal(
+        gate.get("e1_training_code_revision"),
+        training_revision,
+        label="seller-v5 gate/checkpoint training revision",
+    )
+    expect_equal(
+        training_revision,
+        E2_PROFILES[E2_PROFILE_V5]["code_head"],
+        label="seller-v5 formal training revision",
+    )
+    selector_revision = validate_recorded_revision(
+        gate.get("selector_code_revision")
+    )
+    diagnostics_record = gate.get("diagnostics_gate", {})
+    diagnostics_path = Path(
+        diagnostics_record.get("path", "")
+    ).expanduser().resolve()
+    expect_equal(
+        diagnostics_path.name,
+        E1_SELLER_V5_DIAGNOSTICS_GATE_NAME,
+        label="seller-v5 diagnostics-gate name",
+    )
+    expect_equal(
+        sha256_file(diagnostics_path),
+        diagnostics_record.get("sha256"),
+        label="seller-v5 diagnostics-gate SHA-256",
+    )
+    diagnostics_gate = _run_seller_v5_diagnostics_validator([
+        "validate-gate", "--gate", str(diagnostics_path)
+    ])
+    expect_equal(
+        diagnostics_gate.get("code_revision"),
+        training_revision,
+        label="seller-v5 diagnostics/checkpoint training revision",
+    )
+    seller_release = gate.get("seller_release")
+    if not isinstance(seller_release, dict):
+        fail("seller-v5 gate does not bind its buyer release")
+    release_path = Path(seller_release.get("path", "")).expanduser().resolve()
+    expect_equal(
+        sha256_file(release_path),
+        seller_release.get("sha256"),
+        label="seller-v5 buyer-release SHA-256",
+    )
+    validated_e1_seller_release(release_path)
+    support = {
+        "seller_shared_context_v5_selection_gate": {
+            "path": str(gate_path), "sha256": sha256_file(gate_path),
+        },
+        "training_family": dict(gate["training_family"]),
+        "diagnostics_gate": dict(diagnostics_record),
+        "seller_release": dict(seller_release),
+        "economic_architecture": architecture,
+        "shared_context_initialization": initialization,
+        "e1_training_code_revision": training_revision,
+        "selector_code_revision": selector_revision,
+        "selected_conditioning_probe": dict(
+            gate["selected_conditioning_probe"]
+        ),
+        "selected_behavioral_gate": dict(
+            gate["selected_behavioral_gate"]
+        ),
+    }
+    return {
+        "kind": "e1_gate",
+        "role": "seller",
+        "report": str(report),
+        "checkpoint": str(checkpoint),
+        "sha256": digest,
+        "actor_loss_mode": "balanced",
+        "source_kind": E1_SELLER_V5_SOURCE_KIND,
+        "sampler_mode": E1_UNIFORM_SAMPLER,
+        "support_artifacts": support,
+        "candidate_sha256": candidate_hashes,
+        "passed": True,
+    }
 
 
 def _validate_seller_threshold_residual_gate(args: argparse.Namespace) -> dict:
@@ -1370,6 +1627,12 @@ def validate_e1_gate(args: argparse.Namespace) -> dict:
     if (
             args.role == "seller"
             and Path(args.report).expanduser().resolve().name
+            == E1_SELLER_V5_REPORT_NAME
+    ):
+        return _validate_seller_v5_gate(args)
+    if (
+            args.role == "seller"
+            and Path(args.report).expanduser().resolve().name
             == E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME
     ):
         return _validate_seller_threshold_residual_gate(args)
@@ -1567,6 +1830,86 @@ def _discover_authoritative_primary_buyer_gate(
     }
 
 
+def _discover_authoritative_seller_v5_gate(
+        *, output_dir: Path, override_report: str | None,
+) -> dict | None:
+    """Make the exposure-v2 diagnostics gate authoritative over older sellers."""
+
+    diagnostics_path = output_dir / E1_SELLER_V5_DIAGNOSTICS_GATE_NAME
+    report_path = output_dir / E1_SELLER_V5_REPORT_NAME
+    gate_path = output_dir / E1_SELLER_V5_GATE_NAME
+    paths_exist = any(
+        os.path.lexists(path)
+        for path in (diagnostics_path, report_path, gate_path)
+    )
+    if not os.path.lexists(diagnostics_path):
+        if paths_exist:
+            fail(
+                "seller-v5 selection artifacts exist without their "
+                f"authoritative diagnostics gate: {diagnostics_path}"
+            )
+        return None
+    _run_seller_v5_diagnostics_validator([
+        "validate-gate", "--gate", str(diagnostics_path)
+    ])
+    if override_report:
+        override = Path(override_report).expanduser().resolve()
+        if override != report_path.resolve():
+            fail(
+                "the active seller-v5 protocol forbids overriding its "
+                f"report: {override}"
+            )
+    if os.path.lexists(gate_path) and not os.path.lexists(report_path):
+        fail("seller-v5 selection gate exists before its required report")
+    if not os.path.lexists(report_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_V5_SOURCE_KIND,
+            "state": "formal_training_or_selection_pending",
+        }
+    report = load_json(report_path)
+    passed = report.get("passed")
+    if type(passed) is not bool:
+        fail("authoritative seller-v5 report has no Boolean outcome")
+    expect_equal(report.get("role"), "seller", label="seller-v5 report role")
+    expect_equal(
+        report.get("evaluator"), E1_EVALUATOR,
+        label="seller-v5 report evaluator",
+    )
+    if passed is False:
+        fail("authoritative seller-v5 fresh confirmation failed")
+    if not os.path.lexists(gate_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_V5_SOURCE_KIND,
+            "state": "selection_gate_publication_pending",
+        }
+    gate = load_json(gate_path)
+    checkpoint = Path(
+        gate.get("selected_checkpoint", {}).get("path", "")
+    ).expanduser().resolve()
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report_path),
+        checkpoint=str(checkpoint),
+        role="seller",
+        actor_loss_mode="balanced",
+    ))
+    return {
+        "kind": "e1_gate_discovery",
+        "found": True,
+        "role": "seller",
+        "report": validated["report"],
+        "checkpoint": validated["checkpoint"],
+        "checkpoint_sha256": validated["sha256"],
+        "actor_loss_mode": validated["actor_loss_mode"],
+        "source_kind": validated["source_kind"],
+        "sampler_mode": validated["sampler_mode"],
+        "support_artifacts": validated["support_artifacts"],
+    }
+
+
 def _discover_authoritative_seller_threshold_residual_gate(
         *, output_dir: Path, override_report: str | None,
 ) -> dict | None:
@@ -1726,6 +2069,12 @@ def _discover_authoritative_seller_recovery_gate(
 def discover_e1_gate(args: argparse.Namespace) -> dict:
     output_dir = Path(args.output_dir).expanduser().resolve()
     if args.role == "seller":
+        shared_context_v5 = _discover_authoritative_seller_v5_gate(
+            output_dir=output_dir,
+            override_report=args.override_report,
+        )
+        if shared_context_v5 is not None:
+            return shared_context_v5
         threshold_residual = (
             _discover_authoritative_seller_threshold_residual_gate(
                 output_dir=output_dir,
@@ -1878,10 +2227,19 @@ def validated_pipeline_inputs(path: Path, *, role: str) -> dict:
     value = load_json(path)
     expect_equal(
         value.get("schema"),
-        "stackpomdp.atari.e2_pipeline_inputs.v2",
+        E2_INPUT_SCHEMA,
         label="E2 pipeline-input schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
+    if E2_PROFILE == E2_PROFILE_V5:
+        expect_equal(
+            value.get("e2_profile"), E2_PROFILE,
+            label="E2 pipeline-input profile",
+        )
+        expect_equal(
+            value.get("e2_namespace"), E2_NAMESPACE,
+            label="E2 pipeline-input namespace",
+        )
     expect_equal(value.get("leader_role"), role, label="input leader role")
     expect_equal(
         value.get("training_actor_loss_mode"),
@@ -1911,10 +2269,19 @@ def validated_e1_gate_cohort(path: Path) -> dict:
     value = load_json(path)
     expect_equal(
         value.get("schema"),
-        "stackpomdp.atari.e2_e1_gate_cohort.v3",
+        E2_COHORT_SCHEMA,
         label="E1 gate-cohort schema",
     )
     expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
+    if E2_PROFILE == E2_PROFILE_V5:
+        expect_equal(
+            value.get("e2_profile"), E2_PROFILE,
+            label="E1 gate-cohort E2 profile",
+        )
+        expect_equal(
+            value.get("e2_namespace"), E2_NAMESPACE,
+            label="E1 gate-cohort E2 namespace",
+        )
     gates = value.get("e1_gates")
     if not isinstance(gates, dict) or set(gates) != {"buyer", "seller"}:
         fail("E1 gate cohort must contain exactly buyer and seller records")
@@ -1926,6 +2293,15 @@ def validated_e1_gate_cohort(path: Path) -> dict:
         fail("E2 gate cohort requires the authoritative primary-economic buyer")
     if gates["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
+    if (
+            E2_PROFILE == E2_PROFILE_V5
+            and validated["seller"]["source_kind"]
+            != E1_REQUIRED_SELLER_SOURCE_KIND
+    ):
+        fail(
+            "E2 gate cohort requires seller source "
+            f"{E1_REQUIRED_SELLER_SOURCE_KIND}"
+        )
     _validate_authoritative_seller_gate_record(gates["seller"])
     _validate_cohort_seller_release_binding(value, gates)
     return value
@@ -1936,18 +2312,25 @@ def _validate_authoritative_seller_gate_record(gate: dict) -> dict | None:
 
     seller_report = Path(gate.get("report", "")).expanduser().resolve()
     output_dir = seller_report.parent
-    authoritative = _discover_authoritative_seller_threshold_residual_gate(
+    authoritative = _discover_authoritative_seller_v5_gate(
         output_dir=output_dir,
         override_report=None,
     )
     if authoritative is not None:
-        label = "threshold-residual recovery v2"
+        label = "shared-context v5 exposure-v2"
     else:
-        authoritative = _discover_authoritative_seller_recovery_gate(
+        authoritative = _discover_authoritative_seller_threshold_residual_gate(
             output_dir=output_dir,
             override_report=None,
         )
-        label = "recovery v1"
+        if authoritative is not None:
+            label = "threshold-residual recovery v2"
+        else:
+            authoritative = _discover_authoritative_seller_recovery_gate(
+                output_dir=output_dir,
+                override_report=None,
+            )
+            label = "recovery v1"
     if authoritative is None:
         return None
     if (
@@ -2026,6 +2409,15 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
         }
     if entries["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
+    if (
+            E2_PROFILE == E2_PROFILE_V5
+            and entries["seller"]["source_kind"]
+            != E1_REQUIRED_SELLER_SOURCE_KIND
+    ):
+        fail(
+            "E2 gate cohort requires seller source "
+            f"{E1_REQUIRED_SELLER_SOURCE_KIND}"
+        )
     if entries["buyer"]["source_kind"] != E1_PRIMARY_SOURCE_KIND:
         fail("E2 gate cohort requires the authoritative primary-economic buyer")
     _validate_authoritative_seller_gate_record(entries["seller"])
@@ -2045,13 +2437,18 @@ def write_e1_gate_cohort(args: argparse.Namespace) -> dict:
         label="E2 buyer versus seller-training buyer",
     )
     result = {
-        "schema": "stackpomdp.atari.e2_e1_gate_cohort.v3",
+        "schema": E2_COHORT_SCHEMA,
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
         "buyer_authority": E1_PRIMARY_SOURCE_KIND,
         "seller_release": seller_release,
         "e1_gates": entries,
     }
+    if E2_PROFILE == E2_PROFILE_V5:
+        result.update({
+            "e2_profile": E2_PROFILE,
+            "e2_namespace": E2_NAMESPACE,
+        })
     atomic_write_new_json(output, result)
     return {"kind": "e1_gate_cohort", "path": str(output), **result}
 
@@ -2300,7 +2697,7 @@ def write_e2_input_manifest(args: argparse.Namespace) -> dict:
     entries = cohort["e1_gates"]
     response_role = "seller" if args.role == "buyer" else "buyer"
     result = {
-        "schema": "stackpomdp.atari.e2_pipeline_inputs.v2",
+        "schema": E2_INPUT_SCHEMA,
         "code_root": str(REPOSITORY_ROOT),
         "code_head": validate_code_root(),
         "leader_role": args.role,
@@ -2321,6 +2718,11 @@ def write_e2_input_manifest(args: argparse.Namespace) -> dict:
         },
         "e1_gates": entries,
     }
+    if E2_PROFILE == E2_PROFILE_V5:
+        result.update({
+            "e2_profile": E2_PROFILE,
+            "e2_namespace": E2_NAMESPACE,
+        })
     atomic_write_new_json(output, result)
     return {"kind": "e2_input_manifest", "path": str(output), **result}
 
@@ -2975,7 +3377,7 @@ def build_e2_orchestration_summary(args: argparse.Namespace) -> dict:
         if recorded_revision is not None
         else validate_selector_code_root(Path(args.automation_code_root))
     )
-    return {
+    result = {
         "schema": E2_ORCHESTRATION_SCHEMA,
         "code_head": validate_code_root(),
         "automation_code_revision": automation_revision,
@@ -2991,6 +3393,12 @@ def build_e2_orchestration_summary(args: argparse.Namespace) -> dict:
         "all_scientific_gates_passed": all_passed,
         "passed": all_passed,
     }
+    if E2_PROFILE == E2_PROFILE_V5:
+        result.update({
+            "e2_profile": E2_PROFILE,
+            "e2_namespace": E2_NAMESPACE,
+        })
+    return result
 
 
 def write_e2_orchestration_summary(args: argparse.Namespace) -> dict:

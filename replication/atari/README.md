@@ -372,6 +372,62 @@ episode/event rows, ranking, fixed-grid CSVs, paired-timing condition/episode/
 event CSVs, exact hashes, explicit seeds, and all failed confirmation attempts
 are written collision-safely under `replication/atari/results/e1_selections/`.
 
+### Seller-v5 formal selection and E2 release
+
+The shared-context exposure-v2 seller has a separate, fail-closed release
+step. Its diagnostics gate authorizes formal training but is not itself an E1
+checkpoint release. After the formal run completes, select from the five
+retained checkpoints at `400160`, `800320`, `1200480`, `1600640`, and
+`2000800` transitions plus the final base checkpoint with:
+
+```bash
+zsh replication/atari/automation/run_e1_seller_shared_context_v5_exposure_v2_selector.sh
+```
+
+The command first writes an immutable six-checkpoint family manifest, screens
+all six byte-distinct candidates on the same 20 held-out seeds and contexts,
+and confirms only the screen winner on 100 fresh seeds. It also reruns the
+fixed-price grid, joint-context ablation, all eleven forced-price controls,
+and the unchanged formal seller-v5 behavioral and conditioning gates. There is
+no fallback to a lower-ranked candidate. A failed confirmation leaves neither
+a selected alias nor an E2-visible gate. A passing confirmation publishes:
+
+- `replication/atari/results/e1_selections/e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_formal_family.json`;
+- `replication/atari/results/e1_selections/e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_all6_selector_v1.json`;
+- `replication/atari/results/e1_selections/e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_all6_selector_v1.gate.json`;
+- `replication/atari/checkpoints/clean/meta_seller_e1_ppo_balanced_conditioning_recovery_v5_shared_context_exposure_v2_seed1_selected.zip`.
+
+Every artifact records exact candidate, E0b, ROM, primary-buyer release,
+training-code, and selector-code provenance. Rerunning validates immutable
+artifacts instead of overwriting them.
+
+Once that gate exists, the versioned v5 E2 pipeline can train and select both
+leader roles sequentially:
+
+```bash
+zsh replication/atari/automation/run_atari_clean_e2_shared_context_v5_sequential.sh
+```
+
+The v5 launcher uses its own checkpoint namespace, cohort manifest, lock, and
+Weights & Biases job types
+`atari_e2_shared_context_v5_exposure_v2_buyer_leader` and
+`atari_e2_shared_context_v5_exposure_v2_seller_leader`. It refuses to fall
+back to a v3 seller after the v5 diagnostics gate becomes authoritative. The
+shared cohort also proves that the buyer checkpoint used in E2 is exactly the
+primary buyer release against which the selected seller was trained. For
+manual recovery, the same profile is exposed through the individual scripts:
+
+```bash
+zsh replication/atari/automation/run_atari_clean_e2_buyer_shared_context_v5_2m.sh
+zsh replication/atari/automation/run_e2_buyer_shared_context_v5_final_selector.sh
+zsh replication/atari/automation/run_atari_clean_e2_seller_shared_context_v5_2m.sh
+zsh replication/atari/automation/run_e2_seller_shared_context_v5_final_selector.sh
+```
+
+The unversioned E2 scripts retain the historical v3 profile by default; use
+the explicit v5 wrappers above for the shared-context experiment. These are
+execution commands, not claims that a run or scientific gate has completed.
+
 ## E2: Stackelberg leaders
 
 Seller leader against a frozen E1 meta-buyer:

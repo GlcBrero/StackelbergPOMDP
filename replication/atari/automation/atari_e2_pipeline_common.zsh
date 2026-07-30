@@ -18,12 +18,39 @@ typeset -gr WANDB_ROOT="$CHECKPOINT_ROOT/wandb_runs"
 typeset -gr LOG_ROOT="$ROOT/replication/atari/results/run_logs/clean_20260728"
 typeset -gr E1_OUTPUT="$ROOT/replication/atari/results/e1_selections"
 typeset -gr E2_OUTPUT="$ROOT/replication/atari/results/e2_selections"
-typeset -gr E2_NAMESPACE=e1seller_direct_threshold_residual_v3
-typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v3_direct_threshold_residual_v1
-typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort_${E2_NAMESPACE}.json"
 typeset -gr ROM="$ROOT/stackelberg_pomdp/atari/roms/space_invaders.bin"
 typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301
-typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-direct-threshold-residual-v3-sequential.lock
+
+# The legacy v3 profile remains the default.  The v5 launchers opt into a
+# disjoint namespace, cohort, code pin, lock, and W&B job-type family.
+typeset -gr E2_PROFILE="${STACKPOMDP_ATARI_E2_PROFILE:-v3-direct-threshold-residual}"
+typeset -gr E2_V3_EXPECTED_HEAD=87fc165000517e874881cac63850133b9982de7f
+typeset -gr E2_V5_EXPECTED_HEAD=c4a7dcd92b621c0884f3dcef0b170961e1ec625b
+case "$E2_PROFILE" in
+  v3-direct-threshold-residual)
+    typeset -gr E2_ACTIVE_CODE_ROOT="$CODE_ROOT"
+    typeset -gr E2_ACTIVE_EXPECTED_HEAD="$EXPECTED_HEAD"
+    typeset -gr E2_NAMESPACE=e1seller_direct_threshold_residual_v3
+    typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v3_direct_threshold_residual_v1
+    typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-direct-threshold-residual-v3-sequential.lock
+    typeset -gr E2_WANDB_BUYER_JOB_TYPE=atari_e2_direct_threshold_residual_v3_buyer_leader
+    typeset -gr E2_WANDB_SELLER_JOB_TYPE=atari_e2_direct_threshold_residual_v3_seller_leader
+    ;;
+  v5-shared-context-exposure-v2)
+    typeset -gr E2_ACTIVE_CODE_ROOT=/private/tmp/stackpomdp-e2-v5-shared-context-code-c4a7dcd
+    typeset -gr E2_ACTIVE_EXPECTED_HEAD="$E2_V5_EXPECTED_HEAD"
+    typeset -gr E2_NAMESPACE=e1seller_shared_context_v5_exposure_v2
+    typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v5_shared_context_exposure_v2
+    typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-shared-context-v5-exposure-v2-sequential.lock
+    typeset -gr E2_WANDB_BUYER_JOB_TYPE=atari_e2_shared_context_v5_exposure_v2_buyer_leader
+    typeset -gr E2_WANDB_SELLER_JOB_TYPE=atari_e2_shared_context_v5_exposure_v2_seller_leader
+    ;;
+  *)
+    print -u2 -- "unknown Atari E2 profile: $E2_PROFILE"
+    return 1
+    ;;
+esac
+typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort_${E2_NAMESPACE}.json"
 
 typeset -gra E2_STEPS=(400680 800520 1200360 1600200 2000040)
 typeset -gr E2_TIMESTEPS=2000040
@@ -212,6 +239,7 @@ function e2_prepare_runtime() {
     replication/atari/probe_atari_e1_seller_conditioning.py \
     replication/atari/probe_atari_e1_seller_threshold_residual.py \
     replication/atari/probe_atari_e1_seller_direct_threshold_residual.py \
+    replication/atari/probe_atari_e1_seller_shared_context.py \
     replication/atari/train_atari_meta_response_sb3.py \
     replication/atari/train_atari_stackpomdp_leader_sb3.py \
     replication/atari/sb3_common.py \
@@ -221,34 +249,34 @@ function e2_prepare_runtime() {
     print -u2 "$automation_status"
     return 1
   fi
-  if [[ ! -e "$CODE_ROOT" ]]; then
+  if [[ ! -e "$E2_ACTIVE_CODE_ROOT" ]]; then
     # Isolate E2 from later changes on the active branch while all generated
     # checkpoints, reports, W&B files, and logs still go to the active repo.
-    lock="${CODE_ROOT}.init.lock"
+    lock="${E2_ACTIVE_CODE_ROOT}.init.lock"
     local init_token="$(hostname)-$$-$(date +%s)-${RANDOM}"
     local init_status=0
     e2_claim_transient_lock \
       "$lock" "$init_token" "E2 code-worktree initialization" || return $?
-    if [[ ! -e "$CODE_ROOT" ]]; then
+    if [[ ! -e "$E2_ACTIVE_CODE_ROOT" ]]; then
       set +e
-      git -C "$ROOT" worktree add --detach "$CODE_ROOT" "$EXPECTED_HEAD"
+      git -C "$ROOT" worktree add --detach "$E2_ACTIVE_CODE_ROOT" "$E2_ACTIVE_EXPECTED_HEAD"
       init_status=$?
       set -e
     fi
     e2_release_transient_lock || return $?
     (( init_status == 0 )) || return "$init_status"
-  elif [[ ! -d "$CODE_ROOT/.git" && ! -f "$CODE_ROOT/.git" ]]; then
-    print -u2 "reserved E2 code path exists but is not a git worktree: $CODE_ROOT"
+  elif [[ ! -d "$E2_ACTIVE_CODE_ROOT/.git" && ! -f "$E2_ACTIVE_CODE_ROOT/.git" ]]; then
+    print -u2 "reserved E2 code path exists but is not a git worktree: $E2_ACTIVE_CODE_ROOT"
     return 1
   fi
-  head=$(git -C "$CODE_ROOT" rev-parse HEAD)
-  if [[ "$head" != "$EXPECTED_HEAD" ]]; then
-    print -u2 "refusing E2 launch from unreviewed code: expected $EXPECTED_HEAD, observed $head"
+  head=$(git -C "$E2_ACTIVE_CODE_ROOT" rev-parse HEAD)
+  if [[ "$head" != "$E2_ACTIVE_EXPECTED_HEAD" ]]; then
+    print -u2 "refusing E2 launch from unreviewed code: expected $E2_ACTIVE_EXPECTED_HEAD, observed $head"
     return 1
   fi
-  worktree_status=$(git -C "$CODE_ROOT" status --short --untracked-files=no)
+  worktree_status=$(git -C "$E2_ACTIVE_CODE_ROOT" status --short --untracked-files=no)
   if [[ -n "$worktree_status" ]]; then
-    print -u2 "refusing E2 launch from a modified detached worktree: $CODE_ROOT"
+    print -u2 "refusing E2 launch from a modified detached worktree: $E2_ACTIVE_CODE_ROOT"
     print -u2 "$worktree_status"
     return 1
   fi
@@ -261,8 +289,8 @@ function e2_prepare_runtime() {
     return 1
   fi
   mkdir -p "$CHECKPOINT_ROOT" "$WANDB_ROOT" "$LOG_ROOT" "$E2_OUTPUT"
-  cd "$CODE_ROOT"
-  export STACKPOMDP_CODE_ROOT="$CODE_ROOT"
+  cd "$E2_ACTIVE_CODE_ROOT"
+  export STACKPOMDP_CODE_ROOT="$E2_ACTIVE_CODE_ROOT"
   export STACKPOMDP_SPACE_INVADERS_ROM="$ROM"
   export PYTHONPATH=.
   export PYTHONNOUSERSITE=1
@@ -376,7 +404,7 @@ function e2_resolve_e1_gate() {
       source_kind=$(print -r -- "$choice" | jq -r '.source_kind')
       if [[ "$role" == seller \
           && "$source_kind" != "$E1_REQUIRED_SELLER_SOURCE_KIND" ]]; then
-        print "waiting for the authoritative threshold-residual v2 E1 seller gate"
+        print "waiting for authoritative E1 seller source $E1_REQUIRED_SELLER_SOURCE_KIND"
         sleep 20
         continue
       fi
@@ -416,7 +444,7 @@ function e2_load_e1_cohort() {
   typeset -g E1_SELLER_SOURCE_KIND=$(print -r -- "$choice" | jq -r '.e1_gates.seller.source_kind')
   if [[ "$E1_SELLER_SOURCE_KIND" != "$E1_REQUIRED_SELLER_SOURCE_KIND" ]]; then
     print -u2 \
-      "E2 cohort does not contain the required threshold-residual v2 seller"
+      "E2 cohort does not contain required seller source $E1_REQUIRED_SELLER_SOURCE_KIND"
     return 1
   fi
 }

@@ -8,7 +8,7 @@ trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 130' INT
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
 e2_prepare_runtime
-export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e2-threshold-residual-v2-seller-training
+export MPLCONFIGDIR="/private/tmp/mpl-stackpomdp-e2-${E2_NAMESPACE}-seller-training"
 
 e2_wait_for_both_e1_gates
 e2_role_paths seller
@@ -56,7 +56,7 @@ set +e
   --wandb \
   --wandb-project StackPOMDP \
   --wandb-group atari_clean_curriculum \
-  --wandb-job-type atari_e2_direct_threshold_residual_v3_seller_leader \
+  --wandb-job-type "$E2_WANDB_SELLER_JOB_TYPE" \
   --wandb-name "$E2_RUN_NAME" \
   2>&1 | tee "$E2_TRAIN_LOG"
 exit_code=$pipestatus[1]
