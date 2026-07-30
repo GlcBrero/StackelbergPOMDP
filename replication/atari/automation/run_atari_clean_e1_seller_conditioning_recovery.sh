@@ -20,11 +20,11 @@ function release_e1r_lock() {
   typeset -g E1R_LOCK_OWNED=0
 }
 function interrupt_e1r() {
-  local status="$1"
+  local exit_status="$1"
   trap - EXIT HUP INT TERM
   e1r_cancel_active_job
   release_e1r_lock || :
-  exit "$status"
+  exit "$exit_status"
 }
 trap 'release_e1r_lock' EXIT
 trap 'interrupt_e1r 129' HUP

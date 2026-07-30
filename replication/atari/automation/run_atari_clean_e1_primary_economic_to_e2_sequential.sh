@@ -26,7 +26,7 @@ function terminate_primary_e2_process_tree() {
 }
 
 function interrupt_primary_e2_pipeline() {
-  local status="$1"
+  local exit_status="$1"
   trap - EXIT HUP INT TERM
   if (( PRIMARY_E2_ACTIVE_STAGE_PID > 0 )); then
     terminate_primary_e2_process_tree "$PRIMARY_E2_ACTIVE_STAGE_PID" TERM
@@ -35,7 +35,7 @@ function interrupt_primary_e2_pipeline() {
   fi
   e2_release_active_locks || \
     print -u2 "failed to release an E2 lock after interrupt"
-  exit "$status"
+  exit "$exit_status"
 }
 
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"' EXIT

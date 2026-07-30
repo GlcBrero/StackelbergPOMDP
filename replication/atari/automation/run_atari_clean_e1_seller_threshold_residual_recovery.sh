@@ -24,25 +24,25 @@ stackpomdp_claim_owned_lock "$E1R2_LOCK" \
 typeset -g E1R2_LOCK_OWNED="$STACKPOMDP_LOCK_RESULT_OWNED"
 
 function release_e1r2_locks() {
-  local status=0
-  e2_release_transient_lock || status=$?
+  local cleanup_status=0
+  e2_release_transient_lock || cleanup_status=$?
   stackpomdp_release_owned_lock "$E1R2_LOCK" \
     "$STACKPOMDP_E1R2_LOCK_TOKEN" "$E1R2_LOCK_OWNED" \
-    "$E1R2_PROFILE_LABEL recovery" || status=$?
+    "$E1R2_PROFILE_LABEL recovery" || cleanup_status=$?
   typeset -g E1R2_LOCK_OWNED=0
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_GUARD_TOKEN" "$E1R2_GUARD_OWNED" \
-    "superseded v1 seller recovery guard" || status=$?
+    "superseded v1 seller recovery guard" || cleanup_status=$?
   typeset -g E1R2_GUARD_OWNED=0
-  return "$status"
+  return "$cleanup_status"
 }
 
 function interrupt_e1r2() {
-  local status="$1"
+  local exit_status="$1"
   trap - EXIT HUP INT TERM
   e1r2_cancel_active_job
   release_e1r2_locks || :
-  exit "$status"
+  exit "$exit_status"
 }
 
 trap 'release_e1r2_locks' EXIT

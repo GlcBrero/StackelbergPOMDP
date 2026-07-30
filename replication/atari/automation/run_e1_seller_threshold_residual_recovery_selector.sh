@@ -25,26 +25,26 @@ stackpomdp_claim_owned_lock "$E1R2_LOCK" \
 typeset -g E1R2_SELECTOR_LOCK_OWNED="$STACKPOMDP_LOCK_RESULT_OWNED"
 
 function release_e1r2_selector_lock() {
-  local status=0
-  e2_release_transient_lock || status=$?
+  local cleanup_status=0
+  e2_release_transient_lock || cleanup_status=$?
   stackpomdp_release_owned_lock "$E1R2_LOCK" \
     "$STACKPOMDP_E1R2_SELECTOR_TOKEN" "$E1R2_SELECTOR_LOCK_OWNED" \
-    "$E1R2_PROFILE_LABEL selector" || status=$?
+    "$E1R2_PROFILE_LABEL selector" || cleanup_status=$?
   typeset -g E1R2_SELECTOR_LOCK_OWNED=0
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_SELECTOR_GUARD_TOKEN" \
     "$E1R2_SELECTOR_GUARD_OWNED" \
-    "superseded v1 seller recovery selector guard" || status=$?
+    "superseded v1 seller recovery selector guard" || cleanup_status=$?
   typeset -g E1R2_SELECTOR_GUARD_OWNED=0
-  return "$status"
+  return "$cleanup_status"
 }
 
 function interrupt_e1r2_selector() {
-  local status="$1"
+  local exit_status="$1"
   trap - EXIT HUP INT TERM
   e1r2_cancel_active_job
   release_e1r2_selector_lock || :
-  exit "$status"
+  exit "$exit_status"
 }
 
 trap 'release_e1r2_selector_lock' EXIT
