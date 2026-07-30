@@ -989,6 +989,10 @@ def test_threshold_residual_launchers_enforce_stages_family_and_wandb():
     assert "E1R2_LEARNING_RATE=0.0001" in common
     assert "replication/atari/probe_atari_e1_seller_conditioning.py" in common
     assert "replication/atari/probe_atari_e1_seller_threshold_residual.py" in common
+    assert (
+        "replication/atari/probe_atari_e1_seller_direct_threshold_residual.py"
+        in common
+    )
     assert 'checkpoint_arguments+=(--checkpoint "$candidate")' in selector
     assert (
         'checkpoint_arguments+=(--checkpoint "$E1R2_WARMUP_BASE")'

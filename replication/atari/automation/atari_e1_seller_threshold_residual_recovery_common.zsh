@@ -112,6 +112,7 @@ function e1r2_require_scoped_clean() {
     replication/atari/evaluate_atari_meta_response_sb3.py \
     replication/atari/probe_atari_e1_seller_conditioning.py \
     replication/atari/probe_atari_e1_seller_threshold_residual.py \
+    replication/atari/probe_atari_e1_seller_direct_threshold_residual.py \
     replication/atari/sb3_common.py \
     replication/atari/automation \
     stackelberg_pomdp/atari)
