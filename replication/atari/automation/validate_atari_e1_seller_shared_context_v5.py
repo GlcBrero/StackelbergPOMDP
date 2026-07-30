@@ -208,6 +208,12 @@ V5_GRADIENT_NORM_KEYS = tuple(
     for group in ("seller_v5_live", "seller_v5_context", "seller_v5_critic")
     for when in ("pre", "post")
 )
+# ``clip_grad_norm_`` and the post-clip telemetry intentionally compute the
+# same float32 norm by two different reduction paths.  Their roundoff can
+# therefore differ by slightly more than 1e-6 even when clipping is correct.
+# This bound exceeds the largest audited discrepancy (1.30e-6) while still
+# rejecting any material norm increase or violation of the 0.5 cap.
+V5_GRADIENT_NORM_ATOL = 2.0e-6
 
 
 def canonical_sampler():
@@ -468,8 +474,8 @@ def _validate_v5_optimizer_telemetry(path, *, expected_optimizers):
                     f"v5 optimizer row {line_number} has invalid {group} norms",
                 )
                 _require(
-                    float(post) <= float(pre) + 1.0e-6
-                    and float(post) <= 0.5 + 1.0e-6,
+                    float(post) <= float(pre) + V5_GRADIENT_NORM_ATOL
+                    and float(post) <= 0.5 + V5_GRADIENT_NORM_ATOL,
                     f"v5 optimizer row {line_number} did not clip {group} "
                     "independently at 0.5",
                 )

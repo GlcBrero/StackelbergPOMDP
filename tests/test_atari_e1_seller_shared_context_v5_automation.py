@@ -253,6 +253,36 @@ def test_v5_optimizer_telemetry_gate_accepts_only_exact_rates_and_group_norms(
         "independent_group_gradient_clip_norm": 0.5,
     }
 
+    float32_roundoff = dict(row)
+    float32_roundoff["train/seller_v5_critic_grad_norm_pre"] = (
+        0.34057314693927765
+    )
+    float32_roundoff["train/seller_v5_critic_grad_norm_post"] = (
+        0.3405742794275284
+    )
+    _write_rows(path, [float32_roundoff])
+    validator._validate_v5_optimizer_telemetry(
+        path, expected_optimizers=1
+    )
+
+    material_increase = dict(row)
+    material_increase["train/seller_v5_critic_grad_norm_pre"] = 0.25
+    material_increase["train/seller_v5_critic_grad_norm_post"] = 0.25001
+    _write_rows(path, [material_increase])
+    with pytest.raises(ValueError, match="independently at 0.5"):
+        validator._validate_v5_optimizer_telemetry(
+            path, expected_optimizers=1
+        )
+
+    cap_violation = dict(row)
+    cap_violation["train/seller_v5_critic_grad_norm_pre"] = 0.8
+    cap_violation["train/seller_v5_critic_grad_norm_post"] = 0.50001
+    _write_rows(path, [cap_violation])
+    with pytest.raises(ValueError, match="independently at 0.5"):
+        validator._validate_v5_optimizer_telemetry(
+            path, expected_optimizers=1
+        )
+
     bad_rate = dict(row)
     bad_rate["train/context_learning_rate"] = 5.0e-4
     _write_rows(path, [bad_rate])
