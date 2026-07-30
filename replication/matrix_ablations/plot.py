@@ -262,8 +262,21 @@ def collect_runs(root):
                             row_number, progress_path
                         )
                     )
-                evaluation_window_size = 1
-                evaluation_window_capacity = 1
+                report_length = int(
+                    (config.get("es_protocol") or {}).get(
+                        "report_length", 0
+                    )
+                )
+                if report_length < 1:
+                    raise ValueError(
+                        "native RLlib ES config has invalid report_length: {}"
+                        .format(config_path)
+                    )
+                # Ray 2.0.1 ES appends one mean evaluation return per
+                # optimizer iteration, then reports the mean of the most
+                # recent ``report_length`` entries (es.py:481, 496).
+                evaluation_window_size = min(plot_step, report_length)
+                evaluation_window_capacity = report_length
             else:
                 evaluation_keys = {
                     "evaluation_target_step", "evaluation_mean"

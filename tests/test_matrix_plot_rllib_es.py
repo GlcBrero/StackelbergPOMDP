@@ -36,6 +36,7 @@ def _write_run(root, *, seed, implementation="ray_rllib_es_2_0_1"):
         "es_protocol": {
             "implementation": implementation,
             "stepsize": 0.01,
+            "report_length": 10,
         },
     }
     config_path = run_dir / "config.json"
@@ -80,6 +81,8 @@ def test_plot_collects_only_native_rllib_es_and_aligns_by_iteration(tmp_path):
         "native_episode_reward_mean_per_stage"
     }
     assert history["measured_timesteps_total"].nunique() == 4
+    assert set(history["evaluation_window_capacity"]) == {10}
+    assert set(history["evaluation_window_size"]) == {1, 2}
 
     matrix_plot.validate_history(history, {1, 2}, allow_incomplete=False)
     summary = matrix_plot.summarize(history)
