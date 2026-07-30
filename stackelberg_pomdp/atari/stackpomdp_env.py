@@ -9,12 +9,14 @@ import gym
 import numpy as np
 
 from stackelberg_pomdp.atari.e1_sampling import (
+    ALL_EQUAL_E1_SAMPLER,
     CONTEXT_STRATA,
     E1_SAMPLER_MODES,
     SCHEDULE_STRATA,
     TEMPORAL_MIX_E1_SAMPLER,
     UNIFORM_E1_SAMPLER,
     TemporalMarginalE1Sampler,
+    sample_all_equal_e1_context,
 )
 from stackelberg_pomdp.atari.gameplay import AtariGameplaySide
 from stackelberg_pomdp.atari.protocol import (
@@ -694,11 +696,14 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
                 f"unknown E1 sampler mode: {self.e1_sampler_mode!r}"
             )
         if (
-                self.e1_sampler_mode == TEMPORAL_MIX_E1_SAMPLER
+                self.e1_sampler_mode in (
+                    ALL_EQUAL_E1_SAMPLER,
+                    TEMPORAL_MIX_E1_SAMPLER,
+                )
                 and context_sampler is not None
         ):
             raise ValueError(
-                f"{TEMPORAL_MIX_E1_SAMPLER} supplies its own context and is "
+                f"{self.e1_sampler_mode} supplies its own context and is "
                 "incompatible with context_sampler"
             )
         self.rng = np.random.default_rng(self.config.seed + 74_711)
@@ -749,11 +754,14 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
         return [seed]
 
     def _sample_context(self):
-        values = (
-            self.rng.uniform(0.0, 1.0, size=NUM_TRADE_EVENTS)
-            if self.context_sampler is None
-            else self.context_sampler(self.rng)
-        )
+        if self.e1_sampler_mode == ALL_EQUAL_E1_SAMPLER:
+            values = sample_all_equal_e1_context(self.rng)
+        else:
+            values = (
+                self.rng.uniform(0.0, 1.0, size=NUM_TRADE_EVENTS)
+                if self.context_sampler is None
+                else self.context_sampler(self.rng)
+            )
         values = np.asarray(values, dtype=np.float32).reshape(-1)
         if values.shape != (NUM_TRADE_EVENTS,):
             raise ValueError("context sampler must return exactly five scalars")
@@ -834,7 +842,13 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
                 else "unconditional"
             )
             self.context_stratum = (
-                "external" if self.context_sampler is not None else "uniform"
+                "external"
+                if self.context_sampler is not None
+                else (
+                    "all_equal"
+                    if self.e1_sampler_mode == ALL_EQUAL_E1_SAMPLER
+                    else "uniform"
+                )
             )
         else:
             draw = self.temporal_sampler.sample()
@@ -899,6 +913,15 @@ class AtariFixedCommitmentResponseWrapper(gym.Wrapper):
             f"e1_context_stratum_per_env_count_{name}": int(count)
             for name, count in self.context_stratum_counts.items()
         })
+        if self.e1_sampler_mode == ALL_EQUAL_E1_SAMPLER:
+            sampler.update({
+                "e1_context_entries_all_equal": int(np.all(
+                    self.opponent_commitment == self.opponent_commitment[0]
+                )),
+                "e1_context_shared_value": float(
+                    self.opponent_commitment[0]
+                ),
+            })
         return {
             **base,
             **sampler,

@@ -7,13 +7,41 @@ set -euo pipefail
 # gate failure and stops the chain; operational failures retain their status.
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
 e2_claim_pipeline_lock
+typeset -gi PRIMARY_E2_ACTIVE_STAGE_PID=0
+
+function terminate_primary_e2_process_tree() {
+  local parent_pid="$1"
+  local signal_name="${2:-TERM}"
+  local children child
+  [[ "$parent_pid" == <-> ]] || return 0
+  children=$(pgrep -P "$parent_pid" 2>/dev/null) || children=""
+  for child in ${(f)children}; do
+    [[ "$child" == <-> ]] || continue
+    terminate_primary_e2_process_tree "$child" "$signal_name"
+  done
+  kill -s "$signal_name" "$parent_pid" 2>/dev/null || :
+}
+
+function interrupt_primary_e2_pipeline() {
+  local status="$1"
+  trap - EXIT HUP INT TERM
+  if (( PRIMARY_E2_ACTIVE_STAGE_PID > 0 )); then
+    terminate_primary_e2_process_tree "$PRIMARY_E2_ACTIVE_STAGE_PID" TERM
+    wait "$PRIMARY_E2_ACTIVE_STAGE_PID" 2>/dev/null || :
+    PRIMARY_E2_ACTIVE_STAGE_PID=0
+  fi
+  e2_release_active_locks || \
+    print -u2 "failed to release an E2 lock after interrupt"
+  exit "$status"
+}
+
 trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"' EXIT
-trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 129' HUP
-trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 130' INT
-trap 'e2_release_active_locks || print -u2 "failed to release an E2 lock"; exit 143' TERM
+trap 'interrupt_primary_e2_pipeline 129' HUP
+trap 'interrupt_primary_e2_pipeline 130' INT
+trap 'interrupt_primary_e2_pipeline 143' TERM
 
 typeset -gr PRIMARY_RELEASE="$AUTOMATION_DIR/run_atari_clean_e1_buyer_primary_economic_release.sh"
-typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_after_buyer_gate.sh"
+typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_conditioning_recovery.sh"
 typeset -gr E2_STAGE="$AUTOMATION_DIR/run_atari_clean_e2_sequential.sh"
 
 function run_required_stage() {
@@ -26,8 +54,11 @@ function run_required_stage() {
   }
   print "starting $label"
   set +e
-  "$launcher"
+  "$launcher" &
+  PRIMARY_E2_ACTIVE_STAGE_PID=$!
+  wait "$PRIMARY_E2_ACTIVE_STAGE_PID"
   stage_status=$?
+  PRIMARY_E2_ACTIVE_STAGE_PID=0
   set -e
   case "$stage_status" in
     0)
@@ -45,7 +76,7 @@ function run_required_stage() {
 }
 
 run_required_stage "E1 primary-economic buyer confirmation" "$PRIMARY_RELEASE"
-run_required_stage "E1 seller training and selection" "$SELLER_STAGE"
+run_required_stage "E1 seller conditioning recovery and selection" "$SELLER_STAGE"
 run_required_stage "sequential E2 buyer/seller training and selection" "$E2_STAGE"
 
 print "completed the primary-economic E1 -> seller -> E2 local pipeline"

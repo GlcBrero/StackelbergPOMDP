@@ -46,6 +46,7 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     make_atari_meta_response_env,
 )
 from stackelberg_pomdp.atari.e1_sampling import (
+    ALL_EQUAL_E1_SAMPLER,
     E1_SAMPLER_MODES,
     TEMPORAL_MIX_E1_SAMPLER,
     TEMPORAL_MIX_GAMEPLAY_HORIZON,
@@ -108,7 +109,9 @@ def _run_variant_suffix(args):
         )
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
-    if _e1_sampler_mode(args) != UNIFORM_E1_SAMPLER:
+    if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
+        parts.append("all_equal_v1")
+    elif _e1_sampler_mode(args) == TEMPORAL_MIX_E1_SAMPLER:
         parts.append("temporal_mix_v1")
     return "" if not parts else "_" + "_".join(parts)
 
@@ -651,11 +654,14 @@ def parse_args(argv=None):
                 f"--e1-sampler-mode {TEMPORAL_MIX_E1_SAMPLER} cannot be "
                 "combined with --fixed-event-steps"
             )
-        if args.eval_only:
-            parser.error(
-                "--eval-only always uses canonical uniform sampling; omit "
-                "the temporal sampler flag"
-            )
+    if (
+            args.e1_sampler_mode != UNIFORM_E1_SAMPLER
+            and args.eval_only
+    ):
+        parser.error(
+            "--eval-only always uses canonical uniform sampling; omit the "
+            "nonuniform sampler flag"
+        )
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
     if args.n_steps != transitions:

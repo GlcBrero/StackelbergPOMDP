@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from stackelberg_pomdp.atari.e1_sampling import (
+    ALL_EQUAL_E1_SAMPLER,
     CONTEXT_STRATUM_WEIGHTS,
     EARLY_FIFTH_INTERVAL,
     LATE_FIFTH_INTERVAL,
@@ -12,6 +13,7 @@ from stackelberg_pomdp.atari.e1_sampling import (
     TEMPORAL_MIX_E1_SAMPLER,
     TemporalMarginalE1Sampler,
     e1_sampler_provenance,
+    sample_all_equal_e1_context,
 )
 
 
@@ -22,6 +24,60 @@ def _draw_signature(draw):
         draw.schedule_stratum,
         draw.context_stratum,
     )
+
+
+def test_all_equal_sampler_is_exact_uniform_and_reproducible():
+    first_rng = np.random.default_rng(17)
+    second_rng = np.random.default_rng(17)
+    other_rng = np.random.default_rng(18)
+
+    first = np.stack([
+        sample_all_equal_e1_context(first_rng) for _ in range(20_000)
+    ])
+    second = np.stack([
+        sample_all_equal_e1_context(second_rng) for _ in range(20_000)
+    ])
+    other = np.stack([
+        sample_all_equal_e1_context(other_rng) for _ in range(20_000)
+    ])
+
+    assert first.shape == (20_000, 5)
+    assert first.dtype == np.float32
+    assert np.all(first == first[:, :1])
+    np.testing.assert_array_equal(first, second)
+    assert not np.array_equal(first, other)
+    assert np.all(first >= 0.0)
+    assert np.all(first <= 1.0)
+
+    shared = first[:, 0]
+    assert float(np.mean(shared)) == pytest.approx(0.5, abs=0.01)
+    assert float(np.var(shared)) == pytest.approx(1.0 / 12.0, abs=0.004)
+    for quantile in (0.1, 0.25, 0.5, 0.75, 0.9):
+        assert float(np.mean(shared <= quantile)) == pytest.approx(
+            quantile, abs=0.012
+        )
+
+
+def test_all_equal_sampler_provenance_is_explicit():
+    provenance = e1_sampler_provenance(
+        ALL_EQUAL_E1_SAMPLER,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+
+    assert provenance == {
+        "mode": ALL_EQUAL_E1_SAMPLER,
+        "gameplay_horizon": 200,
+        "event_tail_steps": 0,
+        "schedule": "ExactFiveEventSchedule.sample",
+        "context": "one Uniform(0,1) scalar replicated across five events",
+        "context_scalar_distribution": "Uniform(0,1)",
+        "context_replication_count": 5,
+        "commitment_entries_all_equal": True,
+        "per_event_marginal": "Uniform(0,1)",
+        "schedule_context_rngs_independent": False,
+        "legacy_sampling_path": False,
+    }
 
 
 def test_temporal_sampler_matches_marginals_bounds_and_independence():

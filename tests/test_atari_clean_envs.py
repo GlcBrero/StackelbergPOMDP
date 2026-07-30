@@ -11,6 +11,7 @@ from stackelberg_pomdp.atari.curriculum_env import (
     AtariCurriculumEnv,
 )
 from stackelberg_pomdp.atari.e1_sampling import (
+    ALL_EQUAL_E1_SAMPLER,
     CONTEXT_STRATA,
     SCHEDULE_STRATA,
     TEMPORAL_MIX_E1_SAMPLER,
@@ -445,6 +446,70 @@ def test_e1_temporal_sampler_reports_terminal_strata_and_per_env_counts():
         assert terminal_infos[1]["outer_transition_count"] == 205
     finally:
         env.close()
+
+
+def test_e1_all_equal_sampler_reports_exact_205_step_episode_provenance():
+    config = BilateralAtariConfig(
+        seed=37,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+        fixed_event_steps=None,
+    )
+    env = make_atari_meta_response_env(
+        controlled_role=SELLER,
+        config=config,
+        e1_sampler_mode=ALL_EQUAL_E1_SAMPLER,
+        controller_factory=_ZeroGameController,
+        side_factory=_FakeSide,
+    )
+    try:
+        shared_values = []
+        for episode_number in (1, 2, 3):
+            env.reset()
+            commitment = np.array(env.opponent_commitment, copy=True)
+            assert np.all(commitment == commitment[0])
+            shared_values.append(float(commitment[0]))
+
+            transition_count = 0
+            done = False
+            while not done:
+                _, _, done, info = env.step([0.0, 0.5])
+                transition_count += 1
+
+            assert transition_count == 205
+            assert info["outer_transition_count"] == 205
+            assert info["e1_sampler_mode"] == ALL_EQUAL_E1_SAMPLER
+            assert info["e1_sampler_episode_count_per_env"] == episode_number
+            assert info["e1_context_stratum"] == "all_equal"
+            assert info["e1_context_stratum_one_hot_all_equal"] == 1
+            assert info["e1_context_entries_all_equal"] == 1
+            assert info["e1_context_shared_value"] == float(commitment[0])
+            assert tuple(commitment) == info["opponent_commitment"]
+            assert sum(
+                info[f"e1_context_stratum_per_env_count_{name}"]
+                for name in CONTEXT_STRATA
+            ) == episode_number
+
+        assert len(set(shared_values)) == len(shared_values)
+    finally:
+        env.close()
+
+
+def test_e1_all_equal_sampler_owns_its_context():
+    config = BilateralAtariConfig(
+        seed=37,
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+    with np.testing.assert_raises_regex(ValueError, "context_sampler"):
+        make_atari_meta_response_env(
+            controlled_role=SELLER,
+            config=config,
+            context_sampler=lambda rng: np.zeros(5, dtype=np.float32),
+            e1_sampler_mode=ALL_EQUAL_E1_SAMPLER,
+            controller_factory=_ZeroGameController,
+            side_factory=_FakeSide,
+        )
 
 
 def test_e1_temporal_sampler_owns_both_episode_marginals():

@@ -1,4 +1,4 @@
-"""Opt-in episode sampling for the E1 temporal-value curriculum."""
+"""Canonical episode samplers for E1 opponent commitments and schedules."""
 
 from dataclasses import dataclass
 
@@ -9,8 +9,13 @@ from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
 
 
 UNIFORM_E1_SAMPLER = "uniform"
+ALL_EQUAL_E1_SAMPLER = "all-equal-v1"
 TEMPORAL_MIX_E1_SAMPLER = "temporal-marginal-v1"
-E1_SAMPLER_MODES = (UNIFORM_E1_SAMPLER, TEMPORAL_MIX_E1_SAMPLER)
+E1_SAMPLER_MODES = (
+    UNIFORM_E1_SAMPLER,
+    ALL_EQUAL_E1_SAMPLER,
+    TEMPORAL_MIX_E1_SAMPLER,
+)
 
 TEMPORAL_MIX_GAMEPLAY_HORIZON = 200
 SCHEDULE_STRATA = (
@@ -19,7 +24,7 @@ SCHEDULE_STRATA = (
     "late_fifth",
     "fixed",
 )
-CONTEXT_STRATA = ("uniform", "low_prefix", "external")
+CONTEXT_STRATA = ("uniform", "all_equal", "low_prefix", "external")
 SCHEDULE_STRATUM_WEIGHTS = {
     "unconditional": 0.50,
     "early_fifth": 0.25,
@@ -48,6 +53,22 @@ def e1_sampler_provenance(mode, *, gameplay_horizon, event_tail_steps=0):
             "context": "five independent Uniform(0,1) prices",
             "schedule_context_rngs_independent": False,
             "legacy_sampling_path": True,
+        }
+    if mode == ALL_EQUAL_E1_SAMPLER:
+        return {
+            "mode": mode,
+            "gameplay_horizon": horizon,
+            "event_tail_steps": tail_steps,
+            "schedule": "ExactFiveEventSchedule.sample",
+            "context": (
+                "one Uniform(0,1) scalar replicated across five events"
+            ),
+            "context_scalar_distribution": "Uniform(0,1)",
+            "context_replication_count": NUM_TRADE_EVENTS,
+            "commitment_entries_all_equal": True,
+            "per_event_marginal": "Uniform(0,1)",
+            "schedule_context_rngs_independent": False,
+            "legacy_sampling_path": False,
         }
     if horizon != TEMPORAL_MIX_GAMEPLAY_HORIZON:
         raise ValueError(
@@ -87,6 +108,13 @@ class E1SamplerDraw:
     opponent_commitment: np.ndarray
     schedule_stratum: str
     context_stratum: str
+
+
+def sample_all_equal_e1_context(rng):
+    """Draw one uniform scalar and repeat it at all five trade events."""
+
+    shared_value = np.float32(rng.uniform(0.0, 1.0))
+    return np.full(NUM_TRADE_EVENTS, shared_value, dtype=np.float32)
 
 
 class TemporalMarginalE1Sampler:
@@ -194,6 +222,7 @@ class TemporalMarginalE1Sampler:
 
 
 __all__ = [
+    "ALL_EQUAL_E1_SAMPLER",
     "CONTEXT_STRATA",
     "CONTEXT_STRATUM_WEIGHTS",
     "E1_SAMPLER_MODES",
@@ -208,4 +237,5 @@ __all__ = [
     "TemporalMarginalE1Sampler",
     "UNIFORM_E1_SAMPLER",
     "e1_sampler_provenance",
+    "sample_all_equal_e1_context",
 ]

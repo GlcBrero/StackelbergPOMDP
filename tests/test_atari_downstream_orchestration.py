@@ -600,6 +600,20 @@ def test_all_e2_lock_owners_install_signal_cleanup():
     )
     for launcher in launchers:
         source = (automation / launcher).read_text(encoding="utf-8")
+        if launcher == "run_atari_clean_e1_primary_economic_to_e2_sequential.sh":
+            assert "e2_claim_pipeline_lock" in source
+            assert "trap 'e2_release_active_locks || print -u2 " in source
+            assert "PRIMARY_E2_ACTIVE_STAGE_PID=$!" in source
+            assert 'wait "$PRIMARY_E2_ACTIVE_STAGE_PID"' in source
+            assert "terminate_primary_e2_process_tree" in source
+            for signal_name, exit_status in (
+                ("HUP", 129), ("INT", 130), ("TERM", 143),
+            ):
+                assert (
+                    f"trap 'interrupt_primary_e2_pipeline {exit_status}' "
+                    f"{signal_name}"
+                ) in source
+            continue
         assert (
             "e2_claim_pipeline_lock\n"
             "trap 'e2_release_active_locks || print -u2 "
@@ -717,7 +731,7 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
         'run_required_stage "E1 primary-economic buyer confirmation"'
     )
     seller_stage = master.index(
-        'run_required_stage "E1 seller training and selection"'
+        'run_required_stage "E1 seller conditioning recovery and selection"'
     )
     e2_stage = master.index(
         'run_required_stage "sequential E2 buyer/seller training and selection"'

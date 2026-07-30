@@ -28,6 +28,19 @@ E1_TEMPORAL_GATE_KIND = "atari_e1_buyer_temporal_contingency_gate"
 E1_TEMPORAL_FAMILY_KIND = "atari_e1_buyer_temporal_contingency_family"
 E1_TEMPORAL_ACTIVATION_KIND = "atari_e1_buyer_temporal_contingency_activation"
 E1_SELLER_GATE_KIND = "atari_e1_seller_selection_gate"
+E1_SELLER_RECOVERY_SOURCE_KIND = "seller_conditioning_recovery_v1"
+E1_SELLER_RECOVERY_ACTIVATION_NAME = (
+    "e1_seller_conditioning_recovery_activation_v1.json"
+)
+E1_SELLER_RECOVERY_REPORT_NAME = (
+    "e1_seller_conditioning_recovery_all6_selector_v2.json"
+)
+E1_SELLER_RECOVERY_GATE_NAME = (
+    "e1_seller_conditioning_recovery_all6_selector_v2.gate.json"
+)
+E1_SELLER_RECOVERY_MODULE_NAME = (
+    "validate_atari_e1_seller_conditioning_recovery.py"
+)
 E1_PRIMARY_PROTOCOL_NAME = (
     "e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json"
 )
@@ -780,6 +793,96 @@ def _validate_temporal_gate_support(
     }
 
 
+def _run_seller_recovery_validator(arguments: list[str]) -> dict:
+    """Run the active immutable recovery validator outside pinned E2 imports."""
+
+    module_path = (
+        Path(__file__).expanduser().parent / E1_SELLER_RECOVERY_MODULE_NAME
+    )
+    if module_path.is_symlink() or not module_path.resolve().is_file():
+        fail(f"seller-recovery validator is unavailable or unsafe: {module_path}")
+    module_path = module_path.resolve()
+    environment = os.environ.copy()
+    environment.pop("STACKPOMDP_CODE_ROOT", None)
+    environment["PYTHONPATH"] = str(AUTOMATION_SOURCE_ROOT)
+    environment["PYTHONNOUSERSITE"] = "1"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(module_path), *arguments],
+            cwd=str(AUTOMATION_SOURCE_ROOT),
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        stderr = getattr(error, "stderr", "")
+        fail(f"seller-recovery validation failed: {stderr or error}")
+    values = []
+    for line in completed.stdout.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("value"), dict):
+            values.append(record["value"])
+    if len(values) != 1:
+        fail("seller-recovery validator emitted no unique JSON result")
+    return values[0]
+
+
+def _validate_seller_recovery_gate(args: argparse.Namespace) -> dict:
+    """Normalize the authoritative recovery gate for generic E2 manifests."""
+
+    if args.role != "seller" or args.actor_loss_mode != "balanced":
+        fail("the seller-conditioning recovery gate is balanced-seller only")
+    report = Path(args.report).expanduser().resolve()
+    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    if report.name != E1_SELLER_RECOVERY_REPORT_NAME:
+        fail(f"unexpected seller-recovery report name: {report.name}")
+    gate_path = report.with_name(E1_SELLER_RECOVERY_GATE_NAME)
+    gate = _run_seller_recovery_validator([
+        "validate-selection-gate",
+        "--gate", str(gate_path),
+        "--report", str(report),
+        "--selected", str(checkpoint),
+    ])
+    digest = validate_zip(checkpoint)
+    expect_equal(
+        gate.get("selected_checkpoint", {}).get("sha256"),
+        digest,
+        label="seller-recovery selected SHA-256",
+    )
+    candidate_hashes = gate.get("training_family", {}).get(
+        "candidate_sha256"
+    )
+    if not isinstance(candidate_hashes, list) or len(candidate_hashes) != 6:
+        fail("seller-recovery gate does not bind six candidates")
+    support = {
+        "seller_conditioning_recovery_gate": {
+            "path": str(gate_path), "sha256": sha256_file(gate_path),
+        },
+        "training_family": dict(gate["training_family"]),
+        "activation": dict(gate["activation"]),
+        "prerequisite_failure": dict(gate["prerequisite_failure"]),
+        "warmup_probe": dict(gate["warmup_probe"]),
+        "seller_release": dict(gate["seller_release"]),
+    }
+    return {
+        "kind": "e1_gate",
+        "role": "seller",
+        "report": str(report),
+        "checkpoint": str(checkpoint),
+        "sha256": digest,
+        "actor_loss_mode": "balanced",
+        "source_kind": E1_SELLER_RECOVERY_SOURCE_KIND,
+        "sampler_mode": E1_UNIFORM_SAMPLER,
+        "support_artifacts": support,
+        "candidate_sha256": candidate_hashes,
+        "passed": True,
+    }
+
+
 def _run_primary_economic_gate_validator(
         *, protocol_path: Path, report_path: Path, gate_path: Path,
         selected_checkpoint: Path,
@@ -1100,6 +1203,12 @@ def _validate_e1_gate_core(
 
 def validate_e1_gate(args: argparse.Namespace) -> dict:
     if (
+            args.role == "seller"
+            and Path(args.report).expanduser().resolve().name
+            == E1_SELLER_RECOVERY_REPORT_NAME
+    ):
+        return _validate_seller_recovery_gate(args)
+    if (
             args.role == "buyer"
             and Path(args.report).expanduser().resolve().name
             == E1_PRIMARY_REPORT_NAME
@@ -1287,8 +1396,92 @@ def _discover_authoritative_primary_buyer_gate(
     }
 
 
+def _discover_authoritative_seller_recovery_gate(
+        *, output_dir: Path, override_report: str | None,
+) -> dict | None:
+    """Hide all older sellers once the recovery activation is published."""
+
+    activation_path = output_dir / E1_SELLER_RECOVERY_ACTIVATION_NAME
+    report_path = output_dir / E1_SELLER_RECOVERY_REPORT_NAME
+    gate_path = output_dir / E1_SELLER_RECOVERY_GATE_NAME
+    paths_exist = any(
+        os.path.lexists(path)
+        for path in (activation_path, report_path, gate_path)
+    )
+    if not os.path.lexists(activation_path):
+        if paths_exist:
+            fail(
+                "seller-recovery artifacts exist without their authoritative "
+                f"activation: {activation_path}"
+            )
+        return None
+    _run_seller_recovery_validator([
+        "validate-activation", "--activation", str(activation_path),
+    ])
+    if override_report:
+        override = Path(override_report).expanduser().resolve()
+        if override != report_path:
+            fail(
+                "the active seller-conditioning recovery forbids overriding "
+                f"the seller report: {override}"
+            )
+    if os.path.lexists(gate_path) and not os.path.lexists(report_path):
+        fail("seller-recovery gate exists before its required report")
+    if not os.path.lexists(report_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_RECOVERY_SOURCE_KIND,
+            "state": "recovery_training_or_selection_pending",
+        }
+    report = load_json(report_path)
+    passed = report.get("passed")
+    if type(passed) is not bool:
+        fail("authoritative seller-recovery report has no Boolean outcome")
+    expect_equal(report.get("role"), "seller", label="seller-recovery role")
+    expect_equal(
+        report.get("evaluator"), E1_EVALUATOR,
+        label="seller-recovery evaluator",
+    )
+    if passed is False:
+        fail("authoritative seller-conditioning recovery confirmation failed")
+    if not os.path.lexists(gate_path):
+        return {
+            "kind": "e1_gate_discovery",
+            "found": False,
+            "authoritative_source": E1_SELLER_RECOVERY_SOURCE_KIND,
+            "state": "recovery_gate_publication_pending",
+        }
+    gate = load_json(gate_path)
+    selected = Path(
+        gate.get("selected_checkpoint", {}).get("path", "")
+    ).expanduser().resolve()
+    validated = validate_e1_gate(argparse.Namespace(
+        report=str(report_path), checkpoint=str(selected), role="seller",
+        actor_loss_mode="balanced",
+    ))
+    return {
+        "kind": "e1_gate_discovery",
+        "found": True,
+        "role": "seller",
+        "report": validated["report"],
+        "checkpoint": validated["checkpoint"],
+        "checkpoint_sha256": validated["sha256"],
+        "actor_loss_mode": validated["actor_loss_mode"],
+        "source_kind": validated["source_kind"],
+        "sampler_mode": validated["sampler_mode"],
+        "support_artifacts": validated["support_artifacts"],
+    }
+
+
 def discover_e1_gate(args: argparse.Namespace) -> dict:
     output_dir = Path(args.output_dir).expanduser().resolve()
+    if args.role == "seller":
+        recovery = _discover_authoritative_seller_recovery_gate(
+            output_dir=output_dir, override_report=args.override_report,
+        )
+        if recovery is not None:
+            return recovery
     if args.role == "buyer":
         primary = _discover_authoritative_primary_buyer_gate(
             output_dir=output_dir, override_report=args.override_report,
@@ -1476,6 +1669,38 @@ def validated_e1_gate_cohort(path: Path) -> dict:
         fail("E2 gate cohort requires the authoritative primary-economic buyer")
     if gates["seller"]["actor_loss_mode"] != "balanced":
         fail("E2 gate cohort requires the balanced E1 seller")
+    # A published recovery activation supersedes every older seller gate,
+    # including one already cached in a cohort.  Re-discover the authoritative
+    # seller from the cohort report directory and require byte-identical gate
+    # provenance before an E2 restart may reuse the cohort.
+    seller_report = Path(gates["seller"]["report"]).expanduser().resolve()
+    recovery_activation = (
+        seller_report.parent / E1_SELLER_RECOVERY_ACTIVATION_NAME
+    )
+    if os.path.lexists(recovery_activation):
+        recovery = _discover_authoritative_seller_recovery_gate(
+            output_dir=seller_report.parent,
+            override_report=None,
+        )
+        if not isinstance(recovery, dict) or recovery.get("found") is not True:
+            fail(
+                "active seller-conditioning recovery has not released an "
+                "authoritative E2 gate"
+            )
+        comparisons = {
+            "report": recovery.get("report"),
+            "report_sha256": sha256_file(recovery.get("report", "")),
+            "checkpoint": recovery.get("checkpoint"),
+            "checkpoint_sha256": recovery.get("checkpoint_sha256"),
+            "actor_loss_mode": recovery.get("actor_loss_mode"),
+            "source_kind": recovery.get("source_kind"),
+            "sampler_mode": recovery.get("sampler_mode"),
+            "support_artifacts": recovery.get("support_artifacts"),
+        }
+        expect_equal(
+            gates["seller"], comparisons,
+            label="cohort seller versus authoritative recovery",
+        )
     _validate_cohort_seller_release_binding(value, gates)
     return value
 

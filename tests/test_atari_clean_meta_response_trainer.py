@@ -180,6 +180,37 @@ def test_temporal_sampler_parser_is_explicit_and_horizon_bound(tmp_path):
             trainer.parse_args([*common, *incompatible])
 
 
+def test_all_equal_sampler_parser_slug_and_eval_contract(tmp_path):
+    common = [
+        "--role",
+        SELLER,
+        "--e0b-checkpoint",
+        str(tmp_path / "e0b.zip"),
+        "--e1-sampler-mode",
+        trainer.ALL_EQUAL_E1_SAMPLER,
+        "--gameplay-horizon",
+        "17",
+        "--fixed-event-steps",
+        "0,2,4,6,8",
+        "--no-wandb",
+    ]
+    args = trainer.parse_args(common)
+
+    assert args.e1_sampler_mode == trainer.ALL_EQUAL_E1_SAMPLER
+    assert args.gameplay_horizon == 17
+    assert args.fixed_event_steps == (0, 2, 4, 6, 8)
+    assert args.n_steps == 22
+    assert "_all_equal_v1_seed1.zip" in args.checkpoint
+
+    with pytest.raises(SystemExit):
+        trainer.parse_args([
+            *common,
+            "--eval-only",
+            "--resume",
+            str(tmp_path / "e1.zip"),
+        ])
+
+
 def test_canonical_evaluation_args_never_reuse_temporal_training_sampler():
     marker = object()
     source = SimpleNamespace(
@@ -191,6 +222,18 @@ def test_canonical_evaluation_args_never_reuse_temporal_training_sampler():
     assert result.e1_sampler_mode == trainer.UNIFORM_E1_SAMPLER
     assert result.marker is marker
     assert source.e1_sampler_mode == trainer.TEMPORAL_MIX_E1_SAMPLER
+
+
+def test_canonical_evaluation_args_never_reuse_all_equal_training_sampler():
+    source = SimpleNamespace(
+        e1_sampler_mode=trainer.ALL_EQUAL_E1_SAMPLER,
+        marker=object(),
+    )
+    result = trainer.canonical_evaluation_args(source)
+
+    assert result is not source
+    assert result.e1_sampler_mode == trainer.UNIFORM_E1_SAMPLER
+    assert source.e1_sampler_mode == trainer.ALL_EQUAL_E1_SAMPLER
 
 
 def test_phase_balanced_parser_requires_a_full_rollout_batch(tmp_path):
@@ -568,6 +611,84 @@ def test_e1_resume_restores_economic_head_critic_and_optimizer(tmp_path):
         args.e0b_checkpoint = str(different_source)
         with pytest.raises(ValueError, match="differs from the source bound"):
             trainer._resumed_model(args, vec_env)
+    finally:
+        vec_env.close()
+
+
+def test_e1_all_equal_to_uniform_resume_preserves_optimizer_and_clock(
+        tmp_path,
+):
+    vec_env = DummyVecEnv([_StableProtocolEnv])
+    try:
+        _, e0b_checkpoint = _source_e0b_checkpoint(tmp_path, vec_env)
+        args = _trainer_args(role=SELLER, checkpoint=e0b_checkpoint)
+        args.e1_sampler_mode = trainer.ALL_EQUAL_E1_SAMPLER
+        args.gameplay_horizon = 200
+        args.event_tail_steps = 0
+        args.eval_only = False
+        source = trainer._new_model(args, vec_env)
+
+        source.policy.optimizer.zero_grad()
+        loss = sum(
+            parameter.square().sum()
+            for parameter in source.policy.parameters()
+            if parameter.requires_grad
+        )
+        loss.backward()
+        source.policy.optimizer.step()
+        source.num_timesteps = 400_160
+
+        source_parameters = dict(source.policy.named_parameters())
+        source_optimizer = {
+            name: {
+                key: (
+                    value.detach().clone()
+                    if torch.is_tensor(value)
+                    else value
+                )
+                for key, value in source.policy.optimizer.state[
+                    parameter
+                ].items()
+            }
+            for name, parameter in source_parameters.items()
+        }
+        checkpoint = tmp_path / "seller_e1_all_equal_stage.zip"
+        source.save(checkpoint)
+
+        args.resume = str(checkpoint)
+        args.e1_sampler_mode = trainer.UNIFORM_E1_SAMPLER
+        restored = trainer._resumed_model(args, vec_env)
+
+        assert restored.num_timesteps == 400_160
+        assert restored.atari_e1_sampler_provenance["mode"] == (
+            trainer.UNIFORM_E1_SAMPLER
+        )
+        history = restored.atari_e1_sampler_history
+        assert [stage["sampler"]["mode"] for stage in history] == [
+            trainer.ALL_EQUAL_E1_SAMPLER,
+            trainer.UNIFORM_E1_SAMPLER,
+        ]
+        assert history[0]["start_total_timesteps"] == 0
+        assert history[1]["start_total_timesteps"] == 400_160
+        assert history[1]["resume_sources"][0]["path"] == str(
+            checkpoint.resolve()
+        )
+
+        restored_parameters = dict(restored.policy.named_parameters())
+        assert restored_parameters.keys() == source_parameters.keys()
+        for name, source_parameter in source_parameters.items():
+            restored_parameter = restored_parameters[name]
+            assert torch.equal(source_parameter, restored_parameter)
+            restored_state = restored.policy.optimizer.state[
+                restored_parameter
+            ]
+            assert restored_state.keys() == source_optimizer[name].keys()
+            for key, source_value in source_optimizer[name].items():
+                restored_value = restored_state[key]
+                if torch.is_tensor(source_value):
+                    assert torch.equal(source_value, restored_value)
+                else:
+                    assert source_value == restored_value
     finally:
         vec_env.close()
 
