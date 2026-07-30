@@ -1,5 +1,6 @@
 """Regression tests for the gated seller-v5 automation namespace."""
 
+import inspect
 import json
 from pathlib import Path
 import re
@@ -73,6 +74,12 @@ def test_v5_automation_contract_is_exact_and_versioned():
     )
     assert validator.FORMAL_TIMESTEPS == 2_000_800
     assert validator.WANDB_PROJECT == "StackPOMDP"
+
+
+def test_scoped_clean_checks_cover_the_base_conditioning_probe():
+    dependency = "replication/atari/probe_atari_e1_seller_conditioning.py"
+    assert dependency in _shell_function(COMMON, "e1v5_require_scoped_clean")
+    assert dependency in inspect.getsource(validator._git_scoped_clean)
 
 
 def test_v5_probe_accepts_only_the_exact_shared_context_checkpoint_contract():

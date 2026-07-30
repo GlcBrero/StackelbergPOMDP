@@ -207,6 +207,7 @@ def _git_scoped_clean(code_root):
     paths = (
         "replication/atari/train_atari_meta_response_sb3.py",
         "replication/atari/evaluate_atari_meta_response_sb3.py",
+        "replication/atari/probe_atari_e1_seller_conditioning.py",
         "replication/atari/probe_atari_e1_seller_shared_context.py",
         "replication/atari/sb3_common.py",
         "replication/atari/automation/atari_e1_seller_shared_context_v5_common.zsh",
