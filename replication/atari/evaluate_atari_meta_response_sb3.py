@@ -374,10 +374,9 @@ def economic_architecture_training_flags(policy, economic_architecture):
 
     if economic_architecture is None:
         return {}
-    if economic_architecture.get("parameterization") == (
-            trainer.SELLER_TWO_BRANCH_BETA_V4
-    ):
-        return {"economic_architecture": trainer.SELLER_TWO_BRANCH_BETA_V4}
+    parameterization = economic_architecture.get("parameterization")
+    if parameterization in trainer.FROZEN_SELLER_ARCHITECTURES:
+        return {"economic_architecture": parameterization}
     flags = {"economic_threshold_residual": True}
     if bool(getattr(
             policy, "economic_threshold_residual_direct_input", False
@@ -429,6 +428,61 @@ def candidate_two_branch_initialization(model, economic_architecture):
         raise ValueError(
             "seller-v4 candidate has the wrong effective optimizer rates"
         )
+    return _jsonable(recorded)
+
+
+def candidate_shared_context_initialization(model, economic_architecture):
+    """Return and verify the exact seller-v5 initialization contract."""
+
+    active = getattr(model.policy, "economic_architecture", None) == (
+        trainer.SELLER_SHARED_CONTEXT_BETA_V5
+    )
+    recorded = getattr(
+        model, trainer.SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None
+    )
+    if not active:
+        if recorded is not None:
+            raise ValueError(
+                "non-v5 E1 candidate unexpectedly stores shared-context "
+                "initialization provenance"
+            )
+        return None
+    if not isinstance(economic_architecture, dict) or (
+            economic_architecture.get("parameterization")
+            != trainer.SELLER_SHARED_CONTEXT_BETA_V5
+    ):
+        raise ValueError("seller-v5 candidate has the wrong architecture")
+    expected = trainer.shared_context_initialization_provenance(model.policy)
+    if recorded != expected:
+        raise ValueError(
+            "seller-v5 candidate lacks exact initialization provenance"
+        )
+    trainer.validate_frozen_gameplay_actor(model)
+    groups = model.policy.optimizer.param_groups
+    group_names = [group.get("group_name") for group in groups]
+    if group_names != [
+            "seller_v5_live", "seller_v5_context", "seller_v5_critic",
+    ]:
+        raise ValueError("seller-v5 candidate has the wrong optimizer groups")
+    group_scales = [
+        float(group.get("lr_scale", np.nan)) for group in groups
+    ]
+    if not np.allclose(
+            group_scales, [1.0, 4.0, 0.2], rtol=0.0, atol=0.0
+    ):
+        raise ValueError("seller-v5 candidate has the wrong optimizer scales")
+    group_rates = [float(group["lr"]) for group in groups]
+    if not np.allclose(
+            group_rates, [5.0e-4, 2.0e-3, 1.0e-4],
+            rtol=0.0, atol=1.0e-12,
+    ):
+        raise ValueError(
+            "seller-v5 candidate has the wrong effective optimizer rates"
+        )
+    if not np.isclose(
+            float(model.max_grad_norm), 0.5, rtol=0.0, atol=0.0
+    ):
+        raise ValueError("seller-v5 candidate has the wrong gradient clip norm")
     return _jsonable(recorded)
 
 
@@ -512,6 +566,9 @@ def load_candidate(
     two_branch_initialization = candidate_two_branch_initialization(
         model, economic_architecture
     )
+    shared_context_initialization = candidate_shared_context_initialization(
+        model, economic_architecture
+    )
     policy.set_training_mode(False)
     training_config = {
         "algorithm": "PPO",
@@ -561,6 +618,10 @@ def load_candidate(
         if two_branch_initialization is not None:
             metadata["two_branch_initialization"] = (
                 two_branch_initialization
+            )
+        if shared_context_initialization is not None:
+            metadata["shared_context_initialization"] = (
+                shared_context_initialization
             )
     return model, metadata
 

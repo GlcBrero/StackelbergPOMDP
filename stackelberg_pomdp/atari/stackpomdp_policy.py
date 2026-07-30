@@ -40,7 +40,11 @@ from stackelberg_pomdp.atari.protocol import (
 ECONOMIC_ROLES = {"buyer", "seller", "gameplay"}
 ECONOMIC_INPUT_MODES = {"full", "event_only"}
 SELLER_TWO_BRANCH_BETA_V4 = "seller_two_branch_beta_v4"
-ECONOMIC_ARCHITECTURES = {SELLER_TWO_BRANCH_BETA_V4}
+SELLER_SHARED_CONTEXT_BETA_V5 = "seller_shared_context_beta_v5"
+ECONOMIC_ARCHITECTURES = {
+    SELLER_TWO_BRANCH_BETA_V4,
+    SELLER_SHARED_CONTEXT_BETA_V5,
+}
 BETA_PARAMETER_EPSILON = 1.0e-4
 THRESHOLD_RESIDUAL_BLEND_WEIGHT = 0.5
 THRESHOLD_RESIDUAL_EPSILON = 1.0e-4
@@ -236,6 +240,88 @@ def seller_two_branch_architecture_provenance():
     }
 
 
+def seller_shared_context_architecture_provenance():
+    """Return the exact shared-conditioning seller-v5 contract."""
+
+    return {
+        "schema": "stackpomdp.atari.economic_actor_architecture.v5",
+        "parameterization": SELLER_SHARED_CONTEXT_BETA_V5,
+        "economic_role": "seller",
+        "economic_input_mode": "full",
+        "gameplay_actor": {
+            "source": "certified E0b actor",
+            "modules": [
+                "features_extractor.visual",
+                "features_extractor.state_encoder",
+                "game_action_net",
+            ],
+            "frozen_during_e1": True,
+            "opponent_commitment_input_columns_zero": True,
+            "rollout_action": "deterministic masked argmax",
+            "economic_sampling_does_not_sample_game_action": True,
+        },
+        "live_base_branch": {
+            "input": (
+                "actor_state[ammo, projectile, normalized_time, trade_mode, "
+                "event_one_hot]"
+            ),
+            "input_features": OPPONENT_COMMITMENT_SLICE.start,
+            "commitment_masked": True,
+            "architecture": [32, 2],
+            "activation": "tanh",
+            "outputs": ["base_mean_logit", "raw_concentration"],
+        },
+        "shared_context_branch": {
+            "input_order": [
+                "2 * opponent_commitment - 1",
+                "event_one_hot",
+            ],
+            "input_features": 10,
+            "architecture": [32, 1],
+            "activation": "tanh",
+            "output": "event-conditioned_context_residual_logit",
+            "final_layer_initialization": "exact_zero",
+        },
+        "shared_current_threshold_skip": {
+            "formula": (
+                "slope * sum_i event_i * "
+                "(2 * opponent_commitment_i - 1)"
+            ),
+            "trainable_shared_slopes": 1,
+            "initialization": "exact_zero",
+            "fixed_anchor": False,
+        },
+        "mean": {
+            "formula": (
+                "epsilon + (1 - 2 epsilon) * sigmoid("
+                "base_mean_logit + shared_context_residual + "
+                "shared_current_threshold_skip)"
+            ),
+            "epsilon": THRESHOLD_RESIDUAL_EPSILON,
+        },
+        "concentration": {
+            "formula": "softplus(raw_concentration) + epsilon",
+            "epsilon": BETA_PARAMETER_EPSILON,
+            "context_conditioned": False,
+        },
+        "distribution": (
+            "Beta(mean * concentration, (1 - mean) * concentration)"
+        ),
+        "optimizer": {
+            "live_learning_rate": 5.0e-4,
+            "context_learning_rate": 2.0e-3,
+            "critic_learning_rate": 1.0e-4,
+            "independent_group_gradient_clip_norm": 0.5,
+            "gameplay_actor_in_optimizer": False,
+        },
+        "new_observation_fields": [],
+        "fixed_threshold_anchor": False,
+        "gameplay_action_selection": (
+            "deterministic_argmax_during_training_and_evaluation"
+        ),
+    }
+
+
 class CompositeAtariFeaturesExtractor(BaseFeaturesExtractor):
     """Nature CNN plus the shared 64-unit low-dimensional state encoder."""
 
@@ -319,8 +405,8 @@ class GatedCompositeAtariDistribution:
 
     Sampling and PPO credit use the same two gates.  Thus inactive coordinates
     are deterministic means/modes, and their log probabilities and entropies
-    are exactly zero.  Seller v4 additionally forces the game coordinate to
-    its masked categorical mode during stochastic training while retaining
+    are exactly zero.  Seller v4/v5 additionally force the game coordinate
+    to its masked categorical mode during stochastic training while retaining
     ordinary Beta sampling for credited economic decisions.  Cached trade
     replays use ``[0, 0]``: they remain in the rollout for reward propagation
     and value learning but are not new policy decisions.
@@ -460,12 +546,15 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                     "unknown opt-in economic architecture: "
                     f"{economic_architecture!r}"
                 )
-            if economic_architecture == SELLER_TWO_BRANCH_BETA_V4 and (
+            if economic_architecture in {
+                    SELLER_TWO_BRANCH_BETA_V4,
+                    SELLER_SHARED_CONTEXT_BETA_V5,
+            } and (
                     economic_role != "seller"
                     or economic_input_mode != "full"
             ):
                 raise ValueError(
-                    f"{SELLER_TWO_BRANCH_BETA_V4} is reserved for "
+                    f"{economic_architecture} is reserved for "
                     "full-input E1 seller response policies"
                 )
             if (
@@ -546,6 +635,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.fix_actions = False
         self.obs_action_map = {}
         self.v4_context_ablation = False
+        self.v5_context_ablation = False
 
     @staticmethod
     def _validate_spaces(observation_space, action_space):
@@ -595,7 +685,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.game_action_net = nn.Linear(
             actor_feature_dim, self.game_action_count
         )
-        if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+        if self.economic_architecture in {
+                SELLER_TWO_BRANCH_BETA_V4,
+                SELLER_SHARED_CONTEXT_BETA_V5,
+        }:
             live_features = OPPONENT_COMMITMENT_SLICE.start
             context_features = OPPONENT_COMMITMENT_SLICE.stop - (
                 OPPONENT_COMMITMENT_SLICE.start
@@ -605,14 +698,22 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                 nn.Tanh(),
             )
             self.economic_live_output = nn.Linear(32, 2)
-            self.economic_context_encoder = nn.Sequential(
-                nn.Linear(context_features, 32),
-                nn.Tanh(),
-            )
-            self.economic_context_output = nn.Linear(32, context_features)
-            self.economic_current_slopes = nn.Parameter(
-                th.zeros(context_features)
-            )
+            if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+                self.economic_context_encoder = nn.Sequential(
+                    nn.Linear(context_features, 32),
+                    nn.Tanh(),
+                )
+                self.economic_context_output = nn.Linear(32, context_features)
+                self.economic_current_slopes = nn.Parameter(
+                    th.zeros(context_features)
+                )
+            else:
+                self.economic_context_encoder = nn.Sequential(
+                    nn.Linear(2 * context_features, 32),
+                    nn.Tanh(),
+                )
+                self.economic_context_output = nn.Linear(32, 1)
+                self.economic_current_slope = nn.Parameter(th.zeros(()))
         elif self.economic_threshold_residual_direct_input:
             # Constructing a 65-input layer would otherwise advance Torch's
             # global RNG farther than the canonical 64-input head.  Isolate
@@ -640,7 +741,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.game_action_net.apply(partial(self.init_weights, gain=0.01))
         self.value_net.apply(partial(self.init_weights, gain=1.0))
         self._initialize_economic_head(mean=0.5, concentration=2.0)
-        if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+        if self.economic_architecture in {
+                SELLER_TWO_BRANCH_BETA_V4,
+                SELLER_SHARED_CONTEXT_BETA_V5,
+        }:
             self.freeze_gameplay_actor()
         # Keep this two-group layout in the policy constructor.  PyTorch can
         # restore optimizer state only when the saved and reconstructed group
@@ -673,10 +777,13 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         )
 
     def freeze_gameplay_actor(self):
-        """Freeze every transferred E0 actor parameter for seller v4."""
+        """Freeze every transferred E0 actor parameter for seller v4/v5."""
 
-        if self.economic_architecture != SELLER_TWO_BRANCH_BETA_V4:
-            raise ValueError("gameplay freezing is reserved for seller v4")
+        if self.economic_architecture not in {
+                SELLER_TWO_BRANCH_BETA_V4,
+                SELLER_SHARED_CONTEXT_BETA_V5,
+        }:
+            raise ValueError("gameplay freezing is reserved for seller v4/v5")
         for module in self.gameplay_actor_modules():
             for parameter in module.parameters():
                 parameter.requires_grad_(False)
@@ -692,6 +799,20 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             self.economic_context_encoder,
             self.economic_context_output,
         )
+
+    def v5_live_modules(self):
+        """Return the independent learned seller-v5 live-state modules."""
+
+        if self.economic_architecture != SELLER_SHARED_CONTEXT_BETA_V5:
+            raise ValueError("v5 live modules requested from another policy")
+        return self.economic_live_encoder, self.economic_live_output
+
+    def v5_context_modules(self):
+        """Return the learned seller-v5 shared context modules."""
+
+        if self.economic_architecture != SELLER_SHARED_CONTEXT_BETA_V5:
+            raise ValueError("v5 context modules requested from another policy")
+        return self.economic_context_encoder, self.economic_context_output
 
     def optimizer_parameter_groups(self, *, base_rate, pretrained_scale):
         """Return the stable visual/game and newly trained parameter groups."""
@@ -729,6 +850,50 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                     "lr": float(base_rate) * 0.2,
                     "lr_scale": 0.2,
                     "group_name": "seller_v4_critic",
+                },
+            ]
+        if self.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+            live = [
+                parameter
+                for module in self.v5_live_modules()
+                for parameter in module.parameters()
+            ]
+            context = [
+                parameter
+                for module in self.v5_context_modules()
+                for parameter in module.parameters()
+            ] + [self.economic_current_slope]
+            critic = list(self.value_net.parameters())
+            partition = live + context + critic
+            trainable = {
+                id(parameter)
+                for parameter in self.parameters()
+                if parameter.requires_grad
+            }
+            grouped = {id(parameter) for parameter in partition}
+            if grouped != trainable or len(grouped) != len(partition):
+                raise RuntimeError(
+                    "seller-v5 optimizer groups do not partition trainable "
+                    "parameters exactly"
+                )
+            return [
+                {
+                    "params": live,
+                    "lr": float(base_rate),
+                    "lr_scale": 1.0,
+                    "group_name": "seller_v5_live",
+                },
+                {
+                    "params": context,
+                    "lr": float(base_rate) * 4.0,
+                    "lr_scale": 4.0,
+                    "group_name": "seller_v5_context",
+                },
+                {
+                    "params": critic,
+                    "lr": float(base_rate) * 0.2,
+                    "lr_scale": 0.2,
+                    "group_name": "seller_v5_critic",
                 },
             ]
         protected = {
@@ -786,6 +951,8 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
         if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
             return seller_two_branch_architecture_provenance()
+        if self.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+            return seller_shared_context_architecture_provenance()
         if not self.economic_threshold_residual:
             return None
         if self.economic_threshold_residual_direct_input:
@@ -824,6 +991,12 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
     def _initialize_economic_head(self, *, mean, concentration):
         if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
             self._initialize_v4_economic_actor(
+                mean=mean,
+                concentration=concentration,
+            )
+            return
+        if self.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+            self._initialize_v5_economic_actor(
                 mean=mean,
                 concentration=concentration,
             )
@@ -885,6 +1058,34 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             self.economic_context_output.bias.zero_()
             self.economic_current_slopes.zero_()
 
+    def _initialize_v5_economic_actor(self, *, mean, concentration):
+        mean = float(mean)
+        concentration = float(concentration)
+        if not 0.0 < mean < 1.0:
+            raise ValueError("Beta initialization mean must lie in (0, 1)")
+        if concentration <= BETA_PARAMETER_EPSILON:
+            raise ValueError(
+                "seller-v5 Beta initialization concentration must exceed "
+                "epsilon"
+            )
+        for module in (
+                self.economic_live_encoder,
+                self.economic_context_encoder,
+        ):
+            module.apply(partial(self.init_weights, gain=1.0))
+        nn.init.zeros_(self.economic_live_output.weight)
+        nn.init.zeros_(self.economic_context_output.weight)
+        with th.no_grad():
+            self.economic_live_output.bias.copy_(th.tensor([
+                math.log(mean / (1.0 - mean)),
+                self._inverse_softplus(
+                    concentration - BETA_PARAMETER_EPSILON
+                ),
+            ], dtype=self.economic_live_output.bias.dtype,
+               device=self.economic_live_output.bias.device))
+            self.economic_context_output.bias.zero_()
+            self.economic_current_slope.zero_()
+
     def reset_economic_head(self, *, mean=0.5, concentration=2.0):
         """Reinitialize the economic actor without touching transferred play."""
 
@@ -933,7 +1134,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                     "economic-head transfer requires matching seller "
                     "economic parameterizations"
                 )
-            if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+            if self.economic_architecture in {
+                    SELLER_TWO_BRANCH_BETA_V4,
+                    SELLER_SHARED_CONTEXT_BETA_V5,
+            }:
                 modules.extend([
                     "economic_live_encoder",
                     "economic_live_output",
@@ -946,13 +1150,19 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             getattr(self, name).load_state_dict(
                 getattr(source, name).state_dict(), strict=True
             )
-        if include_economic and (
-                self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4
-        ):
+        if include_economic and self.economic_architecture in {
+                SELLER_TWO_BRANCH_BETA_V4,
+                SELLER_SHARED_CONTEXT_BETA_V5,
+        }:
             with th.no_grad():
-                self.economic_current_slopes.copy_(
-                    source.economic_current_slopes
-                )
+                if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+                    self.economic_current_slopes.copy_(
+                        source.economic_current_slopes
+                    )
+                else:
+                    self.economic_current_slope.copy_(
+                        source.economic_current_slope
+                    )
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         source_economic_role = source.economic_role
         source_economic_input_mode = source.economic_input_mode
@@ -1047,6 +1257,41 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         )
         return mean * concentration, (1.0 - mean) * concentration
 
+    def _v5_economic_parameters(self, processed):
+        """Return seller-v5 Beta parameters from live and shared context paths."""
+
+        state = processed[ACTOR_STATE].float().reshape(-1, ACTOR_STATE_DIM)
+        event = state[:, EVENT_SLICE]
+        commitment = state[:, OPPONENT_COMMITMENT_SLICE]
+        live = state[:, :OPPONENT_COMMITMENT_SLICE.start]
+        base = self.economic_live_output(
+            self.economic_live_encoder(live)
+        )
+        centered_commitment = 2.0 * commitment - 1.0
+        context_input = th.cat([centered_commitment, event], dim=1)
+        context_residual = self.economic_context_output(
+            self.economic_context_encoder(context_input)
+        ).reshape(-1)
+        centered_current_threshold = th.sum(
+            event * centered_commitment, dim=1
+        )
+        if self.v5_context_ablation:
+            context_residual = th.zeros_like(base[:, 0])
+            current_skip = th.zeros_like(base[:, 0])
+        else:
+            current_skip = (
+                self.economic_current_slope * centered_current_threshold
+            )
+        mean = (
+            THRESHOLD_RESIDUAL_EPSILON
+            + (1.0 - 2.0 * THRESHOLD_RESIDUAL_EPSILON)
+            * th.sigmoid(base[:, 0] + context_residual + current_skip)
+        )
+        concentration = (
+            nn.functional.softplus(base[:, 1]) + BETA_PARAMETER_EPSILON
+        )
+        return mean * concentration, (1.0 - mean) * concentration
+
     def set_v4_context_ablation(self, enabled):
         """Toggle an inference-only ablation of both learned context paths."""
 
@@ -1055,6 +1300,16 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         if not isinstance(enabled, (bool, np.bool_)):
             raise TypeError("v4 context ablation flag must be Boolean")
         self.v4_context_ablation = bool(enabled)
+        self.clear_obs_action_map()
+
+    def set_v5_context_ablation(self, enabled):
+        """Toggle an inference-only ablation of both shared context paths."""
+
+        if self.economic_architecture != SELLER_SHARED_CONTEXT_BETA_V5:
+            raise ValueError("v5 context ablation requires seller v5")
+        if not isinstance(enabled, (bool, np.bool_)):
+            raise TypeError("v5 context ablation flag must be Boolean")
+        self.v5_context_ablation = bool(enabled)
         self.clear_obs_action_map()
 
     def _distribution(self, observations, actor_parts=None):
@@ -1072,6 +1327,8 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         )
         if self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
             alpha, beta = self._v4_economic_parameters(processed)
+        elif self.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+            alpha, beta = self._v5_economic_parameters(processed)
         else:
             economic_features = self._economic_state_features(
                 processed, state_features
@@ -1086,7 +1343,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                 + BETA_PARAMETER_EPSILON
             )
         if (
-                self.economic_architecture != SELLER_TWO_BRANCH_BETA_V4
+                self.economic_architecture not in {
+                    SELLER_TWO_BRANCH_BETA_V4,
+                    SELLER_SHARED_CONTEXT_BETA_V5,
+                }
                 and self.economic_threshold_residual
         ):
             concentration = alpha + beta
@@ -1109,7 +1369,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             economic_beta=beta,
             action_credit=processed[ACTION_CREDIT],
             force_game_mode=(
-                self.economic_architecture == SELLER_TWO_BRANCH_BETA_V4
+                self.economic_architecture in {
+                    SELLER_TWO_BRANCH_BETA_V4,
+                    SELLER_SHARED_CONTEXT_BETA_V5,
+                }
             ),
         )
 
@@ -1203,10 +1466,12 @@ __all__ = [
     "ECONOMIC_ROLES",
     "ECONOMIC_ARCHITECTURES",
     "GatedCompositeAtariDistribution",
+    "SELLER_SHARED_CONTEXT_BETA_V5",
     "SELLER_TWO_BRANCH_BETA_V4",
     "StackPOMDPAtariPolicy",
     "current_event_threshold",
     "direct_threshold_residual_architecture_provenance",
+    "seller_shared_context_architecture_provenance",
     "seller_two_branch_architecture_provenance",
     "threshold_residual_architecture_provenance",
 ]

@@ -62,6 +62,7 @@ from stackelberg_pomdp.atari.protocol import (
 from stackelberg_pomdp.atari.stackpomdp_policy import (
     BETA_PARAMETER_EPSILON,
     ECONOMIC_ARCHITECTURES,
+    SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
 )
@@ -84,6 +85,13 @@ DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
 TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_two_branch_initialization_provenance"
 )
+SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_shared_context_initialization_provenance"
+)
+FROZEN_SELLER_ARCHITECTURES = {
+    SELLER_TWO_BRANCH_BETA_V4,
+    SELLER_SHARED_CONTEXT_BETA_V5,
+}
 
 
 def _actor_loss_mode(args):
@@ -149,6 +157,8 @@ def _run_variant_suffix(args):
         parts.append("threshold_residual_v1")
     if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4:
         parts.append("two_branch_v4")
+    elif _economic_architecture(args) == SELLER_SHARED_CONTEXT_BETA_V5:
+        parts.append("shared_context_v5")
     if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
         parts.append("all_equal_v1")
     elif _e1_sampler_mode(args) == TEMPORAL_MIX_E1_SAMPLER:
@@ -324,9 +334,7 @@ def _attach_training_code_revision(model, *, initialize):
 
     enabled = bool(getattr(
         model.policy, "economic_threshold_residual", False
-    )) or getattr(
-        model.policy, "economic_architecture", None
-    ) == SELLER_TWO_BRANCH_BETA_V4
+    )) or getattr(model.policy, "economic_architecture", None) is not None
     saved = getattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None)
     if not enabled:
         if saved is not None:
@@ -532,6 +540,122 @@ def _attach_two_branch_initialization_provenance(model, *, initialize):
     return recorded
 
 
+def shared_context_initialization_contract():
+    """Return the exact neutral seller-v5 initialization contract."""
+
+    return {
+        "schema": "stackpomdp.atari.e1_shared_context_initialization.v1",
+        "architecture_parameterization": SELLER_SHARED_CONTEXT_BETA_V5,
+        "live_input_features": OPPONENT_COMMITMENT_SLICE.start,
+        "live_hidden_features": 32,
+        "context_input_features": 2 * NUM_TRADE_EVENTS,
+        "context_input_order": ["centered_commitment", "event_one_hot"],
+        "context_hidden_features": 32,
+        "context_outputs": 1,
+        "initial_mean": SELLER_INIT_MEAN,
+        "initial_concentration": SELLER_INIT_CONCENTRATION,
+        "live_output_weight_initialized_exact_zero": True,
+        "live_mean_logit_bias": math.log(
+            SELLER_INIT_MEAN / (1.0 - SELLER_INIT_MEAN)
+        ),
+        "live_raw_concentration_bias": (
+            StackPOMDPAtariPolicy._inverse_softplus(
+                SELLER_INIT_CONCENTRATION - BETA_PARAMETER_EPSILON
+            )
+        ),
+        "context_output_weight_initialized_exact_zero": True,
+        "context_output_bias_initialized_exact_zero": True,
+        "current_slope_parameter": "economic_current_slope",
+        "current_slope_shape": [],
+        "current_slope_initialized_exact_zero": True,
+        "current_slope_trainable": True,
+        "fixed_threshold_anchor": False,
+        "gameplay_actor_frozen": True,
+        "optimizer_groups": [
+            {
+                "name": "seller_v5_live",
+                "learning_rate": 5.0e-4,
+                "gradient_clip_norm": 0.5,
+            },
+            {
+                "name": "seller_v5_context",
+                "learning_rate": 2.0e-3,
+                "gradient_clip_norm": 0.5,
+            },
+            {
+                "name": "seller_v5_critic",
+                "learning_rate": 1.0e-4,
+                "gradient_clip_norm": 0.5,
+            },
+        ],
+        "gradient_clipping": "independent_per_optimizer_group",
+    }
+
+
+def shared_context_initialization_provenance(policy):
+    """Return v5 initialization provenance without inspecting trained values."""
+
+    if getattr(policy, "economic_architecture", None) != (
+            SELLER_SHARED_CONTEXT_BETA_V5
+    ):
+        return None
+    return shared_context_initialization_contract()
+
+
+def _attach_shared_context_initialization_provenance(model, *, initialize):
+    """Persist v5 neutral initialization and reject cross-mode resumes."""
+
+    expected = shared_context_initialization_provenance(model.policy)
+    recorded = getattr(model, SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None)
+    if expected is None:
+        if recorded is not None:
+            raise ValueError(
+                "non-v5 E1 checkpoint unexpectedly stores shared-context "
+                "initialization provenance"
+            )
+        return None
+    if recorded is None:
+        if not initialize:
+            raise ValueError(
+                "shared-context E1 resume is missing initialization provenance"
+            )
+        policy = model.policy
+        zero_checks = (
+            policy.economic_live_output.weight,
+            policy.economic_context_output.weight,
+            policy.economic_context_output.bias,
+            policy.economic_current_slope,
+        )
+        if any(
+                not th.equal(values, th.zeros_like(values))
+                for values in zero_checks
+        ):
+            raise RuntimeError(
+                "seller-v5 live/context output weights, context bias, and "
+                "shared current slope must start at exact zero"
+            )
+        expected_live_bias = th.tensor([
+            expected["live_mean_logit_bias"],
+            expected["live_raw_concentration_bias"],
+        ], dtype=policy.economic_live_output.bias.dtype,
+           device=policy.economic_live_output.bias.device)
+        if not th.equal(policy.economic_live_output.bias, expected_live_bias):
+            raise RuntimeError(
+                "seller-v5 live-output bias does not implement the exact "
+                "neutral Beta initialization"
+            )
+        for module in policy.gameplay_actor_modules():
+            if any(parameter.requires_grad for parameter in module.parameters()):
+                raise RuntimeError("seller-v5 gameplay actor is not frozen")
+        setattr(model, SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, dict(expected))
+        return expected
+    if recorded != expected:
+        raise ValueError(
+            "shared-context E1 initialization differs from saved provenance"
+        )
+    return recorded
+
+
 def module_parameter_sha256(module):
     """Hash a module state without serialization or global RNG effects."""
 
@@ -560,22 +684,21 @@ def gameplay_actor_sha256(policy):
 
 
 def validate_frozen_gameplay_actor(model):
-    """Fail if seller-v4 gameplay changed after its recorded transfer."""
+    """Fail if frozen seller gameplay changed after its recorded transfer."""
 
-    if getattr(model.policy, "economic_architecture", None) != (
-            SELLER_TWO_BRANCH_BETA_V4
-    ):
+    architecture = getattr(model.policy, "economic_architecture", None)
+    if architecture not in FROZEN_SELLER_ARCHITECTURES:
         return None
     source = getattr(model, "atari_e1_source_provenance", None)
     if not isinstance(source, dict):
-        raise ValueError("seller-v4 checkpoint lacks E0b source provenance")
+        raise ValueError("frozen-gameplay seller lacks E0b source provenance")
     expected = source.get("frozen_gameplay_actor_sha256")
     actual = gameplay_actor_sha256(model.policy)
     if expected != actual:
-        raise RuntimeError("seller-v4 frozen gameplay actor changed")
+        raise RuntimeError("frozen seller gameplay actor changed")
     for module in model.policy.gameplay_actor_modules():
         if any(parameter.requires_grad for parameter in module.parameters()):
-            raise RuntimeError("seller-v4 gameplay actor became trainable")
+            raise RuntimeError("frozen seller gameplay actor became trainable")
     return actual
 
 
@@ -656,8 +779,8 @@ def _new_model(args, vec_env):
     # The opponent commitment is identically zero throughout E0a/E0b, so its
     # five input columns retain arbitrary initialization values.  Reset only
     # those previously unseen columns before E1.  Ordinary E1 policies may
-    # subsequently learn through them; seller v4 freezes this gameplay path
-    # and learns commitment effects only in its independent economic branch.
+    # subsequently learn through them; seller v4/v5 freeze this gameplay path
+    # and learn commitment effects only in independent economic branches.
     state_input = model.policy.features_extractor.state_encoder[0]
     with th.no_grad():
         state_input.weight[:, OPPONENT_COMMITMENT_SLICE].zero_()
@@ -670,19 +793,24 @@ def _new_model(args, vec_env):
             OPPONENT_COMMITMENT_SLICE.stop,
         )),
     }
-    if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4:
+    if _economic_architecture(args) in FROZEN_SELLER_ARCHITECTURES:
+        excluded_modules = [
+            "economic_live_encoder",
+            "economic_live_output",
+            "economic_context_encoder",
+            "economic_context_output",
+        ]
+        excluded_modules.append(
+            "economic_current_slopes"
+            if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4
+            else "economic_current_slope"
+        )
         provenance.update({
             "frozen_gameplay_actor": True,
             "frozen_gameplay_actor_sha256": gameplay_actor_sha256(
                 model.policy
             ),
-            "economic_transfer_excluded_modules": [
-                "economic_live_encoder",
-                "economic_live_output",
-                "economic_context_encoder",
-                "economic_context_output",
-                "economic_current_slopes",
-            ],
+            "economic_transfer_excluded_modules": excluded_modules,
         })
     model.atari_e1_source_provenance = dict(provenance)
     initialization = _economic_initialization(args)
@@ -699,6 +827,7 @@ def _new_model(args, vec_env):
         model, initialize=True
     )
     _attach_two_branch_initialization_provenance(model, initialize=True)
+    _attach_shared_context_initialization_provenance(model, initialize=True)
     _attach_training_code_revision(model, initialize=True)
     print({"actor_transfer": provenance}, flush=True)
     return model
@@ -842,15 +971,17 @@ def _resumed_model(args, vec_env):
         model, initialize=False
     )
     _attach_two_branch_initialization_provenance(model, initialize=False)
+    _attach_shared_context_initialization_provenance(model, initialize=False)
     _attach_training_code_revision(model, initialize=False)
-    if saved_economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+    if saved_economic_architecture in FROZEN_SELLER_ARCHITECTURES:
         expected_hashes = provenance.get("frozen_gameplay_actor_sha256")
         actual_hashes = gameplay_actor_sha256(policy)
         if expected_hashes != actual_hashes:
             raise ValueError(
-                "seller-v4 frozen gameplay actor differs from its source "
+                "frozen seller gameplay actor differs from its source "
                 "provenance"
             )
+    if saved_economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
         group_names = [
             group.get("group_name") for group in policy.optimizer.param_groups
         ]
@@ -865,6 +996,27 @@ def _resumed_model(args, vec_env):
         if not np.allclose(group_scales, [1.0, 0.2], rtol=0.0, atol=0.0):
             raise ValueError(
                 "seller-v4 optimizer learning-rate scales did not survive "
+                "checkpoint load"
+            )
+    elif saved_economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+        group_names = [
+            group.get("group_name") for group in policy.optimizer.param_groups
+        ]
+        if group_names != [
+                "seller_v5_live", "seller_v5_context", "seller_v5_critic",
+        ]:
+            raise ValueError(
+                "seller-v5 optimizer groups did not survive checkpoint load"
+            )
+        group_scales = [
+            float(group.get("lr_scale", np.nan))
+            for group in policy.optimizer.param_groups
+        ]
+        if not np.allclose(
+                group_scales, [1.0, 4.0, 0.2], rtol=0.0, atol=0.0
+        ):
+            raise ValueError(
+                "seller-v5 optimizer learning-rate scales did not survive "
                 "checkpoint load"
             )
     return model
@@ -1045,8 +1197,8 @@ def parse_args(argv=None):
         "--economic-architecture",
         choices=sorted(ECONOMIC_ARCHITECTURES),
         help=(
-            "opt-in versioned economic actor; seller_two_branch_beta_v4 "
-            "freezes E0 gameplay and trains independent live/context branches"
+            "opt-in versioned seller actor; v4 trains event-specific context "
+            "outputs and v5 trains one event-conditioned shared context route"
         ),
     )
     parser.add_argument(
@@ -1164,24 +1316,33 @@ def parse_args(argv=None):
                 "--economic-architecture cannot be combined with legacy "
                 "threshold-residual flags"
             )
-    if args.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+    if args.economic_architecture in FROZEN_SELLER_ARCHITECTURES:
         if args.e1_sampler_mode != UNIFORM_E1_SAMPLER:
             parser.error(
-                f"{SELLER_TWO_BRANCH_BETA_V4} requires independent "
+                f"{args.economic_architecture} requires independent "
                 "Uniform(0,1)^5 sampling from the first update"
             )
         if not math.isclose(
                 args.learning_rate, 5.0e-4, rel_tol=0.0, abs_tol=1.0e-12
         ):
             parser.error(
-                f"{SELLER_TWO_BRANCH_BETA_V4} requires "
+                f"{args.economic_architecture} requires "
                 "--learning-rate 5e-4"
             )
         if args.actor_loss_mode != PHASE_BALANCED_ACTOR_LOSS_MODE:
             parser.error(
-                f"{SELLER_TWO_BRANCH_BETA_V4} requires "
+                f"{args.economic_architecture} requires "
                 "--actor-loss-mode balanced"
             )
+    if (
+            args.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5
+            and not math.isclose(
+                args.max_grad_norm, 0.5, rel_tol=0.0, abs_tol=0.0
+            )
+    ):
+        parser.error(
+            f"{SELLER_SHARED_CONTEXT_BETA_V5} requires --max-grad-norm 0.5"
+        )
     if args.n_steps != transitions:
         parser.error(f"--n-steps must equal one full E1 episode ({transitions})")
     if args.batch_size <= 0 or args.batch_size > buffer_size:

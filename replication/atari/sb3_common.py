@@ -16,6 +16,9 @@ from stable_baselines3.common.utils import explained_variance
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from stackelberg_pomdp.atari.protocol import ACTION_CREDIT, NUM_TRADE_EVENTS
+from stackelberg_pomdp.atari.stackpomdp_policy import (
+    SELLER_SHARED_CONTEXT_BETA_V5,
+)
 
 
 WANDB_PROJECT = "StackPOMDP"
@@ -29,6 +32,12 @@ ACTOR_LOSS_MODES = (
 ACTOR_LOSS_MODE_ATTRIBUTE = "atari_actor_loss_mode"
 ECONOMIC_INIT_ATTRIBUTE = "atari_economic_head_initialization"
 OPTIMIZER_METRICS_ATTRIBUTE = "atari_last_optimizer_metrics"
+SELLER_V5_GRADIENT_CLIP_NORM = 0.5
+SELLER_V5_OPTIMIZER_GROUPS = (
+    "seller_v5_live",
+    "seller_v5_context",
+    "seller_v5_critic",
+)
 
 
 class ScaledLearningRatePPO(PPO):
@@ -43,10 +52,61 @@ class ScaledLearningRatePPO(PPO):
             for group in optimizer.param_groups:
                 group_rate = base_rate * float(group.get("lr_scale", 1.0))
                 group["lr"] = group_rate
-                if group.get("group_name") == "seller_v4_critic":
+                group_name = group.get("group_name")
+                if group_name in {"seller_v4_critic", "seller_v5_critic"}:
                     self.logger.record(
                         "train/critic_learning_rate", group_rate
                     )
+                elif group_name == "seller_v5_context":
+                    self.logger.record(
+                        "train/context_learning_rate", group_rate
+                    )
+
+
+def _gradient_norm(parameters):
+    """Return the finite L2 norm across the gradients in one parameter group."""
+
+    squared = None
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        value = th.sum(parameter.grad.detach().float().square())
+        squared = value if squared is None else squared + value
+    return 0.0 if squared is None else float(th.sqrt(squared).cpu().item())
+
+
+def clip_seller_v5_optimizer_group_gradients(
+        policy, *, max_grad_norm=SELLER_V5_GRADIENT_CLIP_NORM
+):
+    """Independently clip every seller-v5 optimizer group and report norms."""
+
+    if getattr(policy, "economic_architecture", None) != (
+            SELLER_SHARED_CONTEXT_BETA_V5
+    ):
+        raise ValueError("seller-v5 gradient clipping requires a seller-v5 policy")
+    if not np.isclose(
+            float(max_grad_norm), SELLER_V5_GRADIENT_CLIP_NORM,
+            rtol=0.0, atol=0.0,
+    ):
+        raise ValueError("seller-v5 requires independent gradient clipping at 0.5")
+    groups = list(policy.optimizer.param_groups)
+    names = tuple(group.get("group_name") for group in groups)
+    if names != SELLER_V5_OPTIMIZER_GROUPS:
+        raise RuntimeError(
+            "seller-v5 optimizer groups changed before gradient clipping: "
+            f"{names!r}"
+        )
+    metrics = {}
+    for group, name in zip(groups, names):
+        parameters = list(group["params"])
+        pre = th.nn.utils.clip_grad_norm_(
+            parameters, SELLER_V5_GRADIENT_CLIP_NORM
+        )
+        metrics[f"{name}_grad_norm_pre"] = float(
+            pre.detach().cpu().item() if th.is_tensor(pre) else pre
+        )
+        metrics[f"{name}_grad_norm_post"] = _gradient_norm(parameters)
+    return metrics
 
 
 def model_actor_loss_mode(model):
@@ -210,6 +270,20 @@ def phase_balanced_actor_terms(
 class PhaseBalancedPPO(ScaledLearningRatePPO):
     """PPO with independent active-row means for the two Atari actor heads."""
 
+    def _clip_policy_gradients(self):
+        """Use independent clipping only for the versioned seller-v5 actor."""
+
+        if getattr(self.policy, "economic_architecture", None) == (
+                SELLER_SHARED_CONTEXT_BETA_V5
+        ):
+            return clip_seller_v5_optimizer_group_gradients(
+                self.policy, max_grad_norm=self.max_grad_norm
+            )
+        th.nn.utils.clip_grad_norm_(
+            self.policy.parameters(), self.max_grad_norm
+        )
+        return {}
+
     def train(self):
         full_rollout_rows = (
             int(self.rollout_buffer.buffer_size)
@@ -310,9 +384,9 @@ class PhaseBalancedPPO(ScaledLearningRatePPO):
 
                 self.policy.optimizer.zero_grad()
                 loss.backward()
-                th.nn.utils.clip_grad_norm_(
-                    self.policy.parameters(), self.max_grad_norm
-                )
+                gradient_metrics = self._clip_policy_gradients()
+                for name, value in gradient_metrics.items():
+                    metrics[name].append(float(value))
                 self.policy.optimizer.step()
 
             self._n_updates += 1
@@ -362,6 +436,13 @@ class PhaseBalancedPPO(ScaledLearningRatePPO):
                 "inactive_actor_rows",
         ):
             self.logger.record(f"train/{name}", np.mean(metrics[name]))
+        for name in (
+                f"{group_name}_grad_norm_{when}"
+                for group_name in SELLER_V5_OPTIMIZER_GROUPS
+                for when in ("pre", "post")
+        ):
+            if metrics[name]:
+                self.logger.record(f"train/{name}", np.mean(metrics[name]))
         if hasattr(self.policy, "log_std"):
             self.logger.record(
                 "train/std", th.exp(self.policy.log_std).mean().item()
@@ -388,11 +469,25 @@ class PhaseBalancedPPO(ScaledLearningRatePPO):
             ])),
         }
         for group in self.policy.optimizer.param_groups:
-            if group.get("group_name") == "seller_v4_economic":
+            group_name = group.get("group_name")
+            if group_name in {"seller_v4_economic", "seller_v5_live"}:
                 optimizer_metrics["train/learning_rate"] = float(group["lr"])
-            elif group.get("group_name") == "seller_v4_critic":
+            elif group_name == "seller_v5_context":
+                optimizer_metrics["train/context_learning_rate"] = float(
+                    group["lr"]
+                )
+            elif group_name in {"seller_v4_critic", "seller_v5_critic"}:
                 optimizer_metrics["train/critic_learning_rate"] = float(
                     group["lr"]
+                )
+        for name in (
+                f"{group_name}_grad_norm_{when}"
+                for group_name in SELLER_V5_OPTIMIZER_GROUPS
+                for when in ("pre", "post")
+        ):
+            if metrics[name]:
+                optimizer_metrics[f"train/{name}"] = float(
+                    np.mean(metrics[name])
                 )
         for name in (
                 "game_policy_loss",
