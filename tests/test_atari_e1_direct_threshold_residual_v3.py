@@ -385,6 +385,22 @@ def test_v2_and_ordinary_defaults_remain_without_the_v3_field():
     assert ordinary.economic_threshold_residual_direct_input is False
     assert ordinary.economic_architecture_provenance() is None
     assert ordinary.economic_head[0].in_features == 64
+    v2_flags = evaluator.economic_architecture_training_flags(
+        pure64, pure64.economic_architecture_provenance()
+    )
+    assert v2_flags == {"economic_threshold_residual": True}
+    assert "economic_threshold_residual_direct_input" not in v2_flags
+    assert evaluator.economic_architecture_training_flags(
+        ordinary, ordinary.economic_architecture_provenance()
+    ) == {}
+
+    direct = _policy(direct=True)
+    assert evaluator.economic_architecture_training_flags(
+        direct, direct.economic_architecture_provenance()
+    ) == {
+        "economic_threshold_residual": True,
+        "economic_threshold_residual_direct_input": True,
+    }
 
 
 def test_shared_recovery_entrypoints_are_executable():

@@ -360,6 +360,19 @@ def candidate_direct_threshold_initialization(
     return _jsonable(recorded)
 
 
+def economic_architecture_training_flags(policy, economic_architecture):
+    """Return versioned flags without changing the immutable v2 schema."""
+
+    if economic_architecture is None:
+        return {}
+    flags = {"economic_threshold_residual": True}
+    if bool(getattr(
+            policy, "economic_threshold_residual_direct_input", False
+    )):
+        flags["economic_threshold_residual_direct_input"] = True
+    return flags
+
+
 def load_candidate(
         path,
         *,
@@ -463,13 +476,9 @@ def load_candidate(
         "critic_hidden": int(policy.critic_hidden),
         "pretrained_lr_scale": float(policy.pretrained_lr_scale),
     }
-    if economic_architecture is not None:
-        training_config["economic_threshold_residual"] = True
-        training_config["economic_threshold_residual_direct_input"] = bool(
-            getattr(
-                policy, "economic_threshold_residual_direct_input", False
-            )
-        )
+    training_config.update(economic_architecture_training_flags(
+        policy, economic_architecture
+    ))
     metadata = {
         "path": str(reported_path),
         "sha256": digest,
