@@ -140,7 +140,7 @@ def configure_protocol(name):
         f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_uniform_formal.zip"
     )
     GATE_NAME = f"e1_seller_{TOKEN}_diagnostics_gate.json"
-    WANDB_JOB_TYPE = f"atari_e1_seller_{TOKEN}_uniform_formal"
+    WANDB_JOB_TYPE = f"atari_e1_seller_v5_{ACTIVE_PROTOCOL}_formal"
     WANDB_NAME = (
         f"atari_clean_e1_seller_{TOKEN}_uniform_seed1_2000800_local"
     )

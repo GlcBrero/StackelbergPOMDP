@@ -78,10 +78,8 @@ def test_v5_automation_contract_is_exact_and_versioned():
     )
     assert validator.FORMAL_TIMESTEPS == 2_000_800
     assert validator.WANDB_PROJECT == "StackPOMDP"
-    assert validator.WANDB_JOB_TYPE == (
-        "atari_e1_seller_conditioning_recovery_v5_shared_context_v1_"
-        "uniform_formal"
-    )
+    assert validator.WANDB_JOB_TYPE == "atari_e1_seller_v5_standard_v1_formal"
+    assert len(validator.WANDB_JOB_TYPE) <= 64
     assert validator.WANDB_NAME == (
         "atari_clean_e1_seller_conditioning_recovery_v5_shared_context_v1_"
         "uniform_seed1_2000800_local"
@@ -133,9 +131,9 @@ def test_v5_exposure_v2_changes_only_fresh_exposure_and_holdout_namespace():
             validator.V1_NEGATIVE_EVIDENCE
         )
         assert validator.WANDB_JOB_TYPE == (
-            "atari_e1_seller_conditioning_recovery_v5_shared_context_"
-            "exposure_v2_uniform_formal"
+            "atari_e1_seller_v5_exposure_v2_formal"
         )
+        assert len(validator.WANDB_JOB_TYPE) <= 64
         assert validator.WANDB_NAME == (
             "atari_clean_e1_seller_conditioning_recovery_v5_shared_context_"
             "exposure_v2_uniform_seed1_2000800_local"

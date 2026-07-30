@@ -53,7 +53,7 @@ typeset -gr E1V5_FORMAL_TRACE="${E1V5_FORMAL%.zip}.training.jsonl"
 typeset -gr E1V5_FORMAL_EVALUATION="${E1V5_FORMAL%.zip}.evaluation.json"
 typeset -gr E1V5_FORMAL_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_formal_seed1_2000800_local.log"
 typeset -gr E1V5_WANDB_NAME=atari_clean_e1_seller_${E1V5_TOKEN}_uniform_seed1_2000800_local
-typeset -gr E1V5_WANDB_JOB_TYPE=atari_e1_seller_${E1V5_TOKEN}_uniform_formal
+typeset -gr E1V5_WANDB_JOB_TYPE=atari_e1_seller_v5_${E1V5_PROTOCOL}_formal
 typeset -gr E1V5_LOCK=/private/tmp/stackpomdp-atari-e1-seller-${E1V5_TOKEN//_/-}.lock
 typeset -gra E1V5_FORMAL_STEPS=(400160 800320 1200480 1600640 2000800)
 
