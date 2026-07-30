@@ -1,10 +1,13 @@
 #!/bin/zsh
 set -euo pipefail
 
-# One unattended local chain: certify the preregistered primary-economic E1
-# buyer, train/select the E1 seller it releases, then run both E2 leaders. All
-# trainers retain their own live W&B configuration. Exit 2 is a scientific
-# gate failure and stops the chain; operational failures retain their status.
+# One unattended local chain: validate the immutable primary-economic E1 buyer
+# release while activating the seller recovery, train/select that E1 seller,
+# then run both E2 leaders. The buyer release is intentionally not re-run: its
+# protocol is pinned to its original evaluator revision, while the seller
+# recovery requires its exact release SHA and all bound bytes. All trainers
+# retain their own live W&B configuration. Exit 2 is a scientific gate failure
+# and stops the chain; operational failures retain their status.
 source "${0:A:h}/atari_e2_pipeline_common.zsh"
 e2_claim_pipeline_lock
 typeset -gi PRIMARY_E2_ACTIVE_STAGE_PID=0
@@ -40,7 +43,6 @@ trap 'interrupt_primary_e2_pipeline 129' HUP
 trap 'interrupt_primary_e2_pipeline 130' INT
 trap 'interrupt_primary_e2_pipeline 143' TERM
 
-typeset -gr PRIMARY_RELEASE="$AUTOMATION_DIR/run_atari_clean_e1_buyer_primary_economic_release.sh"
 typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_conditioning_recovery.sh"
 typeset -gr E2_STAGE="$AUTOMATION_DIR/run_atari_clean_e2_sequential.sh"
 
@@ -75,7 +77,6 @@ function run_required_stage() {
   esac
 }
 
-run_required_stage "E1 primary-economic buyer confirmation" "$PRIMARY_RELEASE"
 run_required_stage "E1 seller conditioning recovery and selection" "$SELLER_STAGE"
 run_required_stage "sequential E2 buyer/seller training and selection" "$E2_STAGE"
 

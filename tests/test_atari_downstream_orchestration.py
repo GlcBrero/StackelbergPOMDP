@@ -727,17 +727,15 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
         automation
         / "run_atari_clean_e1_primary_economic_to_e2_sequential.sh"
     ).read_text(encoding="utf-8")
-    buyer_stage = master.index(
-        'run_required_stage "E1 primary-economic buyer confirmation"'
-    )
     seller_stage = master.index(
         'run_required_stage "E1 seller conditioning recovery and selection"'
     )
     e2_stage = master.index(
         'run_required_stage "sequential E2 buyer/seller training and selection"'
     )
-    assert master.index("e2_claim_pipeline_lock") < buyer_stage
-    assert buyer_stage < seller_stage < e2_stage
+    assert master.index("e2_claim_pipeline_lock") < seller_stage < e2_stage
+    assert "run_atari_clean_e1_buyer_primary_economic_release.sh" not in master
+    assert "exact release SHA and all bound bytes" in master
     assert "return 2" in master
     assert "downstream stages remain closed" in master
 
