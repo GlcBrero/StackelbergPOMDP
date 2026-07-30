@@ -7,8 +7,27 @@ source "${${(%):-%N}:A:h}/atari_e2_pipeline_common.zsh"
 
 typeset -gr E1V5_SOURCE_ROOT="$AUTOMATION_ROOT"
 typeset -gr E1V5_PYTHON="$PYTHON"
-typeset -gr E1V5_TOKEN=conditioning_recovery_v5_shared_context_v1
-typeset -gr E1V5_SOURCE_KIND=seller_conditioning_recovery_v5_shared_context_v1
+typeset -gr E1V5_PROTOCOL="${STACKPOMDP_E1V5_PROTOCOL:-standard_v1}"
+case "$E1V5_PROTOCOL" in
+  standard_v1)
+    typeset -gr E1V5_TOKEN=conditioning_recovery_v5_shared_context_v1
+    typeset -gr E1V5_SOURCE_KIND=seller_conditioning_recovery_v5_shared_context_v1
+    typeset -gr E1V5_SMOKE_TIMESTEPS=20500
+    typeset -gr E1V5_PREFLIGHT_TIMESTEPS=82000
+    typeset -gra E1V5_VALIDATOR_PROTOCOL_ARGS=()
+    ;;
+  exposure_v2)
+    typeset -gr E1V5_TOKEN=conditioning_recovery_v5_shared_context_exposure_v2
+    typeset -gr E1V5_SOURCE_KIND=seller_conditioning_recovery_v5_shared_context_exposure_v2
+    typeset -gr E1V5_SMOKE_TIMESTEPS=20500
+    typeset -gr E1V5_PREFLIGHT_TIMESTEPS=400160
+    typeset -gra E1V5_VALIDATOR_PROTOCOL_ARGS=(--protocol exposure_v2)
+    ;;
+  *)
+    print -u2 -- "unknown v5 seller exposure protocol: $E1V5_PROTOCOL"
+    return 1
+    ;;
+esac
 typeset -gr E1V5_ARCHITECTURE=seller_shared_context_beta_v5
 typeset -gr E1V5_E0B="$CHECKPOINT_ROOT/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip"
 typeset -gr E1V5_SELLER_RELEASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_seed1_firefix_retrain.buyer_gate.json"
@@ -17,23 +36,23 @@ typeset -gr E1V5_VALIDATOR_RELATIVE=replication/atari/automation/validate_atari_
 typeset -gr E1V5_SMOKE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1V5_TOKEN}_seed1_uniform_mechanics_smoke.zip"
 typeset -gr E1V5_SMOKE_TRACE="${E1V5_SMOKE%.zip}.training.jsonl"
 typeset -gr E1V5_SMOKE_EVALUATION="${E1V5_SMOKE%.zip}.evaluation.json"
-typeset -gr E1V5_SMOKE_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_mechanics_smoke_seed1_20500_local.log"
+typeset -gr E1V5_SMOKE_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_mechanics_smoke_seed1_${E1V5_SMOKE_TIMESTEPS}_local.log"
 
 typeset -gr E1V5_PREFLIGHT="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1V5_TOKEN}_seed1_uniform_conditioning_preflight.zip"
 typeset -gr E1V5_PREFLIGHT_TRACE="${E1V5_PREFLIGHT%.zip}.training.jsonl"
 typeset -gr E1V5_PREFLIGHT_EVALUATION="${E1V5_PREFLIGHT%.zip}.evaluation.json"
 typeset -gr E1V5_PREFLIGHT_PROBE="$E1_OUTPUT/e1_seller_${E1V5_TOKEN}_uniform_conditioning_preflight_probe.json"
 typeset -gr E1V5_PREFLIGHT_BEHAVIOR="$E1_OUTPUT/e1_seller_${E1V5_TOKEN}_uniform_conditioning_preflight_behavior.json"
-typeset -gr E1V5_PREFLIGHT_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_conditioning_preflight_seed1_82000_local.log"
+typeset -gr E1V5_PREFLIGHT_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_conditioning_preflight_seed1_${E1V5_PREFLIGHT_TIMESTEPS}_local.log"
 
 typeset -gr E1V5_GATE="$E1_OUTPUT/e1_seller_${E1V5_TOKEN}_diagnostics_gate.json"
 typeset -gr E1V5_FORMAL="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1V5_TOKEN}_seed1_uniform_formal.zip"
 typeset -gr E1V5_FORMAL_TRACE="${E1V5_FORMAL%.zip}.training.jsonl"
 typeset -gr E1V5_FORMAL_EVALUATION="${E1V5_FORMAL%.zip}.evaluation.json"
 typeset -gr E1V5_FORMAL_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1V5_TOKEN}_uniform_formal_seed1_2000800_local.log"
-typeset -gr E1V5_WANDB_NAME=atari_clean_e1_seller_conditioning_recovery_v5_shared_context_v1_uniform_seed1_2000800_local
-typeset -gr E1V5_WANDB_JOB_TYPE=atari_e1_seller_conditioning_recovery_v5_shared_context_v1_uniform_formal
-typeset -gr E1V5_LOCK=/private/tmp/stackpomdp-atari-e1-seller-conditioning-recovery-v5-shared-context-v1.lock
+typeset -gr E1V5_WANDB_NAME=atari_clean_e1_seller_${E1V5_TOKEN}_uniform_seed1_2000800_local
+typeset -gr E1V5_WANDB_JOB_TYPE=atari_e1_seller_${E1V5_TOKEN}_uniform_formal
+typeset -gr E1V5_LOCK=/private/tmp/stackpomdp-atari-e1-seller-${E1V5_TOKEN//_/-}.lock
 typeset -gra E1V5_FORMAL_STEPS=(400160 800320 1200480 1600640 2000800)
 
 typeset -g E1V5_CODE_ROOT="$E1V5_SOURCE_ROOT"
@@ -76,6 +95,7 @@ function e1v5_require_scoped_clean() {
     replication/atari/sb3_common.py \
     replication/atari/automation/atari_e1_seller_shared_context_v5_common.zsh \
     replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5.sh \
+    replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5_exposure_v2.sh \
     replication/atari/automation/validate_atari_e1_seller_shared_context_v5.py \
     replication/atari/automation/atari_e2_pipeline_common.zsh \
     replication/atari/automation/validate_atari_e1_seller_conditioning_recovery.py \
@@ -139,7 +159,8 @@ function e1v5_prepare_runtime() {
   export WANDB_DIR="$WANDB_ROOT"
   (
     cd "$runtime"
-    "$E1V5_PYTHON" "$E1V5_VALIDATOR" validate-gate \
+    "$E1V5_PYTHON" "$E1V5_VALIDATOR" \
+      "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-gate \
       --gate "$E1V5_GATE" --code-root "$runtime"
   )
 }

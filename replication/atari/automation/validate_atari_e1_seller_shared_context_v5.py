@@ -1,12 +1,12 @@
 #!/Users/gbrero/miniconda3/envs/stackelbergPOMDP/bin/python
 """Fail-closed smoke and preflight gates for the v5 Atari E1 seller.
 
-The two diagnostics are independent, fresh-E0b, Uniform(0,1)^5 runs.  The
-20,500-step smoke has execution-only gates.  The 82,000-step preflight adds
-the preregistered no-ALE learned-conditioning gate and a fresh paired real-ALE
-full-versus-joint-ablation behavioral gate.  Only a gate binding both results
-to one clean Git revision releases the separate formal W&B run; no v1-v3
-recovery artifact is an admissible input.
+Every supported protocol uses independent fresh-E0b, Uniform(0,1)^5 runs.
+The 20,500-step smoke has execution-only gates.  A protocol-specific fresh
+preflight adds the unchanged no-ALE learned-conditioning gate and a fresh
+paired real-ALE full-versus-joint-ablation behavioral gate.  Only a gate
+binding both results to one clean Git revision releases the separate formal
+W&B run; no diagnostic checkpoint or v1-v4 recovery artifact is admissible.
 """
 
 from __future__ import annotations
@@ -38,52 +38,154 @@ SMOKE_KIND = "stackpomdp.atari.e1_seller_shared_context_mechanics_smoke.v5"
 PREFLIGHT_KIND = (
     "stackpomdp.atari.e1_seller_shared_context_conditioning_preflight.v5"
 )
-SOURCE_KIND = "seller_conditioning_recovery_v5_shared_context_v1"
 ROLE = "seller"
 ARCHITECTURE = "seller_shared_context_beta_v5"
 SAMPLER_MODE = "uniform"
 ACTOR_LOSS_MODE = "balanced"
 
-SMOKE_TIMESTEPS = 20_500
-PREFLIGHT_TIMESTEPS = 82_000
 FORMAL_TIMESTEPS = 2_000_800
 CHECKPOINT_INTERVAL = 400_160
 FORMAL_STEP_TIMESTEPS = (400_160, 800_320, 1_200_480, 1_600_640, 2_000_800)
-
-TOKEN = "conditioning_recovery_v5_shared_context_v1"
-SMOKE_CHECKPOINT_NAME = (
-    f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_"
-    "uniform_mechanics_smoke.zip"
-)
-PREFLIGHT_CHECKPOINT_NAME = (
-    f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_"
-    "uniform_conditioning_preflight.zip"
-)
-PREFLIGHT_PROBE_NAME = (
-    f"e1_seller_{TOKEN}_uniform_conditioning_preflight_probe.json"
-)
-PREFLIGHT_BEHAVIOR_NAME = (
-    f"e1_seller_{TOKEN}_uniform_conditioning_preflight_behavior.json"
-)
-FORMAL_CHECKPOINT_NAME = (
-    f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_uniform_formal.zip"
-)
-GATE_NAME = f"e1_seller_{TOKEN}_diagnostics_gate.json"
 WANDB_PROJECT = "StackPOMDP"
 WANDB_GROUP = "atari_clean_curriculum"
-WANDB_JOB_TYPE = (
-    "atari_e1_seller_conditioning_recovery_v5_shared_context_v1_uniform_formal"
-)
-WANDB_NAME = (
-    "atari_clean_e1_seller_conditioning_recovery_v5_shared_context_v1_"
-    "uniform_seed1_2000800_local"
-)
 
 PREFLIGHT_BEHAVIOR_EPISODES = 20
-PREFLIGHT_BEHAVIOR_SEED_START = 10_400_001
-PREFLIGHT_FIXED_SEED_START = 10_500_001
 PREFLIGHT_FIXED_VALUES = tuple(index / 10.0 for index in range(11))
 PREFLIGHT_FIXED_EVENT_STEPS = (20, 50, 80, 110, 140)
+
+STANDARD_PROTOCOL = "standard_v1"
+EXPOSURE_PROTOCOL = "exposure_v2"
+DEFAULT_PROTOCOL = STANDARD_PROTOCOL
+PROTOCOL_CONFIGURATIONS = {
+    STANDARD_PROTOCOL: {
+        "token": "conditioning_recovery_v5_shared_context_v1",
+        "source_kind": "seller_conditioning_recovery_v5_shared_context_v1",
+        "smoke_timesteps": 20_500,
+        "preflight_timesteps": 82_000,
+        "behavior_seed_start": 10_400_001,
+        "fixed_seed_start": 10_500_001,
+    },
+    EXPOSURE_PROTOCOL: {
+        "token": "conditioning_recovery_v5_shared_context_exposure_v2",
+        "source_kind": (
+            "seller_conditioning_recovery_v5_shared_context_exposure_v2"
+        ),
+        "smoke_timesteps": 20_500,
+        "preflight_timesteps": 400_160,
+        # The longer-exposure protocol gets held-out rows that were not used
+        # by the failed 82k v1 behavioral preflight.
+        "behavior_seed_start": 11_400_001,
+        "fixed_seed_start": 11_500_001,
+    },
+}
+
+
+def protocol_configuration(name):
+    """Return one immutable protocol contract by exact versioned name."""
+
+    if name not in PROTOCOL_CONFIGURATIONS:
+        raise ValueError(f"unknown v5 seller protocol: {name}")
+    return dict(PROTOCOL_CONFIGURATIONS[name])
+
+
+def configure_protocol(name):
+    """Select exact names, exposure, and held-out seeds for this process."""
+
+    configuration = protocol_configuration(name)
+    global ACTIVE_PROTOCOL
+    global SOURCE_KIND
+    global SMOKE_TIMESTEPS
+    global PREFLIGHT_TIMESTEPS
+    global TOKEN
+    global SMOKE_CHECKPOINT_NAME
+    global PREFLIGHT_CHECKPOINT_NAME
+    global PREFLIGHT_PROBE_NAME
+    global PREFLIGHT_BEHAVIOR_NAME
+    global FORMAL_CHECKPOINT_NAME
+    global GATE_NAME
+    global WANDB_JOB_TYPE
+    global WANDB_NAME
+    global PREFLIGHT_BEHAVIOR_SEED_START
+    global PREFLIGHT_FIXED_SEED_START
+
+    ACTIVE_PROTOCOL = name
+    SOURCE_KIND = configuration["source_kind"]
+    SMOKE_TIMESTEPS = configuration["smoke_timesteps"]
+    PREFLIGHT_TIMESTEPS = configuration["preflight_timesteps"]
+    TOKEN = configuration["token"]
+    SMOKE_CHECKPOINT_NAME = (
+        f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_"
+        "uniform_mechanics_smoke.zip"
+    )
+    PREFLIGHT_CHECKPOINT_NAME = (
+        f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_"
+        "uniform_conditioning_preflight.zip"
+    )
+    PREFLIGHT_PROBE_NAME = (
+        f"e1_seller_{TOKEN}_uniform_conditioning_preflight_probe.json"
+    )
+    PREFLIGHT_BEHAVIOR_NAME = (
+        f"e1_seller_{TOKEN}_uniform_conditioning_preflight_behavior.json"
+    )
+    FORMAL_CHECKPOINT_NAME = (
+        f"meta_seller_e1_ppo_balanced_{TOKEN}_seed1_uniform_formal.zip"
+    )
+    GATE_NAME = f"e1_seller_{TOKEN}_diagnostics_gate.json"
+    WANDB_JOB_TYPE = f"atari_e1_seller_{TOKEN}_uniform_formal"
+    WANDB_NAME = (
+        f"atari_clean_e1_seller_{TOKEN}_uniform_seed1_2000800_local"
+    )
+    PREFLIGHT_BEHAVIOR_SEED_START = configuration["behavior_seed_start"]
+    PREFLIGHT_FIXED_SEED_START = configuration["fixed_seed_start"]
+    return configuration
+
+
+configure_protocol(DEFAULT_PROTOCOL)
+
+V1_NEGATIVE_EVIDENCE = {
+    "checkpoint_sha256": (
+        "6203035d3220dce8cd12fb45b9e32ad87d194e77cef4982e28e52ade34dacf8b"
+    ),
+    "behavior_report_sha256": (
+        "c5902aa05419fce82bcb783535bd63eb0f057c90b20cda8031c259b167460278"
+    ),
+    "transfer_payoff_improvement": 0.0009462684392929077,
+    "required_transfer_payoff_improvement": 0.05,
+    "threshold_0_4_to_0_9_price_response": 0.050391235351562536,
+    "required_threshold_0_4_to_0_9_price_response": 0.15,
+}
+
+
+def canonical_protocol_provenance():
+    """Bind the sole preregistered difference between v1 and exposure v2."""
+
+    configuration = protocol_configuration(ACTIVE_PROTOCOL)
+    record = {
+        "name": ACTIVE_PROTOCOL,
+        "token": configuration["token"],
+        "source_kind": configuration["source_kind"],
+        "architecture_changed": False,
+        "smoke_timesteps": configuration["smoke_timesteps"],
+        "preflight_timesteps": configuration["preflight_timesteps"],
+        "behavior_seed_start": configuration["behavior_seed_start"],
+        "fixed_seed_start": configuration["fixed_seed_start"],
+        "behavioral_gate_changed": False,
+    }
+    if ACTIVE_PROTOCOL == EXPOSURE_PROTOCOL:
+        record.update({
+            "only_preflight_exposure_and_holdout_seed_namespace_changed": True,
+            "predecessor_protocol": STANDARD_PROTOCOL,
+            "predecessor_negative_evidence": dict(V1_NEGATIVE_EVIDENCE),
+            "fresh_from_canonical_e0b_not_resume": True,
+            "expected_preflight_episodes": 1_952,
+            "expected_preflight_rollout_iterations": 488,
+            "expected_preflight_adam_step": 1_952,
+        })
+    else:
+        record[
+            "only_preflight_exposure_and_holdout_seed_namespace_changed"
+        ] = False
+    return record
 
 CANONICAL_E0B_SHA256 = shared.CANONICAL_E0B_SHA256
 CANONICAL_ROM_SHA256 = shared.CANONICAL_ROM_SHA256
@@ -212,6 +314,7 @@ def _git_scoped_clean(code_root):
         "replication/atari/sb3_common.py",
         "replication/atari/automation/atari_e1_seller_shared_context_v5_common.zsh",
         "replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5.sh",
+        "replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5_exposure_v2.sh",
         "replication/atari/automation/validate_atari_e1_seller_shared_context_v5.py",
         "replication/atari/automation/atari_e2_pipeline_common.zsh",
         "replication/atari/automation/validate_atari_e1_seller_conditioning_recovery.py",
@@ -984,7 +1087,10 @@ def validate_behavioral_preflight(
         "v5 behavioral-preflight outcome changed",
     )
     if require_pass:
-        _require(passed, "v5 82k real-ALE behavioral preflight failed")
+        _require(
+            passed,
+            f"v5 {PREFLIGHT_TIMESTEPS}-step real-ALE behavioral preflight failed",
+        )
     return {
         "path": str(path),
         "sha256": sha256_file(path),
@@ -1141,6 +1247,7 @@ def build_gate(args):
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "passed": True,
         "source_kind": SOURCE_KIND,
+        "exposure_protocol": canonical_protocol_provenance(),
         "code_revision": revision,
         "legacy_recovery_artifacts_admitted": False,
         "prerequisites": {
@@ -1211,6 +1318,10 @@ def validate_gate(path, *, code_root=None):
         value.get("source_kind") == SOURCE_KIND
         and value.get("legacy_recovery_artifacts_admitted") is False,
         "v5 gate source namespace changed",
+    )
+    _require(
+        value.get("exposure_protocol") == canonical_protocol_provenance(),
+        "v5 gate exposure protocol changed",
     )
     revision = value.get("code_revision")
     _require(
@@ -1307,6 +1418,15 @@ def write_or_validate_gate(args):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--protocol",
+        choices=tuple(PROTOCOL_CONFIGURATIONS),
+        default=DEFAULT_PROTOCOL,
+        help=(
+            "exact versioned exposure protocol; standard_v1 preserves the "
+            "original 82k gate and exposure_v2 uses a fresh 400160-step gate"
+        ),
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     smoke = commands.add_parser("validate-smoke")
@@ -1345,6 +1465,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    configure_protocol(args.protocol)
     if args.command == "validate-smoke":
         result = validate_smoke(
             checkpoint=args.checkpoint,

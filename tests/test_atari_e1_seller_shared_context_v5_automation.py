@@ -25,6 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 AUTOMATION = ROOT / "replication/atari/automation"
 COMMON = AUTOMATION / "atari_e1_seller_shared_context_v5_common.zsh"
 LAUNCHER = AUTOMATION / "run_atari_clean_e1_seller_shared_context_v5.sh"
+EXPOSURE_LAUNCHER = (
+    AUTOMATION
+    / "run_atari_clean_e1_seller_shared_context_v5_exposure_v2.sh"
+)
 
 
 def _shell_function(path, name):
@@ -74,12 +78,81 @@ def test_v5_automation_contract_is_exact_and_versioned():
     )
     assert validator.FORMAL_TIMESTEPS == 2_000_800
     assert validator.WANDB_PROJECT == "StackPOMDP"
+    assert validator.WANDB_JOB_TYPE == (
+        "atari_e1_seller_conditioning_recovery_v5_shared_context_v1_"
+        "uniform_formal"
+    )
+    assert validator.WANDB_NAME == (
+        "atari_clean_e1_seller_conditioning_recovery_v5_shared_context_v1_"
+        "uniform_seed1_2000800_local"
+    )
+
+
+def test_v5_exposure_v2_changes_only_fresh_exposure_and_holdout_namespace():
+    validator.configure_protocol(validator.STANDARD_PROTOCOL)
+    standard = {
+        "architecture": validator.canonical_architecture(),
+        "initialization": validator.canonical_initialization(),
+        "training": validator.canonical_training_config(),
+        "sampler": validator.canonical_sampler(),
+        "smoke_timesteps": validator.SMOKE_TIMESTEPS,
+        "formal_timesteps": validator.FORMAL_TIMESTEPS,
+    }
+    try:
+        validator.configure_protocol(validator.EXPOSURE_PROTOCOL)
+        assert validator.ACTIVE_PROTOCOL == "exposure_v2"
+        assert validator.TOKEN == (
+            "conditioning_recovery_v5_shared_context_exposure_v2"
+        )
+        assert validator.SOURCE_KIND == (
+            "seller_conditioning_recovery_v5_shared_context_exposure_v2"
+        )
+        assert validator.PREFLIGHT_TIMESTEPS == 400_160
+        assert validator.PREFLIGHT_BEHAVIOR_SEED_START == 11_400_001
+        assert validator.PREFLIGHT_FIXED_SEED_START == 11_500_001
+        assert validator.SMOKE_TIMESTEPS == standard["smoke_timesteps"]
+        assert validator.FORMAL_TIMESTEPS == standard["formal_timesteps"]
+        assert validator.canonical_architecture() == standard["architecture"]
+        assert validator.canonical_initialization() == standard["initialization"]
+        assert validator.canonical_training_config() == standard["training"]
+        assert validator.canonical_sampler() == standard["sampler"]
+        provenance = validator.canonical_protocol_provenance()
+        assert provenance[
+            "only_preflight_exposure_and_holdout_seed_namespace_changed"
+        ] is True
+        assert provenance["architecture_changed"] is False
+        assert provenance["behavioral_gate_changed"] is False
+        assert provenance["fresh_from_canonical_e0b_not_resume"] is True
+        assert provenance["expected_preflight_episodes"] == 1_952
+        assert provenance["expected_preflight_rollout_iterations"] == 488
+        assert provenance["expected_preflight_adam_step"] == 1_952
+        assert provenance["predecessor_negative_evidence"] == (
+            validator.V1_NEGATIVE_EVIDENCE
+        )
+        assert validator.WANDB_JOB_TYPE == (
+            "atari_e1_seller_conditioning_recovery_v5_shared_context_"
+            "exposure_v2_uniform_formal"
+        )
+        assert validator.WANDB_NAME == (
+            "atari_clean_e1_seller_conditioning_recovery_v5_shared_context_"
+            "exposure_v2_uniform_seed1_2000800_local"
+        )
+    finally:
+        validator.configure_protocol(validator.STANDARD_PROTOCOL)
 
 
 def test_scoped_clean_checks_cover_the_base_conditioning_probe():
     dependency = "replication/atari/probe_atari_e1_seller_conditioning.py"
     assert dependency in _shell_function(COMMON, "e1v5_require_scoped_clean")
     assert dependency in inspect.getsource(validator._git_scoped_clean)
+    exposure_wrapper = (
+        "replication/atari/automation/"
+        "run_atari_clean_e1_seller_shared_context_v5_exposure_v2.sh"
+    )
+    assert exposure_wrapper in _shell_function(
+        COMMON, "e1v5_require_scoped_clean"
+    )
+    assert exposure_wrapper in inspect.getsource(validator._git_scoped_clean)
 
 
 def test_v5_probe_accepts_only_the_exact_shared_context_checkpoint_contract():
@@ -366,9 +439,9 @@ def test_launcher_is_fresh_ordered_fail_closed_and_wandb_only_formal():
     assert "probe_atari_e1_seller_shared_context" in launcher + common
     assert launcher.count("--no-wandb") == 2
     assert len(re.findall(r"^\s+--wandb\s*\\?$", launcher, re.MULTILINE)) == 1
-    smoke = launcher.index("20500-step")
-    preflight = launcher.index("82000-step")
-    gate = launcher.index('"$E1V5_VALIDATOR" gate')
+    smoke = launcher.index("mechanics smoke")
+    preflight = launcher.index("conditioning preflight", smoke + 1)
+    gate = launcher.index('"${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" gate')
     formal = launcher.index("2000800-step online W&B formal run")
     assert smoke < preflight < gate < formal
     # One use initializes all three fresh training stages; the second binds
@@ -378,6 +451,46 @@ def test_launcher_is_fresh_ordered_fail_closed_and_wandb_only_formal():
     assert "conditioning_recovery_v5_shared_context_v1" in common
     assert "seller_shared_context_beta_v5" in common
     assert "StackPOMDP" in launcher
+
+
+def test_v5_exposure_v2_launcher_is_explicit_and_inherits_fresh_fail_closed_path():
+    wrapper = EXPOSURE_LAUNCHER.read_text(encoding="utf-8")
+    common = COMMON.read_text(encoding="utf-8")
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    assert "STACKPOMDP_E1V5_PROTOCOL=exposure_v2" in wrapper
+    assert "exec \"${0:A:h}/run_atari_clean_e1_seller_shared_context_v5.sh\"" in wrapper
+    assert "conditioning_recovery_v5_shared_context_exposure_v2" in common
+    assert "E1V5_PREFLIGHT_TIMESTEPS=400160" in common
+    assert "E1V5_VALIDATOR_PROTOCOL_ARGS=(--protocol exposure_v2)" in common
+    assert (
+        '"${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-gate' in common
+    )
+    assert "${E1V5_PREFLIGHT_TIMESTEPS}" in launcher
+    assert "--resume" not in launcher + wrapper
+    assert launcher.count("--no-wandb") == 2
+    assert len(re.findall(r"^\s+--wandb\s*\\?$", launcher, re.MULTILINE)) == 1
+
+
+def test_v5_exposure_v2_rejects_standard_v1_artifact_names():
+    validator.configure_protocol(validator.STANDARD_PROTOCOL)
+    standard_smoke = validator.SMOKE_CHECKPOINT_NAME
+    standard_preflight = validator.PREFLIGHT_CHECKPOINT_NAME
+    try:
+        validator.configure_protocol(validator.EXPOSURE_PROTOCOL)
+        with pytest.raises(ValueError, match="filename changed"):
+            validator._exact_name(
+                Path("/tmp") / standard_smoke,
+                validator.SMOKE_CHECKPOINT_NAME,
+                "v5 exposure smoke",
+            )
+        with pytest.raises(ValueError, match="filename changed"):
+            validator._exact_name(
+                Path("/tmp") / standard_preflight,
+                validator.PREFLIGHT_CHECKPOINT_NAME,
+                "v5 exposure preflight",
+            )
+    finally:
+        validator.configure_protocol(validator.STANDARD_PROTOCOL)
 
 
 def test_v5_launcher_preserves_failure_status_and_releases_owned_lock(tmp_path):

@@ -110,23 +110,25 @@ mkdir -p "$CHECKPOINT_ROOT" "$WANDB_ROOT" "$LOG_ROOT" "$E1_OUTPUT"
 if [[ ! -f "$E1V5_SMOKE" || -L "$E1V5_SMOKE" ]]; then
   for artifact in \
       "$E1V5_SMOKE" \
-      "${E1V5_SMOKE%.zip}_step20500.zip" \
+      "${E1V5_SMOKE%.zip}_step${E1V5_SMOKE_TIMESTEPS}.zip" \
       "$E1V5_SMOKE_TRACE" \
       "$E1V5_SMOKE_EVALUATION" \
       "${E1V5_SMOKE%.zip}.fixed_contexts.csv" \
       "$E1V5_SMOKE_LOG"; do
     e1v5_refuse_path "$artifact"
   done
-  print "starting v5 no-W&B 20500-step Uniform(0,1)^5 mechanics smoke"
+  print "starting v5 ${E1V5_PROTOCOL} no-W&B ${E1V5_SMOKE_TIMESTEPS}-step Uniform(0,1)^5 mechanics smoke"
   e1v5_run_logged "$E1V5_SMOKE_LOG" \
     e1v5_train_command \
-      "$E1V5_SOURCE_ROOT" 20500 20500 20 20 "$E1V5_SMOKE" \
+      "$E1V5_SOURCE_ROOT" "$E1V5_SMOKE_TIMESTEPS" \
+      "$E1V5_SMOKE_TIMESTEPS" 20 20 "$E1V5_SMOKE" \
       --no-wandb
 fi
 e1v5_wait_for_stable_zip "$E1V5_SMOKE"
 (
   cd "$E1V5_SOURCE_ROOT"
-  "$E1V5_PYTHON" "$E1V5_VALIDATOR" validate-smoke \
+  "$E1V5_PYTHON" "$E1V5_VALIDATOR" \
+    "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-smoke \
     --checkpoint "$E1V5_SMOKE" \
     --training-log "$E1V5_SMOKE_TRACE" \
     --evaluation "$E1V5_SMOKE_EVALUATION" \
@@ -137,7 +139,7 @@ e1v5_wait_for_stable_zip "$E1V5_SMOKE"
 if [[ ! -f "$E1V5_PREFLIGHT" || -L "$E1V5_PREFLIGHT" ]]; then
   for artifact in \
       "$E1V5_PREFLIGHT" \
-      "${E1V5_PREFLIGHT%.zip}_step82000.zip" \
+      "${E1V5_PREFLIGHT%.zip}_step${E1V5_PREFLIGHT_TIMESTEPS}.zip" \
       "$E1V5_PREFLIGHT_TRACE" \
       "$E1V5_PREFLIGHT_EVALUATION" \
       "${E1V5_PREFLIGHT%.zip}.fixed_contexts.csv" \
@@ -146,10 +148,11 @@ if [[ ! -f "$E1V5_PREFLIGHT" || -L "$E1V5_PREFLIGHT" ]]; then
       "$E1V5_PREFLIGHT_LOG"; do
     e1v5_refuse_path "$artifact"
   done
-  print "starting v5 no-W&B 82000-step Uniform(0,1)^5 conditioning preflight"
+  print "starting v5 ${E1V5_PROTOCOL} no-W&B ${E1V5_PREFLIGHT_TIMESTEPS}-step Uniform(0,1)^5 conditioning preflight"
   e1v5_run_logged "$E1V5_PREFLIGHT_LOG" \
     e1v5_train_command \
-      "$E1V5_SOURCE_ROOT" 82000 82000 20 20 "$E1V5_PREFLIGHT" \
+      "$E1V5_SOURCE_ROOT" "$E1V5_PREFLIGHT_TIMESTEPS" \
+      "$E1V5_PREFLIGHT_TIMESTEPS" 20 20 "$E1V5_PREFLIGHT" \
       --no-wandb
 fi
 e1v5_wait_for_stable_zip "$E1V5_PREFLIGHT"
@@ -169,7 +172,8 @@ if [[ ! -e "$E1V5_PREFLIGHT_BEHAVIOR" \
     && ! -L "$E1V5_PREFLIGHT_BEHAVIOR" ]]; then
   (
     cd "$E1V5_SOURCE_ROOT"
-    "$E1V5_PYTHON" -u "$E1V5_VALIDATOR" behavioral-preflight \
+    "$E1V5_PYTHON" -u "$E1V5_VALIDATOR" \
+      "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" behavioral-preflight \
       --checkpoint "$E1V5_PREFLIGHT" \
       --e0b "$E1V5_E0B" \
       --rom "$ROM" \
@@ -179,7 +183,8 @@ if [[ ! -e "$E1V5_PREFLIGHT_BEHAVIOR" \
 fi
 (
   cd "$E1V5_SOURCE_ROOT"
-  "$E1V5_PYTHON" "$E1V5_VALIDATOR" validate-preflight \
+  "$E1V5_PYTHON" "$E1V5_VALIDATOR" \
+    "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-preflight \
     --checkpoint "$E1V5_PREFLIGHT" \
     --training-log "$E1V5_PREFLIGHT_TRACE" \
     --evaluation "$E1V5_PREFLIGHT_EVALUATION" \
@@ -206,7 +211,8 @@ if [[ ! -f "$E1V5_GATE" || -L "$E1V5_GATE" ]]; then
 fi
 (
   cd "$E1V5_SOURCE_ROOT"
-  "$E1V5_PYTHON" "$E1V5_VALIDATOR" gate \
+  "$E1V5_PYTHON" "$E1V5_VALIDATOR" \
+    "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" gate \
     --seller-release "$E1V5_SELLER_RELEASE" \
     --e0b "$E1V5_E0B" \
     --rom "$ROM" \
