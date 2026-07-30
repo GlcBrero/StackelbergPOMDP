@@ -324,6 +324,42 @@ def candidate_e1_training_code_revision(model, economic_architecture):
     return recorded
 
 
+def candidate_direct_threshold_initialization(
+        model, economic_architecture
+):
+    """Return the exact saved v3 zero-column initialization contract."""
+
+    direct = bool(getattr(
+        model.policy, "economic_threshold_residual_direct_input", False
+    ))
+    recorded = getattr(
+        model, trainer.DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
+    )
+    if not direct:
+        if recorded is not None:
+            raise ValueError(
+                "non-v3 E1 candidate unexpectedly stores direct-threshold "
+                "initialization provenance"
+            )
+        return None
+    if not isinstance(economic_architecture, dict) or (
+            economic_architecture.get("parameterization")
+            != "seller_direct_threshold_residual_beta_v3"
+    ):
+        raise ValueError(
+            "direct-threshold E1 candidate has the wrong economic architecture"
+        )
+    expected = trainer.direct_threshold_initialization_provenance(
+        model.policy
+    )
+    if recorded != expected:
+        raise ValueError(
+            "direct-threshold E1 candidate lacks exact zero-column "
+            "initialization provenance"
+        )
+    return _jsonable(recorded)
+
+
 def load_candidate(
         path,
         *,
@@ -398,6 +434,9 @@ def load_candidate(
     training_code_revision = candidate_e1_training_code_revision(
         model, economic_architecture
     )
+    direct_initialization = candidate_direct_threshold_initialization(
+        model, economic_architecture
+    )
     policy.set_training_mode(False)
     training_config = {
         "algorithm": "PPO",
@@ -426,6 +465,11 @@ def load_candidate(
     }
     if economic_architecture is not None:
         training_config["economic_threshold_residual"] = True
+        training_config["economic_threshold_residual_direct_input"] = bool(
+            getattr(
+                policy, "economic_threshold_residual_direct_input", False
+            )
+        )
     metadata = {
         "path": str(reported_path),
         "sha256": digest,
@@ -439,6 +483,10 @@ def load_candidate(
     if economic_architecture is not None:
         metadata["economic_architecture"] = economic_architecture
         metadata["e1_training_code_revision"] = training_code_revision
+        if direct_initialization is not None:
+            metadata["direct_threshold_initialization"] = (
+                direct_initialization
+            )
     return model, metadata
 
 
@@ -1841,16 +1889,26 @@ def run_selection(args):
                     raise RuntimeError(
                         "candidate bytes changed during confirmation"
                     )
-                residual_architecture = metadata.get(
+                residual_parameterization = metadata.get(
                     "economic_architecture", {}
-                ).get("parameterization") == (
-                    "seller_threshold_residual_beta_v1"
-                )
+                ).get("parameterization")
+                residual_architecture = residual_parameterization in {
+                    "seller_threshold_residual_beta_v1",
+                    "seller_direct_threshold_residual_beta_v3",
+                }
                 if local.role == SELLER and residual_architecture:
-                    from replication.atari import (
-                        probe_atari_e1_seller_threshold_residual
-                        as residual_probe
-                    )
+                    if residual_parameterization == (
+                            "seller_direct_threshold_residual_beta_v3"
+                    ):
+                        from replication.atari import (
+                            probe_atari_e1_seller_direct_threshold_residual
+                            as residual_probe
+                        )
+                    else:
+                        from replication.atari import (
+                            probe_atari_e1_seller_threshold_residual
+                            as residual_probe
+                        )
                     conditioning_probe = (
                         residual_probe.collect_conditioning_report(model)
                     )

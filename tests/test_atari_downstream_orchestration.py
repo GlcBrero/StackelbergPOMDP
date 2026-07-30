@@ -754,18 +754,20 @@ def test_primary_master_chains_all_gates_and_preserves_live_wandb():
     ).group(1)
     assert code_suffix == expected[:7]
     assert validator.configured_e2_code_head() == expected
-    assert "E2_NAMESPACE=e1seller_threshold_residual_v2" in common
+    assert "E2_NAMESPACE=e1seller_direct_threshold_residual_v3" in common
     assert (
         "E1_REQUIRED_SELLER_SOURCE_KIND="
-        "seller_conditioning_recovery_v2_threshold_residual_v1"
+        "seller_conditioning_recovery_v3_direct_threshold_residual_v1"
     ) in common
     assert "e2_e1_gate_cohort_${E2_NAMESPACE}.json" in common
     assert (
-        "stackpomdp-atari-e2-threshold-residual-v2-sequential.lock" in common
+        "stackpomdp-atari-e2-direct-threshold-residual-v3-sequential.lock"
+        in common
     )
     assert "_${E1_SELLER_SOURCE_KIND}" in common
     assert "probe_atari_e1_seller_conditioning.py" in common
     assert "probe_atari_e1_seller_threshold_residual.py" in common
+    assert "probe_atari_e1_seller_direct_threshold_residual.py" in common
     assert "WANDB_MODE=online" in common
     assert "EPOCHSECONDS" not in common
     assert '"E2 pipeline" || return $?' in common

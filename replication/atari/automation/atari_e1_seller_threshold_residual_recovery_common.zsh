@@ -17,34 +17,66 @@ typeset -gr E1R2_V1_PROBE="$E1_OUTPUT/e1_seller_conditioning_recovery_warmup_pro
 typeset -gr E1R2_V1_TRACE="${E1R2_V1_WARMUP%.zip}.training.jsonl"
 typeset -gr E1R2_V1_EVALUATION="${E1R2_V1_WARMUP%.zip}.evaluation.json"
 
-typeset -gr E1R2_TOKEN=conditioning_recovery_v2_threshold_residual_v1
+case "${STACKPOMDP_E1_SELLER_RESIDUAL_PROFILE:-v2}" in
+v3-direct)
+  typeset -gr E1R2_TOKEN=conditioning_recovery_v3_direct_threshold_residual_v1
+  typeset -gr E1R2_PROFILE_LABEL="v3 direct-threshold residual"
+  typeset -gr E1R2_PROBE_MODULE=replication.atari.probe_atari_e1_seller_direct_threshold_residual
+  typeset -gra E1R2_ARCHITECTURE_FLAGS=(
+    --economic-threshold-residual
+    --economic-threshold-residual-direct-input
+  )
+  typeset -gr E1R2_PREFLIGHT_SUFFIX=direct65_preflight
+  typeset -gr E1R2_WARMUP_RUN=atari_clean_e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_all_equal_warmup_seed1_400160_local
+  typeset -gr E1R2_TARGET_RUN=atari_clean_e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_uniform_target_seed1_2000800_local
+  typeset -gr E1R2_WARMUP_JOB_TYPE=atari_e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_warmup
+  typeset -gr E1R2_TARGET_JOB_TYPE=atari_e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_target
+  typeset -gr E1R2_SELECTOR_NAME=e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_all6_selector_v3
+  typeset -gr E1R2_LOCK=/private/tmp/stackpomdp-atari-e1-seller-conditioning-recovery-v3-direct-threshold-residual-v1.lock
+  typeset -gr E1R2_VALIDATOR_RELATIVE=replication/atari/automation/validate_atari_e1_seller_direct_threshold_residual_recovery.py
+  typeset -gr E1R2_SELECTOR_SCRIPT=run_e1_seller_direct_threshold_residual_recovery_selector.sh
+  ;;
+v2)
+  typeset -gr E1R2_TOKEN=conditioning_recovery_v2_threshold_residual_v1
+  typeset -gr E1R2_PROFILE_LABEL="v2 threshold-residual"
+  typeset -gr E1R2_PROBE_MODULE=replication.atari.probe_atari_e1_seller_threshold_residual
+  typeset -gra E1R2_ARCHITECTURE_FLAGS=(--economic-threshold-residual)
+  typeset -gr E1R2_PREFLIGHT_SUFFIX=pure64_preflight
+  typeset -gr E1R2_WARMUP_RUN=atari_clean_e1_seller_conditioning_recovery_v2_threshold_residual_v1_all_equal_warmup_seed1_400160_local
+  typeset -gr E1R2_TARGET_RUN=atari_clean_e1_seller_conditioning_recovery_v2_threshold_residual_v1_uniform_target_seed1_2000800_local
+  typeset -gr E1R2_WARMUP_JOB_TYPE=atari_e1_seller_conditioning_recovery_v2_threshold_residual_v1_warmup
+  typeset -gr E1R2_TARGET_JOB_TYPE=atari_e1_seller_conditioning_recovery_v2_threshold_residual_v1_target
+  typeset -gr E1R2_SELECTOR_NAME=e1_seller_conditioning_recovery_v2_threshold_residual_v1_all6_selector_v2
+  typeset -gr E1R2_LOCK=/private/tmp/stackpomdp-atari-e1-seller-conditioning-recovery-v2-threshold-residual-v1.lock
+  typeset -gr E1R2_VALIDATOR_RELATIVE=replication/atari/automation/validate_atari_e1_seller_threshold_residual_recovery.py
+  typeset -gr E1R2_SELECTOR_SCRIPT=run_e1_seller_threshold_residual_recovery_selector.sh
+  ;;
+*)
+  print -u2 -- "invalid seller residual profile: ${STACKPOMDP_E1_SELLER_RESIDUAL_PROFILE}"
+  return 1
+  ;;
+esac
 typeset -gr E1R2_ACTIVATION="$E1_OUTPUT/e1_seller_${E1R2_TOKEN}_activation.json"
 typeset -gr E1R2_FAMILY="$E1_OUTPUT/e1_seller_${E1R2_TOKEN}_family.json"
 typeset -gr E1R2_WARMUP_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1R2_TOKEN}_seed1_all_equal_warmup.zip"
 typeset -gr E1R2_WARMUP_PROBE="$E1_OUTPUT/e1_seller_${E1R2_TOKEN}_warmup_probe.json"
 typeset -gr E1R2_TARGET_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1R2_TOKEN}_seed1_uniform_target.zip"
-typeset -gr E1R2_PREFLIGHT_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1R2_TOKEN}_seed1_pure64_preflight.zip"
-typeset -gr E1R2_PREFLIGHT_PROBE="$E1_OUTPUT/e1_seller_${E1R2_TOKEN}_pure64_preflight_probe.json"
+typeset -gr E1R2_PREFLIGHT_BASE="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1R2_TOKEN}_seed1_${E1R2_PREFLIGHT_SUFFIX}.zip"
+typeset -gr E1R2_PREFLIGHT_PROBE="$E1_OUTPUT/e1_seller_${E1R2_TOKEN}_${E1R2_PREFLIGHT_SUFFIX}_probe.json"
 typeset -gr E1R2_PREFLIGHT_EVALUATION="${E1R2_PREFLIGHT_BASE%.zip}.evaluation.json"
-typeset -gr E1R2_PREFLIGHT_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1R2_TOKEN}_pure64_preflight_seed1_20500_local.log"
-typeset -gr E1R2_WARMUP_RUN=atari_clean_e1_seller_conditioning_recovery_v2_threshold_residual_v1_all_equal_warmup_seed1_400160_local
-typeset -gr E1R2_TARGET_RUN=atari_clean_e1_seller_conditioning_recovery_v2_threshold_residual_v1_uniform_target_seed1_2000800_local
-typeset -gr E1R2_WARMUP_JOB_TYPE=atari_e1_seller_conditioning_recovery_v2_threshold_residual_v1_warmup
-typeset -gr E1R2_TARGET_JOB_TYPE=atari_e1_seller_conditioning_recovery_v2_threshold_residual_v1_target
+typeset -gr E1R2_PREFLIGHT_LOG="$LOG_ROOT/atari_clean_e1_seller_${E1R2_TOKEN}_${E1R2_PREFLIGHT_SUFFIX}_seed1_20500_local.log"
 typeset -gr E1R2_WARMUP_LOG="$LOG_ROOT/${E1R2_WARMUP_RUN}.log"
 typeset -gr E1R2_TARGET_LOG="$LOG_ROOT/${E1R2_TARGET_RUN}.log"
-typeset -gr E1R2_SELECTOR_NAME=e1_seller_conditioning_recovery_v2_threshold_residual_v1_all6_selector_v2
 typeset -gr E1R2_REPORT="$E1_OUTPUT/${E1R2_SELECTOR_NAME}.json"
 typeset -gr E1R2_GATE="$E1_OUTPUT/${E1R2_SELECTOR_NAME}.gate.json"
 typeset -gr E1R2_SELECTED="$CHECKPOINT_ROOT/meta_seller_e1_ppo_balanced_${E1R2_TOKEN}_seed1_selected.zip"
 typeset -gr E1R2_SELECTOR_LOG="$LOG_ROOT/${E1R2_SELECTOR_NAME}.log"
-typeset -gr E1R2_LOCK=/private/tmp/stackpomdp-atari-e1-seller-conditioning-recovery-v2-threshold-residual-v1.lock
 typeset -gr E1R2_V1_GUARD_LOCK=/private/tmp/stackpomdp-atari-e1-seller-conditioning-recovery.lock
 typeset -gra E1R2_TARGET_STEPS=(800320 1200480 1600640 2000800 2400960)
 typeset -gr E1R2_LEARNING_RATE=0.0001
 
 typeset -g E1R2_CODE_ROOT="$E1R2_SOURCE_ROOT"
-typeset -g E1R2_VALIDATOR="$E1R2_SOURCE_ROOT/replication/atari/automation/validate_atari_e1_seller_threshold_residual_recovery.py"
+typeset -g E1R2_VALIDATOR="$E1R2_SOURCE_ROOT/$E1R2_VALIDATOR_RELATIVE"
 typeset -gi E1R2_ACTIVE_JOB_PID=0
 
 function e1r2_die() {
@@ -152,7 +184,7 @@ function e1r2_prepare_runtime() {
   dirty=$(git -C "$runtime" status --porcelain) || return $?
   [[ -z "$dirty" ]] || e1r2_die "v2 seller-recovery runtime is dirty: $runtime"
   E1R2_CODE_ROOT="$runtime"
-  E1R2_VALIDATOR="$runtime/replication/atari/automation/validate_atari_e1_seller_threshold_residual_recovery.py"
+  E1R2_VALIDATOR="$runtime/$E1R2_VALIDATOR_RELATIVE"
   local activated_learning_rate
   activated_learning_rate=$(jq -r '.protocol.training_config.learning_rate' "$E1R2_ACTIVATION") || return $?
   [[ "$activated_learning_rate" == "$E1R2_LEARNING_RATE" ]] || \

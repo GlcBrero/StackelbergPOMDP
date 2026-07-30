@@ -14,7 +14,7 @@ typeset -g E1R2_SELECTOR_GUARD_OWNED="$STACKPOMDP_LOCK_RESULT_OWNED"
 
 typeset -gx STACKPOMDP_E1R2_SELECTOR_TOKEN="${STACKPOMDP_E1R2_SELECTOR_TOKEN:-$(hostname)-$$-$(date +%s)-${RANDOM}}"
 stackpomdp_claim_owned_lock "$E1R2_LOCK" \
-  "$STACKPOMDP_E1R2_SELECTOR_TOKEN" "v2 seller threshold-residual selector" || {
+  "$STACKPOMDP_E1R2_SELECTOR_TOKEN" "$E1R2_PROFILE_LABEL selector" || {
   lock_status=$?
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_SELECTOR_GUARD_TOKEN" \
@@ -29,7 +29,7 @@ function release_e1r2_selector_lock() {
   e2_release_transient_lock || status=$?
   stackpomdp_release_owned_lock "$E1R2_LOCK" \
     "$STACKPOMDP_E1R2_SELECTOR_TOKEN" "$E1R2_SELECTOR_LOCK_OWNED" \
-    "v2 seller threshold-residual selector" || status=$?
+    "$E1R2_PROFILE_LABEL selector" || status=$?
   typeset -g E1R2_SELECTOR_LOCK_OWNED=0
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_SELECTOR_GUARD_TOKEN" \
@@ -103,7 +103,7 @@ while IFS= read -r candidate; do
 done < <(e1r2_candidate_arguments)
 
 revision=$(jq -r '.code_revision' "$E1R2_ACTIVATION")
-export MPLCONFIGDIR=/private/tmp/mpl-stackpomdp-e1-seller-threshold-residual-v2
+export MPLCONFIGDIR="/private/tmp/mpl-stackpomdp-e1-seller-${E1R2_TOKEN}"
 set +e
 (
   set +e

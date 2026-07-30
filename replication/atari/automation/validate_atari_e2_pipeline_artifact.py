@@ -42,21 +42,22 @@ E1_SELLER_RECOVERY_MODULE_NAME = (
     "validate_atari_e1_seller_conditioning_recovery.py"
 )
 E1_SELLER_THRESHOLD_RESIDUAL_SOURCE_KIND = (
-    "seller_conditioning_recovery_v2_threshold_residual_v1"
+    "seller_conditioning_recovery_v3_direct_threshold_residual_v1"
 )
 E1_SELLER_THRESHOLD_RESIDUAL_ACTIVATION_NAME = (
-    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_activation.json"
+    "e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_"
+    "activation.json"
 )
 E1_SELLER_THRESHOLD_RESIDUAL_REPORT_NAME = (
-    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_"
-    "all6_selector_v2.json"
+    "e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_"
+    "all6_selector_v3.json"
 )
 E1_SELLER_THRESHOLD_RESIDUAL_GATE_NAME = (
-    "e1_seller_conditioning_recovery_v2_threshold_residual_v1_"
-    "all6_selector_v2.gate.json"
+    "e1_seller_conditioning_recovery_v3_direct_threshold_residual_v1_"
+    "all6_selector_v3.gate.json"
 )
 E1_SELLER_THRESHOLD_RESIDUAL_MODULE_NAME = (
-    "validate_atari_e1_seller_threshold_residual_recovery.py"
+    "validate_atari_e1_seller_direct_threshold_residual_recovery.py"
 )
 E1_PRIMARY_PROTOCOL_NAME = (
     "e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json"
@@ -97,7 +98,7 @@ E1_PRIMARY_CHECK_NAMES = (
     "price 0.5 buyer net payoff",
 )
 E2_ORCHESTRATION_SCHEMA = "stackpomdp.atari.e2_sequential_orchestration.v1"
-E2_NAMESPACE = "e1seller_threshold_residual_v2"
+E2_NAMESPACE = "e1seller_direct_threshold_residual_v3"
 CANONICAL_ROM_SHA256 = (
     "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
 )
@@ -885,10 +886,12 @@ def _run_seller_threshold_residual_validator(arguments: list[str]) -> dict:
 
 def canonical_seller_threshold_residual_architecture() -> dict:
     from stackelberg_pomdp.atari.stackpomdp_policy import (
-        threshold_residual_architecture_provenance,
+        direct_threshold_residual_architecture_provenance,
     )
 
-    return threshold_residual_architecture_provenance(state_features=64)
+    return direct_threshold_residual_architecture_provenance(
+        state_features=64
+    )
 
 
 def _validate_seller_threshold_residual_gate(args: argparse.Namespace) -> dict:
@@ -928,24 +931,41 @@ def _validate_seller_threshold_residual_gate(args: argparse.Namespace) -> dict:
     )
 
     metadata = checkpoint_policy_metadata(
-        checkpoint, device="cpu", label="selected v2 E1 seller"
+        checkpoint, device="cpu", label="selected v3 E1 seller"
     )
-    expect_equal(metadata.get("sha256"), digest, label="loaded v2 seller SHA")
+    expect_equal(metadata.get("sha256"), digest, label="loaded v3 seller SHA")
     expect_equal(
         metadata.get("economic_architecture"),
         architecture,
-        label="loaded v2 seller architecture",
+        label="loaded v3 seller architecture",
     )
     training_code_revision = metadata.get("e1_training_code_revision")
     expect_equal(
         training_code_revision,
         gate.get("activation", {}).get("code_revision"),
-        label="v2 seller checkpoint versus activation training revision",
+        label="v3 seller checkpoint versus activation training revision",
     )
     expect_equal(
         gate.get("e1_training_code_revision"),
         training_code_revision,
-        label="v2 seller gate training revision",
+        label="v3 seller gate training revision",
+    )
+    from replication.atari.train_atari_meta_response_sb3 import (
+        direct_threshold_initialization_contract,
+    )
+
+    initialization = direct_threshold_initialization_contract(
+        state_features=64, economic_hidden=64
+    )
+    expect_equal(
+        metadata.get("direct_threshold_initialization"),
+        initialization,
+        label="loaded v3 seller direct-threshold initialization",
+    )
+    expect_equal(
+        gate.get("direct_threshold_initialization"),
+        initialization,
+        label="v3 seller gate direct-threshold initialization",
     )
     support = {
         "seller_threshold_residual_recovery_gate": {
@@ -957,6 +977,7 @@ def _validate_seller_threshold_residual_gate(args: argparse.Namespace) -> dict:
         "warmup_probe": dict(gate["warmup_probe"]),
         "seller_release": dict(gate["seller_release"]),
         "economic_architecture": architecture,
+        "direct_threshold_initialization": initialization,
         "e1_training_code_revision": training_code_revision,
     }
     return {

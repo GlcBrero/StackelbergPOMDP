@@ -554,11 +554,12 @@ def test_launchers_are_preflighted_gated_fixed_lr_and_wandb_visible():
     assert "E1R2_V1_GUARD_LOCK" in common
     assert "E1R2_TARGET_STEPS=(800320 1200480 1600640 2000800 2400960)" in common
     assert "threshold_residual_v1" in common
-    assert train.count("--economic-threshold-residual") == 3
+    assert 'E1R2_ARCHITECTURE_FLAGS=(--economic-threshold-residual)' in common
+    assert train.count('"${E1R2_ARCHITECTURE_FLAGS[@]}"') == 3
     assert train.count('--learning-rate "$E1R2_LEARNING_RATE"') == 3
     assert '--wandb-job-type "$E1R2_WARMUP_JOB_TYPE"' in train
     assert '--wandb-job-type "$E1R2_TARGET_JOB_TYPE"' in train
-    assert "starting no-W&B 20500-step pure-64 residual real-ALE preflight" in train
+    assert "starting no-W&B 20500-step $E1R2_PROFILE_LABEL real-ALE preflight" in train
     assert train.index("\nrun_v2_pure64_preflight\n") < train.index(
         "\ne1r2_activate\n"
     )

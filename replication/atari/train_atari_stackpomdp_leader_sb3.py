@@ -77,6 +77,9 @@ E1_ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
 E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
     "atari_e1_threshold_residual_training_code_revision"
 )
+E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_direct_threshold_initialization_provenance"
+)
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
     "replication/atari/sb3_common.py",
@@ -287,6 +290,31 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             policy_metadata["e1_training_code_revision"] = (
                 training_code_revision
             )
+            if bool(getattr(
+                    policy,
+                    "economic_threshold_residual_direct_input",
+                    False,
+            )):
+                from replication.atari.train_atari_meta_response_sb3 import (
+                    direct_threshold_initialization_provenance,
+                )
+
+                expected_initialization = (
+                    direct_threshold_initialization_provenance(policy)
+                )
+                recorded_initialization = getattr(
+                    model,
+                    E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE,
+                    None,
+                )
+                if recorded_initialization != expected_initialization:
+                    raise ValueError(
+                        f"{label} direct-threshold policy lacks exact saved "
+                        "initialization provenance"
+                    )
+                policy_metadata["direct_threshold_initialization"] = (
+                    expected_initialization
+                )
         result = {
             "path": str(resolved),
             "sha256": _sha256_file(resolved),
@@ -299,6 +327,10 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
         if economic_architecture is not None:
             result["economic_architecture"] = economic_architecture
             result["e1_training_code_revision"] = training_code_revision
+            if "direct_threshold_initialization" in policy_metadata:
+                result["direct_threshold_initialization"] = policy_metadata[
+                    "direct_threshold_initialization"
+                ]
         manifest = getattr(model, E2_PROVENANCE_ATTRIBUTE, None)
         if manifest is not None:
             result["e2_provenance_manifest"] = _canonical_json_copy(manifest)
@@ -745,7 +777,17 @@ def _new_model(args, vec_env, *, provenance_manifest):
             )) != (
                 source_policy.get("economic_architecture", {}).get(
                     "parameterization"
-                ) == "seller_threshold_residual_beta_v1"
+                ) in {
+                    "seller_threshold_residual_beta_v1",
+                    "seller_direct_threshold_residual_beta_v3",
+                }
+            )
+            or bool(provenance.get(
+                "source_economic_threshold_residual_direct_input", False
+            )) != (
+                source_policy.get("economic_architecture", {}).get(
+                    "parameterization"
+                ) == "seller_direct_threshold_residual_beta_v3"
             )
     ):
         raise RuntimeError(

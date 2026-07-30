@@ -97,6 +97,7 @@ PREFLIGHT_PROBE_NAME = (
     "e1_seller_conditioning_recovery_v2_threshold_residual_v1_"
     "pure64_preflight_probe.json"
 )
+PREFLIGHT_RECORD_KEY = "pure64_preflight"
 
 # The exact already-completed v1 negative experiment.  The v2 activation also
 # recomputes every semantic check; these hashes prevent substituting another
@@ -163,6 +164,108 @@ def canonical_training_config():
         "learning_rate": LEARNING_RATE,
         "economic_threshold_residual": True,
     }
+
+
+def controlled_change_contract():
+    return {
+        "only_architectural_change_from_v1": (
+            "preserve the 64-input seller economic head, then blend its "
+            "Beta mean equally with the current event threshold while "
+            "preserving concentration"
+        ),
+        "economic_architecture": canonical_economic_architecture(),
+        "new_observation_fields": [],
+        "environment_unchanged": True,
+        "samplers_unchanged": True,
+        "ppo_hyperparameters_unchanged": True,
+        "learning_rate": LEARNING_RATE,
+        "fixed_anchor_is_inductive_bias": True,
+        "learned_threshold_slope_claim": False,
+    }
+
+
+def probe_execution_statistics():
+    return ["learned base Beta mean", "final residual Beta mean"]
+
+
+def conditioning_probe_contract(path):
+    return {
+        "path": str(path),
+        "probe": v2_probe.PROBE_NAME,
+        "gate": v2_probe.PROBE_GATE_NAME,
+        "gate_math": "v1_numeric_sanity_plus_learned_base_response",
+        "no_ale": True,
+        "environment_steps": 0,
+        "deterministic_statistics": probe_execution_statistics(),
+        "require_all_outputs_finite_and_unit": True,
+        "minimum_endpoint_response": MINIMUM_ENDPOINT_RESPONSE,
+        "minimum_current_coordinate_response": (
+            v2_probe.MINIMUM_CURRENT_COORDINATE_RESPONSE
+        ),
+        "minimum_learned_base_response": (
+            v2_probe.MINIMUM_LEARNED_BASE_ENDPOINT_RESPONSE
+        ),
+        "maximum_adjacent_reversal": MAXIMUM_ADJACENT_REVERSAL,
+        "require_pass": True,
+    }
+
+
+def probe_gate_from_value(value):
+    all_equal_rows = value.get("all_equal_thresholds", [])
+    final_all_equal = [
+        row.get("event_final_residual_beta_mean_prices")
+        for row in all_equal_rows
+    ]
+    base_all_equal = [
+        row.get("event_learned_base_beta_mean_prices")
+        for row in all_equal_rows
+    ]
+    coordinate = value.get(
+        "current_coordinate_only_sensitivity", {}
+    ).get("rows", [])
+    return v2_probe.threshold_residual_warmup_gate(
+        final_all_equal=final_all_equal,
+        final_coordinate_low=[
+            row.get("low_final_residual_beta_mean_price")
+            for row in coordinate
+        ],
+        final_coordinate_high=[
+            row.get("high_final_residual_beta_mean_price")
+            for row in coordinate
+        ],
+        base_all_equal=base_all_equal,
+        base_coordinate_low=[
+            row.get("low_learned_base_beta_mean_price")
+            for row in coordinate
+        ],
+        base_coordinate_high=[
+            row.get("high_learned_base_beta_mean_price")
+            for row in coordinate
+        ],
+    )
+
+
+def probe_record_extras(gate):
+    return {
+        "minimum_learned_base_endpoint_response": gate["checks"][
+            "minimum_learned_base_all_one_minus_all_zero_mean_response"
+        ].get("actual"),
+        "minimum_learned_base_coordinate_response": gate["checks"][
+            "minimum_learned_base_current_coordinate_mean_response"
+        ].get("actual"),
+    }
+
+
+def validate_additional_architecture_metadata(metadata, activation):
+    del metadata, activation
+
+
+def validate_additional_evaluation_provenance(value, checkpoint_metadata):
+    del value, checkpoint_metadata
+
+
+def selection_gate_additional_fields():
+    return {}
 
 
 def activation_learning_rate(activation):
@@ -419,22 +522,8 @@ def build_activation(args):
         "seller_release": {"path": str(release), "sha256": sha256_file(release)},
         "e0b_source": {"path": str(e0b), "sha256": CANONICAL_E0B_SHA256},
         "rom": {"path": str(rom), "sha256": CANONICAL_ROM_SHA256},
-        "pure64_preflight": preflight,
-        "controlled_change": {
-            "only_architectural_change_from_v1": (
-                "preserve the 64-input seller economic head, then blend its "
-                "Beta mean equally with the current event threshold while "
-                "preserving concentration"
-            ),
-            "economic_architecture": canonical_economic_architecture(),
-            "new_observation_fields": [],
-            "environment_unchanged": True,
-            "samplers_unchanged": True,
-            "ppo_hyperparameters_unchanged": True,
-            "learning_rate": LEARNING_RATE,
-            "fixed_anchor_is_inductive_bias": True,
-            "learned_threshold_slope_claim": False,
-        },
+        PREFLIGHT_RECORD_KEY: preflight,
+        "controlled_change": controlled_change_contract(),
         "protocol": {
             "role": ROLE,
             "actor_loss_mode": ACTOR_LOSS_MODE,
@@ -451,27 +540,9 @@ def build_activation(args):
                 "expected_total_timesteps": WARMUP_TIMESTEPS,
                 "checkpoint": str(warmup),
                 "selectable": False,
-                "conditioning_probe": {
-                    "path": str(warmup_probe),
-                    "probe": v2_probe.PROBE_NAME,
-                    "gate": v2_probe.PROBE_GATE_NAME,
-                    "gate_math": "v1_numeric_sanity_plus_learned_base_response",
-                    "no_ale": True,
-                    "environment_steps": 0,
-                    "deterministic_statistics": [
-                        "learned base Beta mean", "final residual Beta mean"
-                    ],
-                    "require_all_outputs_finite_and_unit": True,
-                    "minimum_endpoint_response": MINIMUM_ENDPOINT_RESPONSE,
-                    "minimum_current_coordinate_response": (
-                        v2_probe.MINIMUM_CURRENT_COORDINATE_RESPONSE
-                    ),
-                    "minimum_learned_base_response": (
-                        v2_probe.MINIMUM_LEARNED_BASE_ENDPOINT_RESPONSE
-                    ),
-                    "maximum_adjacent_reversal": MAXIMUM_ADJACENT_REVERSAL,
-                    "require_pass": True,
-                },
+                "conditioning_probe": conditioning_probe_contract(
+                    warmup_probe
+                ),
             },
             "target": {
                 "resume_complete_model_optimizer_clock": True,
@@ -562,7 +633,7 @@ def _validate_activation_contract(value):
         == CANONICAL_ROM_SHA256,
         "v2 ROM changed",
     )
-    preflight = value.get("pure64_preflight", {})
+    preflight = value.get(PREFLIGHT_RECORD_KEY, {})
     expected_preflight = validate_preflight_evidence(
         checkpoint=preflight.get("checkpoint", {}).get("path", ""),
         probe=preflight.get("conditioning_probe", {}).get("path", ""),
@@ -575,21 +646,7 @@ def _validate_activation_contract(value):
         preflight == expected_preflight,
         "v2 pure-64 real-ALE preflight evidence changed",
     )
-    expected_change = {
-        "only_architectural_change_from_v1": (
-            "preserve the 64-input seller economic head, then blend its "
-            "Beta mean equally with the current event threshold while "
-            "preserving concentration"
-        ),
-        "economic_architecture": canonical_economic_architecture(),
-        "new_observation_fields": [],
-        "environment_unchanged": True,
-        "samplers_unchanged": True,
-        "ppo_hyperparameters_unchanged": True,
-        "learning_rate": LEARNING_RATE,
-        "fixed_anchor_is_inductive_bias": True,
-        "learned_threshold_slope_claim": False,
-    }
+    expected_change = controlled_change_contract()
     _require(value.get("controlled_change") == expected_change, "v2 controlled change changed")
     protocol = value.get("protocol", {})
     learning_rate = activation_learning_rate(value)
@@ -619,27 +676,9 @@ def _validate_activation_contract(value):
     _require(warmup.get("sampler") == canonical_all_equal_sampler(), "v2 warm-up sampler changed")
     _require(warmup.get("start_total_timesteps") == 0 and warmup.get("additional_timesteps") == WARMUP_TIMESTEPS and warmup.get("expected_total_timesteps") == WARMUP_TIMESTEPS, "v2 warm-up clock changed")
     _require(warmup.get("selectable") is False, "v2 warm-up became selectable")
-    expected_probe = {
-        "path": warmup["conditioning_probe"]["path"],
-        "probe": v2_probe.PROBE_NAME,
-        "gate": v2_probe.PROBE_GATE_NAME,
-        "gate_math": "v1_numeric_sanity_plus_learned_base_response",
-        "no_ale": True,
-        "environment_steps": 0,
-        "deterministic_statistics": [
-            "learned base Beta mean", "final residual Beta mean"
-        ],
-        "require_all_outputs_finite_and_unit": True,
-        "minimum_endpoint_response": MINIMUM_ENDPOINT_RESPONSE,
-        "minimum_current_coordinate_response": (
-            v2_probe.MINIMUM_CURRENT_COORDINATE_RESPONSE
-        ),
-        "minimum_learned_base_response": (
-            v2_probe.MINIMUM_LEARNED_BASE_ENDPOINT_RESPONSE
-        ),
-        "maximum_adjacent_reversal": MAXIMUM_ADJACENT_REVERSAL,
-        "require_pass": True,
-    }
+    expected_probe = conditioning_probe_contract(
+        warmup["conditioning_probe"]["path"]
+    )
     _require(warmup.get("conditioning_probe") == expected_probe, "v2 probe contract changed")
     _require(target.get("resume_complete_model_optimizer_clock") is True, "v2 target does not resume full state")
     _same_path(target.get("resume_checkpoint"), warmup.get("checkpoint"), label="v2 target resume")
@@ -729,6 +768,7 @@ def _validate_architecture_metadata(metadata, activation):
     )
     activation_learning_rate(activation)
     _require(metadata.get("training_config") == canonical_training_config(), "candidate PPO/architecture config changed")
+    validate_additional_architecture_metadata(metadata, activation)
 
 
 def _validate_warmup_metadata(metadata, activation):
@@ -772,9 +812,7 @@ def validate_warmup_probe(*, activation, probe, checkpoint=None, require_pass=Fa
         "read_only_checkpoint": True,
         "ale_instantiated": False,
         "environment_steps": 0,
-        "deterministic_statistics": [
-            "learned base Beta mean", "final residual Beta mean"
-        ],
+        "deterministic_statistics": probe_execution_statistics(),
         "device": "cpu",
     }, "v2 probe execution contract changed")
     checkpoint_path = Path(checkpoint or activation["protocol"]["warmup"]["checkpoint"]).expanduser().resolve()
@@ -794,36 +832,9 @@ def validate_warmup_probe(*, activation, probe, checkpoint=None, require_pass=Fa
     _require(value.get("protocol", {}).get("economic_architecture") == canonical_economic_architecture(), "v2 probe protocol architecture changed")
     all_equal_rows = value.get("all_equal_thresholds", [])
     _require([row.get("threshold") for row in all_equal_rows] == [0.0, 0.25, 0.5, 0.75, 1.0], "v2 probe grid changed")
-    final_all_equal = [
-        row.get("event_final_residual_beta_mean_prices")
-        for row in all_equal_rows
-    ]
-    base_all_equal = [
-        row.get("event_learned_base_beta_mean_prices")
-        for row in all_equal_rows
-    ]
     coordinate = value.get("current_coordinate_only_sensitivity", {}).get("rows", [])
     _require([row.get("event_index") for row in coordinate] == list(range(5)), "v2 coordinate probe changed")
-    final_low = [
-        row.get("low_final_residual_beta_mean_price") for row in coordinate
-    ]
-    final_high = [
-        row.get("high_final_residual_beta_mean_price") for row in coordinate
-    ]
-    base_low = [
-        row.get("low_learned_base_beta_mean_price") for row in coordinate
-    ]
-    base_high = [
-        row.get("high_learned_base_beta_mean_price") for row in coordinate
-    ]
-    gate = v2_probe.threshold_residual_warmup_gate(
-        final_all_equal=final_all_equal,
-        final_coordinate_low=final_low,
-        final_coordinate_high=final_high,
-        base_all_equal=base_all_equal,
-        base_coordinate_low=base_low,
-        base_coordinate_high=base_high,
-    )
+    gate = probe_gate_from_value(value)
     _require(value.get("warmup_gate") == gate, "v2 probe gate does not recompute")
     inferred = v2_probe.run_probe_from_checkpoints(
         checkpoint=checkpoint_path,
@@ -847,12 +858,7 @@ def validate_warmup_probe(*, activation, probe, checkpoint=None, require_pass=Fa
         "environment_steps": 0,
         "minimum_endpoint_response": endpoint.get("actual"),
         "largest_adjacent_reversal": reversal.get("actual"),
-        "minimum_learned_base_endpoint_response": gate["checks"][
-            "minimum_learned_base_all_one_minus_all_zero_mean_response"
-        ].get("actual"),
-        "minimum_learned_base_coordinate_response": gate["checks"][
-            "minimum_learned_base_current_coordinate_mean_response"
-        ].get("actual"),
+        **probe_record_extras(gate),
         "economic_architecture": canonical_economic_architecture(),
     }
 
@@ -887,6 +893,7 @@ def _validate_evaluation(path, *, current, history, expected_step, checkpoint_me
         == revision,
         "v2 evaluation and checkpoint training revisions differ",
     )
+    validate_additional_evaluation_provenance(value, checkpoint_metadata)
     from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
     readiness = evaluator.seller_threshold_residual_behavioral_gate(
         random_result=value["random"],
@@ -1347,6 +1354,7 @@ def build_selection_gate(args, report):
             "confirmation_policy": "screen_winner_only_no_fallback",
             "fallback_allowed": False,
         },
+        **selection_gate_additional_fields(),
     }
 
 

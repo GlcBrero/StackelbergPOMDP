@@ -43,7 +43,7 @@ trap 'interrupt_primary_e2_pipeline 129' HUP
 trap 'interrupt_primary_e2_pipeline 130' INT
 trap 'interrupt_primary_e2_pipeline 143' TERM
 
-typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_threshold_residual_recovery.sh"
+typeset -gr SELLER_STAGE="$AUTOMATION_DIR/run_atari_clean_e1_seller_direct_threshold_residual_recovery.sh"
 typeset -gr E2_STAGE="$AUTOMATION_DIR/run_atari_clean_e2_sequential.sh"
 
 function run_required_stage() {

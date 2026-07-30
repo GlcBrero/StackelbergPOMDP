@@ -56,7 +56,7 @@ set +e
   --wandb \
   --wandb-project StackPOMDP \
   --wandb-group atari_clean_curriculum \
-  --wandb-job-type atari_e2_threshold_residual_v2_seller_leader \
+  --wandb-job-type atari_e2_direct_threshold_residual_v3_seller_leader \
   --wandb-name "$E2_RUN_NAME" \
   2>&1 | tee "$E2_TRAIN_LOG"
 exit_code=$pipestatus[1]

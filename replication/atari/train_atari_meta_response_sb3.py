@@ -73,6 +73,9 @@ ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
 E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
     "atari_e1_threshold_residual_training_code_revision"
 )
+DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_direct_threshold_initialization_provenance"
+)
 
 
 def _actor_loss_mode(args):
@@ -85,6 +88,12 @@ def _e1_sampler_mode(args):
 
 def _economic_threshold_residual(args):
     return bool(getattr(args, "economic_threshold_residual", False))
+
+
+def _economic_threshold_residual_direct_input(args):
+    return bool(getattr(
+        args, "economic_threshold_residual_direct_input", False
+    ))
 
 
 def _economic_initialization(args):
@@ -121,7 +130,9 @@ def _run_variant_suffix(args):
         )
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
-    if _economic_threshold_residual(args):
+    if _economic_threshold_residual_direct_input(args):
+        parts.append("direct_threshold_residual_v3")
+    elif _economic_threshold_residual(args):
         parts.append("threshold_residual_v1")
     if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
         parts.append("all_equal_v1")
@@ -144,6 +155,13 @@ def _validate_e0b_source(provenance):
         raise ValueError(
             "E1 actor sources must be ordinary E0b gameplay checkpoints "
             "without the seller-only threshold-residual transform"
+        )
+    if bool(provenance.get(
+            "source_economic_threshold_residual_direct_input", False
+    )):
+        raise ValueError(
+            "E1 actor sources must be ordinary E0b gameplay checkpoints "
+            "without the seller-only direct threshold input"
         )
     if not math.isclose(
             float(provenance["source_pretrained_lr_scale"]),
@@ -313,6 +331,86 @@ def _attach_training_code_revision(model, *, initialize):
     return saved
 
 
+def direct_threshold_initialization_contract(
+        *, state_features=64, economic_hidden=64
+):
+    """Return the exact architecture-level v3 initialization contract."""
+
+    state_features = int(state_features)
+    economic_hidden = int(economic_hidden)
+    return {
+        "schema": "stackpomdp.atari.e1_direct_threshold_initialization.v1",
+        "architecture_parameterization": (
+            "seller_direct_threshold_residual_beta_v3"
+        ),
+        "parameter": "economic_head.0.weight",
+        "first_linear_shape": [economic_hidden, state_features + 1],
+        "ordinary_prefix_columns": [0, state_features],
+        "new_direct_column_index": state_features,
+        "new_direct_column_width": 1,
+        "new_direct_parameter_count": economic_hidden,
+        "new_direct_column_initialized_exact_zero": True,
+        "initial_learned_base_threshold_slope": 0.0,
+        "canonical_64_input_head_prefix_copied_exactly": True,
+        "canonical_rng_stream_preserved": True,
+        "non_economic_weights_same_seed_invariant": True,
+    }
+
+
+def direct_threshold_initialization_provenance(policy):
+    """Return the exact immutable initialization record for seller v3."""
+
+    if not bool(getattr(
+            policy, "economic_threshold_residual_direct_input", False
+    )):
+        return None
+    return direct_threshold_initialization_contract(
+        state_features=policy.state_features,
+        economic_hidden=policy.economic_hidden,
+    )
+
+
+def _attach_direct_threshold_initialization_provenance(model, *, initialize):
+    """Persist v3 zero-column provenance and reject cross-mode resumes."""
+
+    expected = direct_threshold_initialization_provenance(model.policy)
+    recorded = getattr(
+        model, DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
+    )
+    if expected is None:
+        if recorded is not None:
+            raise ValueError(
+                "non-v3 E1 checkpoint unexpectedly stores direct-threshold "
+                "initialization provenance"
+            )
+        return None
+    if recorded is None:
+        if not initialize:
+            raise ValueError(
+                "direct-threshold E1 resume is missing exact initialization "
+                "provenance"
+            )
+        direct_column = model.policy.economic_head[0].weight[
+            :, model.policy.state_features
+        ]
+        if not th.equal(direct_column, th.zeros_like(direct_column)):
+            raise RuntimeError(
+                "direct-threshold input column was not initialized to exact zero"
+            )
+        setattr(
+            model,
+            DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE,
+            dict(expected),
+        )
+        return expected
+    if recorded != expected:
+        raise ValueError(
+            "direct-threshold E1 initialization provenance differs from the "
+            "saved architecture"
+        )
+    return recorded
+
+
 def bilateral_config(args, *, seed):
     return BilateralAtariConfig(
         seed=int(seed),
@@ -358,6 +456,9 @@ def _new_model(args, vec_env):
             "pretrained_lr_scale": args.pretrained_lr_scale,
             "economic_threshold_residual": (
                 _economic_threshold_residual(args)
+            ),
+            "economic_threshold_residual_direct_input": (
+                _economic_threshold_residual_direct_input(args)
             ),
         },
         learning_rate=args.learning_rate,
@@ -409,6 +510,9 @@ def _new_model(args, vec_env):
     )
     _attach_sampler_contract(model, args)
     _attach_economic_architecture_contract(model)
+    _attach_direct_threshold_initialization_provenance(
+        model, initialize=True
+    )
     _attach_training_code_revision(model, initialize=True)
     print({"actor_transfer": provenance}, flush=True)
     return model
@@ -449,6 +553,14 @@ def _resumed_model(args, vec_env):
         raise ValueError(
             "--economic-threshold-residual must match the saved E1 "
             f"checkpoint ({saved_threshold_residual})"
+        )
+    saved_direct_input = bool(getattr(
+        policy, "economic_threshold_residual_direct_input", False
+    ))
+    if saved_direct_input != _economic_threshold_residual_direct_input(args):
+        raise ValueError(
+            "--economic-threshold-residual-direct-input must match the saved "
+            f"E1 checkpoint ({saved_direct_input})"
         )
     expected_target_kl = getattr(args, "target_kl", None)
     saved_target_kl = getattr(model, "target_kl", None)
@@ -532,6 +644,9 @@ def _resumed_model(args, vec_env):
         preserve_existing_sampler=bool(getattr(args, "eval_only", False)),
     )
     _attach_economic_architecture_contract(model)
+    _attach_direct_threshold_initialization_provenance(
+        model, initialize=False
+    )
     _attach_training_code_revision(model, initialize=False)
     return model
 
@@ -698,6 +813,16 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
+        "--economic-threshold-residual-direct-input",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "seller-only E1 v3 parameterization: append the current event's "
+            "opponent threshold to the 64D economic base-head input while "
+            "retaining the fixed residual mean anchor"
+        ),
+    )
+    parser.add_argument(
         "--actor-loss-mode",
         choices=ACTOR_LOSS_MODES,
         default=STANDARD_ACTOR_LOSS_MODE,
@@ -791,6 +916,14 @@ def parse_args(argv=None):
             "--economic-threshold-residual is reserved for E1 seller "
             "response policies"
         )
+    if (
+            args.economic_threshold_residual_direct_input
+            and not args.economic_threshold_residual
+    ):
+        parser.error(
+            "--economic-threshold-residual-direct-input requires "
+            "--economic-threshold-residual"
+        )
     if args.n_steps != transitions:
         parser.error(f"--n-steps must equal one full E1 episode ({transitions})")
     if args.batch_size <= 0 or args.batch_size > buffer_size:
@@ -856,6 +989,9 @@ def main(argv=None):
         training_code_revision = getattr(
             model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
         )
+        direct_initialization = getattr(
+            model, DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
+        )
         if run is not None:
             wandb_provenance = {
                 "e0b_source_provenance": source_provenance,
@@ -874,6 +1010,10 @@ def main(argv=None):
                 wandb_provenance["e1_training_code_revision"] = (
                     training_code_revision
                 )
+                if direct_initialization is not None:
+                    wandb_provenance[
+                        "direct_threshold_initialization_provenance"
+                    ] = direct_initialization
             run.config.update(wandb_provenance, allow_val_change=True)
         if not args.eval_only:
             callback = EpisodeCheckpointCallback(
@@ -923,6 +1063,10 @@ def main(argv=None):
             evaluation_provenance["e1_training_code_revision"] = (
                 training_code_revision
             )
+            if direct_initialization is not None:
+                evaluation_provenance[
+                    "direct_threshold_initialization"
+                ] = direct_initialization
         evaluation["provenance"] = evaluation_provenance
         write_csv(
             fixed_context_csv_path(args.checkpoint),

@@ -18,12 +18,12 @@ typeset -gr WANDB_ROOT="$CHECKPOINT_ROOT/wandb_runs"
 typeset -gr LOG_ROOT="$ROOT/replication/atari/results/run_logs/clean_20260728"
 typeset -gr E1_OUTPUT="$ROOT/replication/atari/results/e1_selections"
 typeset -gr E2_OUTPUT="$ROOT/replication/atari/results/e2_selections"
-typeset -gr E2_NAMESPACE=e1seller_threshold_residual_v2
-typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v2_threshold_residual_v1
+typeset -gr E2_NAMESPACE=e1seller_direct_threshold_residual_v3
+typeset -gr E1_REQUIRED_SELLER_SOURCE_KIND=seller_conditioning_recovery_v3_direct_threshold_residual_v1
 typeset -gr E1_COHORT="$CHECKPOINT_ROOT/e2_e1_gate_cohort_${E2_NAMESPACE}.json"
 typeset -gr ROM="$ROOT/stackelberg_pomdp/atari/roms/space_invaders.bin"
 typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301
-typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-threshold-residual-v2-sequential.lock
+typeset -gr E2_PIPELINE_LOCK=/private/tmp/stackpomdp-atari-e2-direct-threshold-residual-v3-sequential.lock
 
 typeset -gra E2_STEPS=(400680 800520 1200360 1600200 2000040)
 typeset -gr E2_TIMESTEPS=2000040
@@ -211,6 +211,7 @@ function e2_prepare_runtime() {
     replication/atari/evaluate_atari_stackpomdp_leader_sb3.py \
     replication/atari/probe_atari_e1_seller_conditioning.py \
     replication/atari/probe_atari_e1_seller_threshold_residual.py \
+    replication/atari/probe_atari_e1_seller_direct_threshold_residual.py \
     replication/atari/train_atari_meta_response_sb3.py \
     replication/atari/train_atari_stackpomdp_leader_sb3.py \
     replication/atari/sb3_common.py \

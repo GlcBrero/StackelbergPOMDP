@@ -115,6 +115,48 @@ def threshold_residual_architecture_provenance(*, state_features):
     }
 
 
+def direct_threshold_residual_architecture_provenance(*, state_features):
+    """Return the exact v3 direct-threshold residual architecture contract."""
+
+    provenance = threshold_residual_architecture_provenance(
+        state_features=state_features
+    )
+    provenance.update({
+        "schema": "stackpomdp.atari.economic_actor_architecture.v3",
+        "parameterization": "seller_direct_threshold_residual_beta_v3",
+        "base_head_input_features": int(state_features) + 1,
+        "ordinary_state_embedding_features": int(state_features),
+        "direct_extra_input_features": 1,
+        "base_head_input_order": [
+            f"shared_state_embedding[0:{int(state_features)}]",
+            "t_current",
+        ],
+        "direct_current_threshold_input": {
+            "definition": (
+                "dot(actor_state[event_one_hot], "
+                "actor_state[opponent_commitment])"
+            ),
+            "deterministic_from_existing_actor_state": True,
+            "new_observation_fields": [],
+            "destination": "economic_base_head_only",
+            "first_linear_column_index": int(state_features),
+            "first_linear_column_width": 1,
+            "initialization": "exact_zero",
+            "initial_learned_base_threshold_slope": 0.0,
+        },
+        "initialization_invariance": {
+            "canonical_64_input_head_prefix_copied_exactly": True,
+            "only_new_direct_input_column_zero_initialized": True,
+            "canonical_rng_stream_preserved": True,
+            "non_economic_weights_same_seed_invariant": True,
+        },
+        "state_encoder_uses_current_threshold_outside_existing_state": False,
+        "game_head_uses_direct_input": False,
+        "critic_uses_direct_input": False,
+    })
+    return provenance
+
+
 class CompositeAtariFeaturesExtractor(BaseFeaturesExtractor):
     """Nature CNN plus the shared 64-unit low-dimensional state encoder."""
 
@@ -273,7 +315,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
     price/threshold may depend on live state and the opponent commitment.
     A full-input E1 seller may optionally retain the ordinary 64-input Beta
     head but blend its mean with the current event's opponent threshold after
-    the head.  The default is disabled for checkpoint compatibility.
+    the head.  A separately versioned seller-only variant also appends that
+    deterministic scalar to the base head.  Both defaults are disabled for
+    checkpoint compatibility.
     ``'event_only'`` is used for E2 leaders: before the economic head, every
     state coordinate except the five-entry event identity is set to zero.
 
@@ -297,6 +341,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             critic_hidden=256,
             pretrained_lr_scale=1.0,
             economic_threshold_residual=False,
+            economic_threshold_residual_direct_input=False,
             **kwargs,
     ):
         if economic_role not in ECONOMIC_ROLES:
@@ -307,6 +352,20 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             )
         if not isinstance(economic_threshold_residual, (bool, np.bool_)):
             raise TypeError("economic_threshold_residual must be Boolean")
+        if not isinstance(
+                economic_threshold_residual_direct_input, (bool, np.bool_)
+        ):
+            raise TypeError(
+                "economic_threshold_residual_direct_input must be Boolean"
+            )
+        if (
+                economic_threshold_residual_direct_input
+                and not economic_threshold_residual
+        ):
+            raise ValueError(
+                "the direct threshold input requires the threshold-residual "
+                "parameterization"
+            )
         if economic_threshold_residual and (
                 economic_role != "seller" or economic_input_mode != "full"
         ):
@@ -334,6 +393,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.critic_hidden = int(critic_hidden)
         self.pretrained_lr_scale = float(pretrained_lr_scale)
         self.economic_threshold_residual = bool(economic_threshold_residual)
+        self.economic_threshold_residual_direct_input = bool(
+            economic_threshold_residual_direct_input
+        )
         if min(
                 self.visual_features,
                 self.state_features,
@@ -421,7 +483,19 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.game_action_net = nn.Linear(
             actor_feature_dim, self.game_action_count
         )
-        self.economic_head = self._make_economic_head(self.state_features)
+        if self.economic_threshold_residual_direct_input:
+            # Constructing a 65-input layer would otherwise advance Torch's
+            # global RNG farther than the canonical 64-input head.  Isolate
+            # the wider construction, then consume exactly the canonical
+            # construction stream.  The initialization below likewise copies
+            # a canonical head and initializes only the new column to zero.
+            with th.random.fork_rng(devices=[]):
+                self.economic_head = self._make_economic_head(
+                    self.state_features + 1
+                )
+            self._make_economic_head(self.state_features)
+        else:
+            self.economic_head = self._make_economic_head(self.state_features)
         self.value_net = nn.Sequential(
             nn.Linear(actor_feature_dim + CRITIC_STATE_DIM, self.critic_hidden),
             nn.ReLU(),
@@ -505,6 +579,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             "critic_hidden": self.critic_hidden,
             "pretrained_lr_scale": self.pretrained_lr_scale,
             "economic_threshold_residual": self.economic_threshold_residual,
+            "economic_threshold_residual_direct_input": (
+                self.economic_threshold_residual_direct_input
+            ),
         })
         return data
 
@@ -513,6 +590,10 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
         if not self.economic_threshold_residual:
             return None
+        if self.economic_threshold_residual_direct_input:
+            return direct_threshold_residual_architecture_provenance(
+                state_features=self.state_features
+            )
         return threshold_residual_architecture_provenance(
             state_features=self.state_features
         )
@@ -522,17 +603,17 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         value = max(float(value), 1.0e-6)
         return math.log(math.expm1(value))
 
-    def _initialize_economic_head(self, *, mean, concentration):
+    def _initialize_economic_head_module(self, head, *, mean, concentration):
         mean = float(mean)
         concentration = float(concentration)
         if not 0.0 < mean < 1.0:
             raise ValueError("Beta initialization mean must lie in (0, 1)")
         if concentration <= 0.0:
             raise ValueError("Beta initialization concentration must be positive")
-        for module in self.economic_head:
+        for module in head:
             if isinstance(module, nn.Linear):
                 self.init_weights(module, gain=1.0)
-        final = self.economic_head[-1]
+        final = head[-1]
         nn.init.zeros_(final.weight)
         alpha = max(mean * concentration, 1.0e-3)
         beta = max((1.0 - mean) * concentration, 1.0e-3)
@@ -541,6 +622,36 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
                 self._inverse_softplus(alpha),
                 self._inverse_softplus(beta),
             ], dtype=final.bias.dtype, device=final.bias.device))
+
+    def _initialize_economic_head(self, *, mean, concentration):
+        if not self.economic_threshold_residual_direct_input:
+            self._initialize_economic_head_module(
+                self.economic_head,
+                mean=mean,
+                concentration=concentration,
+            )
+            return
+
+        # Build the temporary module without consuming global randomness, then
+        # initialize it on the global stream exactly as the canonical head.
+        # Copy every canonical parameter and set only the appended first-layer
+        # input column to exact zero.
+        with th.random.fork_rng(devices=[]):
+            canonical = self._make_economic_head(self.state_features)
+        self._initialize_economic_head_module(
+            canonical,
+            mean=mean,
+            concentration=concentration,
+        )
+        with th.no_grad():
+            self.economic_head[0].weight[:, :self.state_features].copy_(
+                canonical[0].weight
+            )
+            self.economic_head[0].weight[:, self.state_features].zero_()
+            self.economic_head[0].bias.copy_(canonical[0].bias)
+            for index in (2, 4):
+                self.economic_head[index].weight.copy_(canonical[index].weight)
+                self.economic_head[index].bias.copy_(canonical[index].bias)
 
     def reset_economic_head(self, *, mean=0.5, concentration=2.0):
         """Reinitialize the economic actor without touching transferred play."""
@@ -581,6 +692,8 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             if (
                     source.economic_threshold_residual
                     != self.economic_threshold_residual
+                    or source.economic_threshold_residual_direct_input
+                    != self.economic_threshold_residual_direct_input
             ):
                 raise ValueError(
                     "economic-head transfer requires matching seller "
@@ -597,6 +710,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         source_economic_threshold_residual = (
             source.economic_threshold_residual
         )
+        source_economic_threshold_residual_direct_input = bool(getattr(
+            source, "economic_threshold_residual_direct_input", False
+        ))
         source_pretrained_lr_scale = source.pretrained_lr_scale
         del source_model
         return {
@@ -608,6 +724,9 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             "source_economic_input_mode": source_economic_input_mode,
             "source_economic_threshold_residual": (
                 source_economic_threshold_residual
+            ),
+            "source_economic_threshold_residual_direct_input": (
+                source_economic_threshold_residual_direct_input
             ),
             "source_pretrained_lr_scale": source_pretrained_lr_scale,
         }
@@ -626,7 +745,12 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
     def _economic_state_features(self, processed, ordinary_state_features):
         if self.economic_input_mode == "full":
-            return ordinary_state_features
+            if not self.economic_threshold_residual_direct_input:
+                return ordinary_state_features
+            return th.cat([
+                ordinary_state_features,
+                current_event_threshold(processed[ACTOR_STATE]),
+            ], dim=1)
         masked_state = th.zeros_like(processed[ACTOR_STATE])
         masked_state[:, EVENT_SLICE] = processed[ACTOR_STATE][:, EVENT_SLICE]
         return self.features_extractor.encode_state(masked_state)
@@ -767,5 +891,6 @@ __all__ = [
     "GatedCompositeAtariDistribution",
     "StackPOMDPAtariPolicy",
     "current_event_threshold",
+    "direct_threshold_residual_architecture_provenance",
     "threshold_residual_architecture_provenance",
 ]

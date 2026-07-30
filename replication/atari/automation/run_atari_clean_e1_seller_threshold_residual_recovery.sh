@@ -14,7 +14,7 @@ typeset -g E1R2_GUARD_OWNED="$STACKPOMDP_LOCK_RESULT_OWNED"
 
 typeset -gx STACKPOMDP_E1R2_LOCK_TOKEN="${STACKPOMDP_E1R2_LOCK_TOKEN:-$(hostname)-$$-$(date +%s)-${RANDOM}}"
 stackpomdp_claim_owned_lock "$E1R2_LOCK" \
-    "$STACKPOMDP_E1R2_LOCK_TOKEN" "v2 seller threshold-residual recovery" || {
+    "$STACKPOMDP_E1R2_LOCK_TOKEN" "$E1R2_PROFILE_LABEL recovery" || {
   lock_status=$?
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_GUARD_TOKEN" "$E1R2_GUARD_OWNED" \
@@ -28,7 +28,7 @@ function release_e1r2_locks() {
   e2_release_transient_lock || status=$?
   stackpomdp_release_owned_lock "$E1R2_LOCK" \
     "$STACKPOMDP_E1R2_LOCK_TOKEN" "$E1R2_LOCK_OWNED" \
-    "v2 seller threshold-residual recovery" || status=$?
+    "$E1R2_PROFILE_LABEL recovery" || status=$?
   typeset -g E1R2_LOCK_OWNED=0
   stackpomdp_release_owned_lock "$E1R2_V1_GUARD_LOCK" \
     "$STACKPOMDP_E1R2_GUARD_TOKEN" "$E1R2_GUARD_OWNED" \
@@ -51,11 +51,11 @@ trap 'interrupt_e1r2 130' INT
 trap 'interrupt_e1r2 143' TERM
 
 function run_v2_warmup_probe() {
-  print "running predeclared no-ALE v2 threshold-residual conditioning probe"
+  print "running predeclared no-ALE $E1R2_PROFILE_LABEL conditioning probe"
   (
     cd "$E1R2_CODE_ROOT"
     "$E1R2_PYTHON" -u -m \
-      replication.atari.probe_atari_e1_seller_threshold_residual \
+      "$E1R2_PROBE_MODULE" \
       --checkpoint "$E1R2_WARMUP_BASE" \
       --e0b-checkpoint "$E1R2_E0B" \
       --device cpu \
@@ -83,7 +83,7 @@ function run_v2_pure64_preflight() {
         "$E1R2_PREFLIGHT_LOG"; do
       e1r2_refuse_path "$artifact"
     done
-    print "starting no-W&B 20500-step pure-64 residual real-ALE preflight"
+    print "starting no-W&B 20500-step $E1R2_PROFILE_LABEL real-ALE preflight"
     set +e
     (
       set +e
@@ -92,7 +92,7 @@ function run_v2_pure64_preflight() {
         "$E1R2_PYTHON" -u -m replication.atari.train_atari_meta_response_sb3 \
           --role seller \
           --e0b-checkpoint "$E1R2_E0B" \
-          --economic-threshold-residual \
+          "${E1R2_ARCHITECTURE_FLAGS[@]}" \
           --e1-sampler-mode all-equal-v1 \
           --actor-loss-mode balanced \
           --seed 1 \
@@ -132,12 +132,12 @@ function run_v2_pure64_preflight() {
   fi
   e1r2_wait_for_stable_zip "$E1R2_PREFLIGHT_BASE"
   [[ -f "$E1R2_PREFLIGHT_EVALUATION" ]] || \
-    e1r2_die "pure-64 preflight lacks real-ALE evaluation"
+    e1r2_die "$E1R2_PROFILE_LABEL preflight lacks real-ALE evaluation"
   if [[ ! -e "$E1R2_PREFLIGHT_PROBE" && ! -L "$E1R2_PREFLIGHT_PROBE" ]]; then
     (
       cd "$E1R2_SOURCE_ROOT"
       "$E1R2_PYTHON" -u -m \
-        replication.atari.probe_atari_e1_seller_threshold_residual \
+        "$E1R2_PROBE_MODULE" \
         --checkpoint "$E1R2_PREFLIGHT_BASE" \
         --e0b-checkpoint "$E1R2_E0B" \
         --device cpu \
@@ -155,7 +155,7 @@ if [[ -f "$E1R2_FAMILY" && ! -L "$E1R2_FAMILY" ]]; then
   e1r2_validate_existing_family
   release_e1r2_locks
   trap - EXIT HUP INT TERM
-  exec "${0:A:h}/run_e1_seller_threshold_residual_recovery_selector.sh"
+  exec "${0:A:h}/$E1R2_SELECTOR_SCRIPT"
 fi
 
 if [[ -f "$E1R2_WARMUP_BASE" && ! -L "$E1R2_WARMUP_BASE" ]]; then
@@ -189,7 +189,7 @@ else
       "$E1R2_PYTHON" -u -m replication.atari.train_atari_meta_response_sb3 \
         --role seller \
         --e0b-checkpoint "$E1R2_E0B" \
-        --economic-threshold-residual \
+        "${E1R2_ARCHITECTURE_FLAGS[@]}" \
         --e1-sampler-mode all-equal-v1 \
         --actor-loss-mode balanced \
         --seed 1 \
@@ -260,7 +260,7 @@ if [[ ! -f "$E1R2_TARGET_BASE" ]]; then
         --role seller \
         --e0b-checkpoint "$E1R2_E0B" \
         --resume "$E1R2_WARMUP_BASE" \
-        --economic-threshold-residual \
+        "${E1R2_ARCHITECTURE_FLAGS[@]}" \
         --e1-sampler-mode uniform \
         --actor-loss-mode balanced \
         --seed 1 \
@@ -307,4 +307,4 @@ e1r2_validate_family
 e1r2_validate_existing_family
 release_e1r2_locks
 trap - EXIT HUP INT TERM
-exec "${0:A:h}/run_e1_seller_threshold_residual_recovery_selector.sh"
+exec "${0:A:h}/$E1R2_SELECTOR_SCRIPT"

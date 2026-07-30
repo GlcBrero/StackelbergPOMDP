@@ -674,7 +674,7 @@ def test_threshold_residual_recovery_keeps_e2_closed_until_gate(
     )
     assert released["found"] is True
     assert released["source_kind"] == (
-        "seller_conditioning_recovery_v2_threshold_residual_v1"
+        "seller_conditioning_recovery_v3_direct_threshold_residual_v1"
     )
 
 
@@ -936,7 +936,8 @@ def test_v1_launchers_remain_historical_and_master_uses_residual_v2():
     assert "--fixed-seed-start 9200001" in selector
     assert "run_atari_clean_e1_seller_conditioning_recovery.sh" not in master
     assert (
-        "run_atari_clean_e1_seller_threshold_residual_recovery.sh" in master
+        "run_atari_clean_e1_seller_direct_threshold_residual_recovery.sh"
+        in master
     )
     assert master.index("threshold-residual recovery and selection") < master.index(
         "sequential E2 buyer/seller training and selection"
@@ -969,15 +970,13 @@ def test_threshold_residual_launchers_enforce_stages_family_and_wandb():
     target_mode = train.index("--e1-sampler-mode uniform", resume)
     target_budget = train.index("--timesteps 2000800", target_mode)
     family = train.index("e1r2_validate_family", target_budget)
-    selector_exec = train.index(
-        "run_e1_seller_threshold_residual_recovery_selector.sh", family,
-    )
+    selector_exec = train.index("$E1R2_SELECTOR_SCRIPT", family)
     assert preflight < activation < runtime < warmup_start
     assert warmup_start < warmup_mode < warmup_budget < warmup_probe
     assert warmup_probe < warmup_gate < resume < target_mode
     assert target_mode < target_budget < family < selector_exec
-    assert train.count("--economic-threshold-residual") == 3
-    assert "replication.atari.probe_atari_e1_seller_threshold_residual" in train
+    assert train.count('"${E1R2_ARCHITECTURE_FLAGS[@]}"') == 3
+    assert '"$E1R2_PROBE_MODULE"' in train
     assert "--wandb-project StackPOMDP" in train
     assert "--wandb-group atari_clean_curriculum" in train
     assert "--wandb-job-type \"$E1R2_WARMUP_JOB_TYPE\"" in train
