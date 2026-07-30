@@ -59,7 +59,10 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.stackpomdp_policy import (
+    SELLER_TWO_BRANCH_BETA_V4,
+    StackPOMDPAtariPolicy,
+)
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
 
 
@@ -79,6 +82,9 @@ E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
 )
 E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_direct_threshold_initialization_provenance"
+)
+E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_two_branch_initialization_provenance"
 )
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
@@ -264,7 +270,10 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             "economic_head_initialization": economic_initialization,
         }
         economic_architecture = None
-        if bool(getattr(policy, "economic_threshold_residual", False)):
+        if bool(
+                getattr(policy, "economic_threshold_residual", False)
+                or getattr(policy, "economic_architecture", None) is not None
+        ):
             economic_architecture = (
                 policy.economic_architecture_provenance()
             )
@@ -315,6 +324,35 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                 policy_metadata["direct_threshold_initialization"] = (
                     expected_initialization
                 )
+            if getattr(policy, "economic_architecture", None) == (
+                    SELLER_TWO_BRANCH_BETA_V4
+            ):
+                from replication.atari.train_atari_meta_response_sb3 import (
+                    gameplay_actor_sha256,
+                    two_branch_initialization_provenance,
+                    validate_frozen_gameplay_actor,
+                )
+
+                expected_initialization = (
+                    two_branch_initialization_provenance(policy)
+                )
+                recorded_initialization = getattr(
+                    model,
+                    E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE,
+                    None,
+                )
+                if recorded_initialization != expected_initialization:
+                    raise ValueError(
+                        f"{label} seller-v4 policy lacks exact saved "
+                        "initialization provenance"
+                    )
+                validate_frozen_gameplay_actor(model)
+                policy_metadata["two_branch_initialization"] = (
+                    expected_initialization
+                )
+                policy_metadata["frozen_gameplay_actor_sha256"] = (
+                    gameplay_actor_sha256(policy)
+                )
         result = {
             "path": str(resolved),
             "sha256": _sha256_file(resolved),
@@ -330,6 +368,10 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             if "direct_threshold_initialization" in policy_metadata:
                 result["direct_threshold_initialization"] = policy_metadata[
                     "direct_threshold_initialization"
+                ]
+            if "two_branch_initialization" in policy_metadata:
+                result["two_branch_initialization"] = policy_metadata[
+                    "two_branch_initialization"
                 ]
         manifest = getattr(model, E2_PROVENANCE_ATTRIBUTE, None)
         if manifest is not None:
@@ -788,6 +830,13 @@ def _new_model(args, vec_env, *, provenance_manifest):
                 source_policy.get("economic_architecture", {}).get(
                     "parameterization"
                 ) == "seller_direct_threshold_residual_beta_v3"
+            )
+            or provenance.get("source_economic_architecture") != (
+                SELLER_TWO_BRANCH_BETA_V4
+                if source_policy.get("economic_architecture", {}).get(
+                    "parameterization"
+                ) == SELLER_TWO_BRANCH_BETA_V4
+                else None
             )
     ):
         raise RuntimeError(

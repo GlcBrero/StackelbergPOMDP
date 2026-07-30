@@ -41,7 +41,12 @@ class ScaledLearningRatePPO(PPO):
             optimizers = [optimizers]
         for optimizer in optimizers:
             for group in optimizer.param_groups:
-                group["lr"] = base_rate * float(group.get("lr_scale", 1.0))
+                group_rate = base_rate * float(group.get("lr_scale", 1.0))
+                group["lr"] = group_rate
+                if group.get("group_name") == "seller_v4_critic":
+                    self.logger.record(
+                        "train/critic_learning_rate", group_rate
+                    )
 
 
 def model_actor_loss_mode(model):
@@ -382,6 +387,13 @@ class PhaseBalancedPPO(ScaledLearningRatePPO):
                 np.mean(metrics["economic_clip_fraction"]),
             ])),
         }
+        for group in self.policy.optimizer.param_groups:
+            if group.get("group_name") == "seller_v4_economic":
+                optimizer_metrics["train/learning_rate"] = float(group["lr"])
+            elif group.get("group_name") == "seller_v4_critic":
+                optimizer_metrics["train/critic_learning_rate"] = float(
+                    group["lr"]
+                )
         for name in (
                 "game_policy_loss",
                 "economic_policy_loss",

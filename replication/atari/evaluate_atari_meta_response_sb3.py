@@ -56,6 +56,12 @@ TIMING_MIN_ACCEPTANCE_DROP = 0.5
 TIMING_MAX_PAYOFF_REGRET = 0.15
 THRESHOLD_RESIDUAL_CONSTANT_PRICE = 0.5
 THRESHOLD_RESIDUAL_MIN_ECONOMIC_BASELINE_IMPROVEMENT = 0.05
+V4_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT = 0.05
+V4_PREFLIGHT_PRICE_RESPONSE = 0.15
+V4_PREFLIGHT_ABLATION_PRICE_DIFFERENCE = 0.02
+V4_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE = 0.02
+V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE = 0.10
+V4_FORMAL_ABLATION_PRICE_DIFFERENCE = 0.05
 
 
 def checkpoint_path(raw, *, label="checkpoint"):
@@ -286,7 +292,10 @@ def candidate_economic_architecture_contract(model):
     """
 
     policy = model.policy
-    enabled = bool(getattr(policy, "economic_threshold_residual", False))
+    enabled = bool(
+        getattr(policy, "economic_threshold_residual", False)
+        or getattr(policy, "economic_architecture", None) is not None
+    )
     if not enabled:
         return None
     expected = _jsonable(policy.economic_architecture_provenance())
@@ -365,12 +374,62 @@ def economic_architecture_training_flags(policy, economic_architecture):
 
     if economic_architecture is None:
         return {}
+    if economic_architecture.get("parameterization") == (
+            trainer.SELLER_TWO_BRANCH_BETA_V4
+    ):
+        return {"economic_architecture": trainer.SELLER_TWO_BRANCH_BETA_V4}
     flags = {"economic_threshold_residual": True}
     if bool(getattr(
             policy, "economic_threshold_residual_direct_input", False
     )):
         flags["economic_threshold_residual_direct_input"] = True
     return flags
+
+
+def candidate_two_branch_initialization(model, economic_architecture):
+    """Return and verify the exact seller-v4 initialization contract."""
+
+    active = getattr(model.policy, "economic_architecture", None) == (
+        trainer.SELLER_TWO_BRANCH_BETA_V4
+    )
+    recorded = getattr(
+        model, trainer.TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None
+    )
+    if not active:
+        if recorded is not None:
+            raise ValueError(
+                "non-v4 E1 candidate unexpectedly stores two-branch "
+                "initialization provenance"
+            )
+        return None
+    if not isinstance(economic_architecture, dict) or (
+            economic_architecture.get("parameterization")
+            != trainer.SELLER_TWO_BRANCH_BETA_V4
+    ):
+        raise ValueError("seller-v4 candidate has the wrong architecture")
+    expected = trainer.two_branch_initialization_provenance(model.policy)
+    if recorded != expected:
+        raise ValueError(
+            "seller-v4 candidate lacks exact initialization provenance"
+        )
+    trainer.validate_frozen_gameplay_actor(model)
+    group_names = [
+        group.get("group_name") for group in model.policy.optimizer.param_groups
+    ]
+    if group_names != ["seller_v4_economic", "seller_v4_critic"]:
+        raise ValueError("seller-v4 candidate has the wrong optimizer groups")
+    group_scales = [
+        float(group.get("lr_scale", np.nan))
+        for group in model.policy.optimizer.param_groups
+    ]
+    if not np.allclose(group_scales, [1.0, 0.2], rtol=0.0, atol=0.0):
+        raise ValueError("seller-v4 candidate has the wrong optimizer scales")
+    group_rates = [float(group["lr"]) for group in model.policy.optimizer.param_groups]
+    if not np.allclose(group_rates, [5.0e-4, 1.0e-4], rtol=0.0, atol=1.0e-12):
+        raise ValueError(
+            "seller-v4 candidate has the wrong effective optimizer rates"
+        )
+    return _jsonable(recorded)
 
 
 def load_candidate(
@@ -450,6 +509,9 @@ def load_candidate(
     direct_initialization = candidate_direct_threshold_initialization(
         model, economic_architecture
     )
+    two_branch_initialization = candidate_two_branch_initialization(
+        model, economic_architecture
+    )
     policy.set_training_mode(False)
     training_config = {
         "algorithm": "PPO",
@@ -495,6 +557,10 @@ def load_candidate(
         if direct_initialization is not None:
             metadata["direct_threshold_initialization"] = (
                 direct_initialization
+            )
+        if two_branch_initialization is not None:
+            metadata["two_branch_initialization"] = (
+                two_branch_initialization
             )
     return model, metadata
 
@@ -656,6 +722,28 @@ def apply_fifth_economic_override(observation, action, value):
     return result.reshape(original_shape), at_fifth_trade
 
 
+def apply_all_trade_economic_override(observation, action, value):
+    """Force the economic coordinate at every paused trade, if requested."""
+
+    if value is None:
+        return np.array(action, dtype=np.float32, copy=True), False
+    override = float(value)
+    if not np.isfinite(override) or not 0.0 <= override <= 1.0:
+        raise ValueError("all-trade economic override must lie in [0, 1]")
+    state = np.asarray(observation[ACTOR_STATE], dtype=np.float32).reshape(-1)
+    event = state[EVENT_SLICE]
+    at_trade = bool(
+        state[TRADE_MODE_INDEX] > 0.5
+        and np.isclose(np.sum(event), 1.0, atol=0.0, rtol=0.0)
+    )
+    result = np.array(action, dtype=np.float32, copy=True).reshape(-1)
+    if result.shape != (2,):
+        raise ValueError("Atari action must contain game and economic coordinates")
+    if at_trade:
+        result[1] = override
+    return result.reshape(np.asarray(action).shape), at_trade
+
+
 def _episode(
         model,
         args,
@@ -665,7 +753,17 @@ def _episode(
         checkpoint_metadata,
         phase,
         fifth_economic_override=None,
+        all_trade_economic_override=None,
+        v4_context_ablation=False,
 ):
+    if (
+            fifth_economic_override is not None
+            and all_trade_economic_override is not None
+    ):
+        raise ValueError(
+            "fifth-trade and all-trade economic overrides are mutually "
+            "exclusive"
+        )
     local = copy(args)
     local.fixed_event_steps = args.fixed_event_steps
     env = trainer.make_env(
@@ -673,6 +771,9 @@ def _episode(
         seed=int(seed),
         context_sampler=lambda rng, values=np.asarray(context): values.copy(),
     )
+    ablation_active = bool(v4_context_ablation)
+    if ablation_active:
+        model.policy.set_v4_context_ablation(True)
     try:
         observation = env.reset()
         done = False
@@ -680,17 +781,24 @@ def _episode(
         steps = 0
         info = {}
         override_applications = 0
+        all_trade_override_applications = 0
         while not done:
             action, _ = model.predict(observation, deterministic=True)
             action, applied = apply_fifth_economic_override(
                 observation, action, fifth_economic_override
             )
             override_applications += int(applied)
+            action, applied_all = apply_all_trade_economic_override(
+                observation, action, all_trade_economic_override
+            )
+            all_trade_override_applications += int(applied_all)
             observation, reward, done, info = env.step(action)
             total += float(reward)
             steps += 1
     finally:
         env.close()
+        if ablation_active:
+            model.policy.set_v4_context_ablation(False)
     row = {
         "phase": phase,
         "checkpoint_path": checkpoint_metadata["path"],
@@ -708,6 +816,17 @@ def _episode(
         "evaluation_steps": int(steps),
         **_jsonable(dict(info)),
     }
+    if all_trade_economic_override is not None:
+        row.update({
+            "all_trade_economic_override": float(
+                all_trade_economic_override
+            ),
+            "all_trade_economic_override_applied": int(
+                all_trade_override_applications
+            ),
+        })
+    if ablation_active:
+        row["v4_context_ablation"] = True
     row.pop("episode", None)
     return row
 
@@ -876,6 +995,59 @@ def audit_episode(row, *, role):
             override_applications,
         ))
 
+    all_override = row.get("all_trade_economic_override")
+    all_override_applications = row.get(
+        "all_trade_economic_override_applied"
+    )
+    if all_override is not None:
+        override = _finite_number(
+            row, "all_trade_economic_override", violations
+        )
+        if role != SELLER:
+            violations.append(_violation(
+                row, "all_trade_economic_override_role", SELLER, role
+            ))
+        if not 0.0 <= override <= 1.0:
+            violations.append(_violation(
+                row,
+                "all_trade_economic_override",
+                "finite value in [0,1]",
+                all_override,
+            ))
+        if all_override_applications != NUM_TRADE_EVENTS:
+            violations.append(_violation(
+                row,
+                "all_trade_economic_override_applied",
+                NUM_TRADE_EVENTS,
+                all_override_applications,
+            ))
+        for index, event in enumerate(events):
+            if not np.isclose(
+                    float(event.get("price", np.nan)),
+                    override,
+                    atol=PROTOCOL_ATOL,
+                    rtol=0.0,
+            ):
+                violations.append(_violation(
+                    row,
+                    f"event_{index}_forced_price",
+                    override,
+                    event.get("price"),
+                ))
+    elif all_override_applications not in (None, 0):
+        violations.append(_violation(
+            row,
+            "all_trade_economic_override_applied",
+            0,
+            all_override_applications,
+        ))
+
+    ablation = row.get("v4_context_ablation", False)
+    if ablation not in (False, True):
+        violations.append(_violation(
+            row, "v4_context_ablation", "Boolean", ablation
+        ))
+
     if not np.isclose(numeric["purchases"], accepted, atol=0.0, rtol=0.0):
         violations.append(_violation(row, "purchases", accepted, row.get("purchases")))
     if not np.isclose(
@@ -953,6 +1125,8 @@ def evaluate_rows(
         contexts,
         phase,
         fifth_economic_override=None,
+        all_trade_economic_override=None,
+        v4_context_ablation=False,
 ):
     rows = [
         _episode(
@@ -963,6 +1137,8 @@ def evaluate_rows(
             checkpoint_metadata=metadata,
             phase=phase,
             fifth_economic_override=fifth_economic_override,
+            all_trade_economic_override=all_trade_economic_override,
+            v4_context_ablation=v4_context_ablation,
         )
         for seed, context in zip(seeds, contexts)
     ]
@@ -981,6 +1157,12 @@ def evaluate_rows(
                 "fifth_economic_override": row.get(
                     "fifth_economic_override"
                 ),
+                "all_trade_economic_override": row.get(
+                    "all_trade_economic_override"
+                ),
+                "v4_context_ablation": bool(row.get(
+                    "v4_context_ablation", False
+                )),
                 **event,
             })
     return {
@@ -1507,6 +1689,382 @@ def seller_threshold_residual_behavioral_gate(
     }
 
 
+def _paired_delta(treatment, control, *, field):
+    """Return paired mean, standard error, and two-SE lower bound."""
+
+    treatment_source = list(treatment.get("episode_rows", ()))
+    control_source = list(control.get("episode_rows", ()))
+    treatment_rows = {
+        int(row["evaluation_seed"]): row
+        for row in treatment_source
+    }
+    control_rows = {
+        int(row["evaluation_seed"]): row
+        for row in control_source
+    }
+    if (
+            len(treatment_rows) != len(treatment_source)
+            or len(control_rows) != len(control_source)
+    ):
+        raise ValueError("paired seller-v4 evaluation has duplicate seeds")
+    if not treatment_rows or treatment_rows.keys() != control_rows.keys():
+        raise ValueError("paired seller-v4 evaluations have different seeds")
+    for seed in treatment_rows:
+        treatment_context = np.asarray(
+            treatment_rows[seed].get("opponent_commitment", ()),
+            dtype=np.float64,
+        )
+        control_context = np.asarray(
+            control_rows[seed].get("opponent_commitment", ()),
+            dtype=np.float64,
+        )
+        if (
+                treatment_context.shape != (NUM_TRADE_EVENTS,)
+                or control_context.shape != (NUM_TRADE_EVENTS,)
+                or not np.allclose(
+                    treatment_context,
+                    control_context,
+                    rtol=0.0,
+                    atol=PROTOCOL_ATOL,
+                )
+        ):
+            raise ValueError(
+                "paired seller-v4 evaluations have different commitments"
+            )
+        treatment_steps = tuple(
+            int(value) for value in treatment_rows[seed].get(
+                "event_steps", ()
+            )
+        )
+        control_steps = tuple(
+            int(value) for value in control_rows[seed].get(
+                "event_steps", ()
+            )
+        )
+        if (
+                len(treatment_steps) != NUM_TRADE_EVENTS
+                or treatment_steps != control_steps
+        ):
+            raise ValueError(
+                "paired seller-v4 evaluations have different event schedules"
+            )
+    differences = np.asarray([
+        float(treatment_rows[seed][field])
+        - float(control_rows[seed][field])
+        for seed in sorted(treatment_rows)
+    ], dtype=np.float64)
+    if not np.all(np.isfinite(differences)):
+        raise ValueError("paired seller-v4 differences are non-finite")
+    mean = float(np.mean(differences))
+    standard_error = (
+        float(np.std(differences, ddof=1) / np.sqrt(differences.size))
+        if differences.size > 1 else 0.0
+    )
+    return {
+        "field": str(field),
+        "episodes": int(differences.size),
+        "mean": mean,
+        "standard_error": standard_error,
+        "two_standard_error_lower_bound": mean - 2.0 * standard_error,
+        "differences": differences.tolist(),
+    }
+
+
+def _empirical_best_constant_transfer_control(random_result):
+    """Return the exact best constant-price transfer control on one sample.
+
+    This deliberately excludes Atari gameplay rewards.  For each realized
+    five-threshold commitment, a constant price ``p`` earns
+    ``p * sum_i 1[p <= threshold_i]``.  On a finite empirical sample the
+    continuous optimum lies at zero or at an observed threshold, so evaluating
+    those breakpoints is exact rather than a categorical-grid approximation.
+    """
+
+    rows = list(random_result.get("episode_rows", ()))
+    if not rows:
+        raise ValueError("seller-v4 transfer control requires episode rows")
+    seeds = [int(row["evaluation_seed"]) for row in rows]
+    if len(seeds) != len(set(seeds)):
+        raise ValueError("seller-v4 transfer control has duplicate seeds")
+    contexts = np.asarray([
+        row.get("opponent_commitment", ()) for row in rows
+    ], dtype=np.float64)
+    if contexts.shape != (len(rows), NUM_TRADE_EVENTS):
+        raise ValueError(
+            "seller-v4 transfer control requires five thresholds per episode"
+        )
+    if not np.all(np.isfinite(contexts)) or not np.all(
+            (contexts >= 0.0) & (contexts <= 1.0)
+    ):
+        raise ValueError("seller-v4 transfer thresholds must lie in [0,1]")
+    candidate_payments = np.asarray([
+        float(row["payments"]) for row in rows
+    ], dtype=np.float64)
+    if not np.all(np.isfinite(candidate_payments)):
+        raise ValueError("seller-v4 candidate payments are non-finite")
+
+    candidate_prices = np.unique(np.concatenate((
+        np.asarray([0.0], dtype=np.float64),
+        contexts.reshape(-1),
+    )))
+    control_payments = candidate_prices[:, None] * np.sum(
+        contexts[None, :, :] >= candidate_prices[:, None, None], axis=2
+    )
+    mean_control_payments = np.mean(control_payments, axis=1)
+    best_index = int(np.argmax(mean_control_payments))
+    best_price = float(candidate_prices[best_index])
+    best_payments = control_payments[best_index]
+    differences = candidate_payments - best_payments
+    standard_error = (
+        float(np.std(differences, ddof=1) / np.sqrt(differences.size))
+        if differences.size > 1 else 0.0
+    )
+    mean = float(np.mean(differences))
+    return {
+        "label": "transfer payoff only; not total seller payoff",
+        "optimization": (
+            "exact empirical continuous constant-price optimum over observed "
+            "threshold breakpoints"
+        ),
+        "episodes": int(differences.size),
+        "best_constant_price": best_price,
+        "mean_candidate_payments": float(np.mean(candidate_payments)),
+        "mean_best_constant_payments": float(np.mean(best_payments)),
+        "improvement": mean,
+        "standard_error": standard_error,
+        "two_standard_error_lower_bound": mean - 2.0 * standard_error,
+        "differences": differences.tolist(),
+    }
+
+
+def seller_v4_behavioral_gate(
+        *, random_result, fixed_results, ablated_random_result,
+        forced_constant_results=None, formal=False,
+):
+    """Gate learned seller-v4 conditioning on paired real-ALE behavior."""
+
+    by_value = {
+        round(float(result["opponent_value"]), 6): result
+        for result in fixed_results
+    }
+    expected = tuple(round(index / 10.0, 6) for index in range(11))
+    missing = [value for value in expected if value not in by_value]
+    if missing:
+        return {
+            "name": "seller_two_branch_behavioral_gate_v4",
+            "passed": False,
+            "checks": [],
+            "error": f"fixed grid missing {missing}",
+        }
+    summaries = {value: by_value[value]["summary"] for value in expected}
+    prices = np.asarray([
+        float(summaries[value]["mean_price"]) for value in expected
+    ], dtype=np.float64)
+    transfer_control = _empirical_best_constant_transfer_control(
+        random_result
+    )
+    transfer_improvement = float(transfer_control["improvement"])
+    transfer_two_se_lcb = float(
+        transfer_control["two_standard_error_lower_bound"]
+    )
+    maximum_reversal = float(max(0.0, np.max(prices[:-1] - prices[1:])))
+    response_04_09 = float(prices[9] - prices[4])
+    tracking_mae = float(np.mean(np.abs(
+        prices[4:10] - np.asarray(expected[4:10], dtype=np.float64)
+    )))
+    mean_high_purchases = float(np.mean([
+        float(summaries[value]["mean_purchases"])
+        for value in expected if 0.5 <= value <= 0.9
+    ]))
+    zero = summaries[0.0]
+    random_payoff = float(
+        random_result["summary"]["mean_controlled_payoff"]
+    )
+    ablation_payoff = _paired_delta(
+        random_result, ablated_random_result, field="seller_reward"
+    )
+    full_events = {
+        (int(row["evaluation_seed"]), int(row["event_index"])): row
+        for row in random_result.get("event_rows", ())
+    }
+    ablated_events = {
+        (int(row["evaluation_seed"]), int(row["event_index"])): row
+        for row in ablated_random_result.get("event_rows", ())
+    }
+    random_episode_count = len(random_result.get("episode_rows", ()))
+    ablated_episode_count = len(
+        ablated_random_result.get("episode_rows", ())
+    )
+    if (
+            full_events.keys() != ablated_events.keys()
+            or not full_events
+            or len(full_events) != NUM_TRADE_EVENTS * random_episode_count
+            or len(ablated_events)
+            != NUM_TRADE_EVENTS * ablated_episode_count
+            or len(full_events) != len(random_result.get("event_rows", ()))
+            or len(ablated_events)
+            != len(ablated_random_result.get("event_rows", ()))
+    ):
+        raise ValueError("seller-v4 ablation event rows are not paired")
+    ablation_price_difference = float(np.mean([
+        abs(float(full_events[key]["price"])
+            - float(ablated_events[key]["price"]))
+        for key in sorted(full_events)
+    ]))
+    checks = [
+        _check(
+            "transfer-payoff improvement over exact empirical best constant",
+            transfer_improvement,
+            ">=",
+            (
+                V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE
+                if formal else V4_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT
+            ),
+        ),
+        _check(
+            "price response from threshold 0.4 to 0.9",
+            response_04_09,
+            ">=",
+            V4_PREFLIGHT_PRICE_RESPONSE,
+        ),
+        _check(
+            "largest adjacent fixed-grid price reversal",
+            maximum_reversal,
+            "<=",
+            0.15,
+        ),
+        _check(
+            "mean full-versus-context-ablation absolute price difference",
+            ablation_price_difference,
+            ">=",
+            (
+                V4_FORMAL_ABLATION_PRICE_DIFFERENCE
+                if formal else V4_PREFLIGHT_ABLATION_PRICE_DIFFERENCE
+            ),
+        ),
+        _check(
+            "mean purchases over thresholds 0.5 through 0.9",
+            mean_high_purchases,
+            ">=",
+            3.0,
+        ),
+        _check(
+            "price tracking MAE over thresholds 0.4 through 0.9",
+            tracking_mae,
+            "<=",
+            0.20,
+        ),
+        _check("threshold 0 mean purchases", zero["mean_purchases"], "<=", 0.0),
+        _check(
+            "threshold 0 mean seller shots",
+            zero["mean_seller_shots_fired"],
+            ">=",
+            4.0,
+        ),
+        _check(
+            "threshold 0 mean seller game reward",
+            zero["mean_seller_game_reward"],
+            ">=",
+            4.0,
+        ),
+        _check("random seller payoff", random_payoff, ">", 0.5),
+        _check(
+            "paired full-minus-context-ablation seller payoff",
+            ablation_payoff["mean"],
+            ">=",
+            (
+                V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE
+                if formal else V4_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE
+            ),
+        ),
+    ]
+    forced_control = None
+    if formal:
+        forced_values = {
+            round(float(value), 6)
+            for value in (forced_constant_results or {})
+        }
+        expected_forced_values = set(expected)
+        if forced_values != expected_forced_values:
+            checks.append({
+                "name": "complete paired forced-price control grid present",
+                "actual": sorted(forced_values),
+                "required": sorted(expected_forced_values),
+                "passed": False,
+            })
+        else:
+            candidates = []
+            for value, result in forced_constant_results.items():
+                delta = _paired_delta(
+                    random_result, result, field="seller_reward"
+                )
+                candidates.append((
+                    float(result["summary"]["mean_controlled_payoff"]),
+                    float(value),
+                    result,
+                    delta,
+                ))
+            _, best_value, _, forced_control = max(
+                candidates, key=lambda item: (item[0], -item[1])
+            )
+            checks.extend([
+                _check(
+                    "paired full-minus-best-forced-constant total payoff",
+                    forced_control["mean"],
+                    ">=",
+                    V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE,
+                ),
+                _check(
+                    "paired forced-constant total-payoff two-SE lower bound",
+                    forced_control["two_standard_error_lower_bound"],
+                    ">",
+                    0.0,
+                ),
+                _check(
+                    "paired context-ablation total-payoff two-SE lower bound",
+                    ablation_payoff["two_standard_error_lower_bound"],
+                    ">",
+                    0.0,
+                ),
+            ])
+            forced_control = {
+                "best_constant_price": best_value,
+                **forced_control,
+            }
+        checks.append(_check(
+            "transfer-payoff improvement two-SE lower bound",
+            transfer_two_se_lcb,
+            ">",
+            0.0,
+        ))
+    mechanics = bool(
+        random_result.get("protocol", {}).get("passed")
+        and ablated_random_result.get("protocol", {}).get("passed")
+        and all(
+            result.get("protocol", {}).get("passed")
+            for result in fixed_results
+        )
+        and all(
+            result.get("protocol", {}).get("passed")
+            for result in (forced_constant_results or {}).values()
+        )
+    )
+    return {
+        "name": "seller_two_branch_behavioral_gate_v4",
+        "predeclared": True,
+        "formal": bool(formal),
+        "passed": bool(mechanics and all(check["passed"] for check in checks)),
+        "mechanics_passed": mechanics,
+        "checks": checks,
+        "transfer_payoff_baseline": transfer_control,
+        "context_ablation": {
+            "paired_total_payoff": ablation_payoff,
+            "mean_absolute_price_difference": ablation_price_difference,
+        },
+        "forced_constant_total_payoff_control": forced_control,
+    }
+
+
 def seller_threshold_residual_final_gate(
         *, random_result, fixed_results, conditioning_probe
 ):
@@ -1905,7 +2463,59 @@ def run_selection(args):
                     "seller_threshold_residual_beta_v1",
                     "seller_direct_threshold_residual_beta_v3",
                 }
-                if local.role == SELLER and residual_architecture:
+                v4_architecture = residual_parameterization == (
+                    trainer.SELLER_TWO_BRANCH_BETA_V4
+                )
+                ablated_random_result = None
+                forced_constant_results = None
+                if local.role == SELLER and v4_architecture:
+                    from replication.atari import (
+                        probe_atari_e1_seller_two_branch as v4_probe
+                    )
+                    conditioning_probe = (
+                        v4_probe.collect_conditioning_report(model)
+                    )
+                    ablated_random_result = evaluate_rows(
+                        model,
+                        local,
+                        metadata,
+                        seeds=confirmation_seeds,
+                        contexts=confirmation_contexts,
+                        phase="confirmation_random_context_ablated",
+                        v4_context_ablation=True,
+                    )
+                    forced_constant_results = {
+                        float(value): evaluate_rows(
+                            model,
+                            local,
+                            metadata,
+                            seeds=confirmation_seeds,
+                            contexts=confirmation_contexts,
+                            phase=(
+                                "confirmation_random_forced_constant_"
+                                f"{float(value):.1f}"
+                            ),
+                            all_trade_economic_override=float(value),
+                        )
+                        for value in CANONICAL_FIXED_VALUES
+                    }
+                    gate = seller_v4_behavioral_gate(
+                        random_result=random_result,
+                        fixed_results=fixed_results,
+                        ablated_random_result=ablated_random_result,
+                        forced_constant_results=forced_constant_results,
+                        formal=True,
+                    )
+                    gate["conditioning_probe_gate"] = conditioning_probe.get(
+                        "warmup_gate"
+                    )
+                    gate["passed"] = bool(
+                        gate["passed"]
+                        and conditioning_probe.get("warmup_gate", {}).get(
+                            "passed"
+                        ) is True
+                    )
+                elif local.role == SELLER and residual_architecture:
                     if residual_parameterization == (
                             "seller_direct_threshold_residual_beta_v3"
                     ):
@@ -1940,6 +2550,8 @@ def run_selection(args):
                     "fixed_contexts": fixed_results,
                     "paired_timing": timing_results,
                     "conditioning_probe": conditioning_probe,
+                    "context_ablated_random": ablated_random_result,
+                    "forced_constant_controls": forced_constant_results,
                     "behavioral_gate": gate,
                 }
             except Exception as error:
@@ -1961,6 +2573,8 @@ def run_selection(args):
                     "fixed_contexts": [],
                     "paired_timing": [],
                     "conditioning_probe": None,
+                    "context_ablated_random": None,
+                    "forced_constant_controls": None,
                     "behavioral_gate": {
                         "passed": False,
                         "mechanics_passed": False,

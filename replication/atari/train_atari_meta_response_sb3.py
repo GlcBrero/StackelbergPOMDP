@@ -59,7 +59,12 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     OPPONENT_COMMITMENT_SLICE,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.stackpomdp_policy import (
+    BETA_PARAMETER_EPSILON,
+    ECONOMIC_ARCHITECTURES,
+    SELLER_TWO_BRANCH_BETA_V4,
+    StackPOMDPAtariPolicy,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +80,9 @@ E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
 )
 DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_direct_threshold_initialization_provenance"
+)
+TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_two_branch_initialization_provenance"
 )
 
 
@@ -94,6 +102,11 @@ def _economic_threshold_residual_direct_input(args):
     return bool(getattr(
         args, "economic_threshold_residual_direct_input", False
     ))
+
+
+def _economic_architecture(args):
+    value = getattr(args, "economic_architecture", None)
+    return None if value is None else str(value)
 
 
 def _economic_initialization(args):
@@ -134,6 +147,8 @@ def _run_variant_suffix(args):
         parts.append("direct_threshold_residual_v3")
     elif _economic_threshold_residual(args):
         parts.append("threshold_residual_v1")
+    if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4:
+        parts.append("two_branch_v4")
     if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
         parts.append("all_equal_v1")
     elif _e1_sampler_mode(args) == TEMPORAL_MIX_E1_SAMPLER:
@@ -162,6 +177,11 @@ def _validate_e0b_source(provenance):
         raise ValueError(
             "E1 actor sources must be ordinary E0b gameplay checkpoints "
             "without the seller-only direct threshold input"
+        )
+    if provenance.get("source_economic_architecture") is not None:
+        raise ValueError(
+            "E1 actor sources must be ordinary E0b gameplay checkpoints "
+            "without an opt-in economic architecture"
         )
     if not math.isclose(
             float(provenance["source_pretrained_lr_scale"]),
@@ -304,7 +324,9 @@ def _attach_training_code_revision(model, *, initialize):
 
     enabled = bool(getattr(
         model.policy, "economic_threshold_residual", False
-    ))
+    )) or getattr(
+        model.policy, "economic_architecture", None
+    ) == SELLER_TWO_BRANCH_BETA_V4
     saved = getattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None)
     if not enabled:
         if saved is not None:
@@ -411,6 +433,152 @@ def _attach_direct_threshold_initialization_provenance(model, *, initialize):
     return recorded
 
 
+def two_branch_initialization_contract():
+    """Return the exact neutral seller-v4 initialization contract."""
+
+    return {
+        "schema": "stackpomdp.atari.e1_two_branch_initialization.v1",
+        "architecture_parameterization": SELLER_TWO_BRANCH_BETA_V4,
+        "live_input_features": OPPONENT_COMMITMENT_SLICE.start,
+        "live_hidden_features": 32,
+        "context_input_features": NUM_TRADE_EVENTS,
+        "context_hidden_features": 32,
+        "event_outputs": NUM_TRADE_EVENTS,
+        "initial_mean": SELLER_INIT_MEAN,
+        "initial_concentration": SELLER_INIT_CONCENTRATION,
+        "live_output_weight_initialized_exact_zero": True,
+        "live_mean_logit_bias": math.log(
+            SELLER_INIT_MEAN / (1.0 - SELLER_INIT_MEAN)
+        ),
+        "live_raw_concentration_bias": (
+            StackPOMDPAtariPolicy._inverse_softplus(
+                SELLER_INIT_CONCENTRATION - BETA_PARAMETER_EPSILON
+            )
+        ),
+        "context_output_weight_initialized_exact_zero": True,
+        "context_output_bias_initialized_exact_zero": True,
+        "current_slope_parameter": "economic_current_slopes",
+        "current_slope_shape": [NUM_TRADE_EVENTS],
+        "current_slopes_initialized_exact_zero": True,
+        "current_slopes_trainable": True,
+        "fixed_threshold_anchor": False,
+        "gameplay_actor_frozen": True,
+        "economic_learning_rate": 5.0e-4,
+        "critic_learning_rate": 1.0e-4,
+    }
+
+
+def two_branch_initialization_provenance(policy):
+    """Return v4 initialization provenance without inspecting trained values."""
+
+    if getattr(policy, "economic_architecture", None) != (
+            SELLER_TWO_BRANCH_BETA_V4
+    ):
+        return None
+    return two_branch_initialization_contract()
+
+
+def _attach_two_branch_initialization_provenance(model, *, initialize):
+    """Persist v4 neutral initialization and reject cross-mode resumes."""
+
+    expected = two_branch_initialization_provenance(model.policy)
+    recorded = getattr(model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None)
+    if expected is None:
+        if recorded is not None:
+            raise ValueError(
+                "non-v4 E1 checkpoint unexpectedly stores two-branch "
+                "initialization provenance"
+            )
+        return None
+    if recorded is None:
+        if not initialize:
+            raise ValueError(
+                "two-branch E1 resume is missing initialization provenance"
+            )
+        policy = model.policy
+        zero_checks = (
+            policy.economic_live_output.weight,
+            policy.economic_context_output.weight,
+            policy.economic_context_output.bias,
+            policy.economic_current_slopes,
+        )
+        if any(
+                not th.equal(values, th.zeros_like(values))
+                for values in zero_checks
+        ):
+            raise RuntimeError(
+                "seller-v4 live/context output weights, context bias, and "
+                "current slopes must start at exact zero"
+            )
+        expected_live_bias = th.tensor([
+            expected["live_mean_logit_bias"],
+            expected["live_raw_concentration_bias"],
+        ], dtype=policy.economic_live_output.bias.dtype,
+           device=policy.economic_live_output.bias.device)
+        if not th.equal(policy.economic_live_output.bias, expected_live_bias):
+            raise RuntimeError(
+                "seller-v4 live-output bias does not implement the exact "
+                "neutral Beta initialization"
+            )
+        for module in policy.gameplay_actor_modules():
+            if any(parameter.requires_grad for parameter in module.parameters()):
+                raise RuntimeError("seller-v4 gameplay actor is not frozen")
+        setattr(model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, dict(expected))
+        return expected
+    if recorded != expected:
+        raise ValueError(
+            "two-branch E1 initialization differs from saved provenance"
+        )
+    return recorded
+
+
+def module_parameter_sha256(module):
+    """Hash a module state without serialization or global RNG effects."""
+
+    digest = hashlib.sha256()
+    for name, value in module.state_dict().items():
+        array = value.detach().cpu().contiguous().numpy()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(array.dtype).encode("ascii"))
+        digest.update(np.asarray(array.shape, dtype=np.int64).tobytes())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def gameplay_actor_sha256(policy):
+    """Hash each frozen gameplay component in stable module order."""
+
+    names = (
+        "features_extractor.visual",
+        "features_extractor.state_encoder",
+        "game_action_net",
+    )
+    return {
+        name: module_parameter_sha256(module)
+        for name, module in zip(names, policy.gameplay_actor_modules())
+    }
+
+
+def validate_frozen_gameplay_actor(model):
+    """Fail if seller-v4 gameplay changed after its recorded transfer."""
+
+    if getattr(model.policy, "economic_architecture", None) != (
+            SELLER_TWO_BRANCH_BETA_V4
+    ):
+        return None
+    source = getattr(model, "atari_e1_source_provenance", None)
+    if not isinstance(source, dict):
+        raise ValueError("seller-v4 checkpoint lacks E0b source provenance")
+    expected = source.get("frozen_gameplay_actor_sha256")
+    actual = gameplay_actor_sha256(model.policy)
+    if expected != actual:
+        raise RuntimeError("seller-v4 frozen gameplay actor changed")
+    for module in model.policy.gameplay_actor_modules():
+        if any(parameter.requires_grad for parameter in module.parameters()):
+            raise RuntimeError("seller-v4 gameplay actor became trainable")
+    return actual
+
+
 def bilateral_config(args, *, seed):
     return BilateralAtariConfig(
         seed=int(seed),
@@ -443,24 +611,27 @@ def make_env(args, *, seed, context_sampler=None):
 def _new_model(args, vec_env):
     actor_loss_mode = _actor_loss_mode(args)
     algorithm_class = ppo_class_for_actor_loss_mode(actor_loss_mode)
+    policy_kwargs = {
+        "economic_role": args.role,
+        "economic_input_mode": "full",
+        "visual_features": 512,
+        "state_features": 64,
+        "economic_hidden": 64,
+        "critic_hidden": 256,
+        "pretrained_lr_scale": args.pretrained_lr_scale,
+        "economic_threshold_residual": (
+            _economic_threshold_residual(args)
+        ),
+        "economic_threshold_residual_direct_input": (
+            _economic_threshold_residual_direct_input(args)
+        ),
+    }
+    if _economic_architecture(args) is not None:
+        policy_kwargs["economic_architecture"] = _economic_architecture(args)
     model = algorithm_class(
         StackPOMDPAtariPolicy,
         vec_env,
-        policy_kwargs={
-            "economic_role": args.role,
-            "economic_input_mode": "full",
-            "visual_features": 512,
-            "state_features": 64,
-            "economic_hidden": 64,
-            "critic_hidden": 256,
-            "pretrained_lr_scale": args.pretrained_lr_scale,
-            "economic_threshold_residual": (
-                _economic_threshold_residual(args)
-            ),
-            "economic_threshold_residual_direct_input": (
-                _economic_threshold_residual_direct_input(args)
-            ),
-        },
+        policy_kwargs=policy_kwargs,
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
         batch_size=args.batch_size,
@@ -484,9 +655,9 @@ def _new_model(args, vec_env):
     _validate_e0b_source(provenance)
     # The opponent commitment is identically zero throughout E0a/E0b, so its
     # five input columns retain arbitrary initialization values.  Reset only
-    # those previously unseen columns before E1: gameplay therefore starts
-    # exactly invariant to price/threshold context, while ordinary PPO
-    # gradients remain free to learn economic effects during fine-tuning.
+    # those previously unseen columns before E1.  Ordinary E1 policies may
+    # subsequently learn through them; seller v4 freezes this gameplay path
+    # and learns commitment effects only in its independent economic branch.
     state_input = model.policy.features_extractor.state_encoder[0]
     with th.no_grad():
         state_input.weight[:, OPPONENT_COMMITMENT_SLICE].zero_()
@@ -499,6 +670,20 @@ def _new_model(args, vec_env):
             OPPONENT_COMMITMENT_SLICE.stop,
         )),
     }
+    if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4:
+        provenance.update({
+            "frozen_gameplay_actor": True,
+            "frozen_gameplay_actor_sha256": gameplay_actor_sha256(
+                model.policy
+            ),
+            "economic_transfer_excluded_modules": [
+                "economic_live_encoder",
+                "economic_live_output",
+                "economic_context_encoder",
+                "economic_context_output",
+                "economic_current_slopes",
+            ],
+        })
     model.atari_e1_source_provenance = dict(provenance)
     initialization = _economic_initialization(args)
     model.policy.reset_economic_head(**initialization)
@@ -513,6 +698,7 @@ def _new_model(args, vec_env):
     _attach_direct_threshold_initialization_provenance(
         model, initialize=True
     )
+    _attach_two_branch_initialization_provenance(model, initialize=True)
     _attach_training_code_revision(model, initialize=True)
     print({"actor_transfer": provenance}, flush=True)
     return model
@@ -561,6 +747,14 @@ def _resumed_model(args, vec_env):
         raise ValueError(
             "--economic-threshold-residual-direct-input must match the saved "
             f"E1 checkpoint ({saved_direct_input})"
+        )
+    saved_economic_architecture = getattr(
+        policy, "economic_architecture", None
+    )
+    if saved_economic_architecture != _economic_architecture(args):
+        raise ValueError(
+            "--economic-architecture must match the saved E1 checkpoint "
+            f"({saved_economic_architecture})"
         )
     expected_target_kl = getattr(args, "target_kl", None)
     saved_target_kl = getattr(model, "target_kl", None)
@@ -647,7 +841,32 @@ def _resumed_model(args, vec_env):
     _attach_direct_threshold_initialization_provenance(
         model, initialize=False
     )
+    _attach_two_branch_initialization_provenance(model, initialize=False)
     _attach_training_code_revision(model, initialize=False)
+    if saved_economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+        expected_hashes = provenance.get("frozen_gameplay_actor_sha256")
+        actual_hashes = gameplay_actor_sha256(policy)
+        if expected_hashes != actual_hashes:
+            raise ValueError(
+                "seller-v4 frozen gameplay actor differs from its source "
+                "provenance"
+            )
+        group_names = [
+            group.get("group_name") for group in policy.optimizer.param_groups
+        ]
+        if group_names != ["seller_v4_economic", "seller_v4_critic"]:
+            raise ValueError(
+                "seller-v4 optimizer groups did not survive checkpoint load"
+            )
+        group_scales = [
+            float(group.get("lr_scale", np.nan))
+            for group in policy.optimizer.param_groups
+        ]
+        if not np.allclose(group_scales, [1.0, 0.2], rtol=0.0, atol=0.0):
+            raise ValueError(
+                "seller-v4 optimizer learning-rate scales did not survive "
+                "checkpoint load"
+            )
     return model
 
 
@@ -823,6 +1042,14 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
+        "--economic-architecture",
+        choices=sorted(ECONOMIC_ARCHITECTURES),
+        help=(
+            "opt-in versioned economic actor; seller_two_branch_beta_v4 "
+            "freezes E0 gameplay and trains independent live/context branches"
+        ),
+    )
+    parser.add_argument(
         "--actor-loss-mode",
         choices=ACTOR_LOSS_MODES,
         default=STANDARD_ACTOR_LOSS_MODE,
@@ -924,6 +1151,37 @@ def parse_args(argv=None):
             "--economic-threshold-residual-direct-input requires "
             "--economic-threshold-residual"
         )
+    if args.economic_architecture is not None:
+        if args.role != SELLER:
+            parser.error(
+                "--economic-architecture is reserved for E1 seller responses"
+            )
+        if (
+                args.economic_threshold_residual
+                or args.economic_threshold_residual_direct_input
+        ):
+            parser.error(
+                "--economic-architecture cannot be combined with legacy "
+                "threshold-residual flags"
+            )
+    if args.economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
+        if args.e1_sampler_mode != UNIFORM_E1_SAMPLER:
+            parser.error(
+                f"{SELLER_TWO_BRANCH_BETA_V4} requires independent "
+                "Uniform(0,1)^5 sampling from the first update"
+            )
+        if not math.isclose(
+                args.learning_rate, 5.0e-4, rel_tol=0.0, abs_tol=1.0e-12
+        ):
+            parser.error(
+                f"{SELLER_TWO_BRANCH_BETA_V4} requires "
+                "--learning-rate 5e-4"
+            )
+        if args.actor_loss_mode != PHASE_BALANCED_ACTOR_LOSS_MODE:
+            parser.error(
+                f"{SELLER_TWO_BRANCH_BETA_V4} requires "
+                "--actor-loss-mode balanced"
+            )
     if args.n_steps != transitions:
         parser.error(f"--n-steps must equal one full E1 episode ({transitions})")
     if args.batch_size <= 0 or args.batch_size > buffer_size:
@@ -992,6 +1250,10 @@ def main(argv=None):
         direct_initialization = getattr(
             model, DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
         )
+        two_branch_initialization = getattr(
+            model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None
+        )
+        validate_frozen_gameplay_actor(model)
         if run is not None:
             wandb_provenance = {
                 "e0b_source_provenance": source_provenance,
@@ -1014,6 +1276,10 @@ def main(argv=None):
                     wandb_provenance[
                         "direct_threshold_initialization_provenance"
                     ] = direct_initialization
+                if two_branch_initialization is not None:
+                    wandb_provenance[
+                        "two_branch_initialization_provenance"
+                    ] = two_branch_initialization
             run.config.update(wandb_provenance, allow_val_change=True)
         if not args.eval_only:
             callback = EpisodeCheckpointCallback(
@@ -1028,6 +1294,7 @@ def main(argv=None):
                 callback=CallbackList([callback]),
                 reset_num_timesteps=not bool(args.resume),
             )
+            validate_frozen_gameplay_actor(model)
             model.save(args.checkpoint)
         evaluation = evaluate_response(model, args)
         evaluation_provenance = {
@@ -1067,6 +1334,10 @@ def main(argv=None):
                 evaluation_provenance[
                     "direct_threshold_initialization"
                 ] = direct_initialization
+            if two_branch_initialization is not None:
+                evaluation_provenance[
+                    "two_branch_initialization"
+                ] = two_branch_initialization
         evaluation["provenance"] = evaluation_provenance
         write_csv(
             fixed_context_csv_path(args.checkpoint),
