@@ -15,6 +15,7 @@ case "$E1V5_PROTOCOL" in
     typeset -gr E1V5_SMOKE_TIMESTEPS=20500
     typeset -gr E1V5_PREFLIGHT_TIMESTEPS=82000
     typeset -gra E1V5_VALIDATOR_PROTOCOL_ARGS=()
+    typeset -gr E1V5_EVIDENCE_REVISION=""
     ;;
   exposure_v2)
     typeset -gr E1V5_TOKEN=conditioning_recovery_v5_shared_context_exposure_v2
@@ -22,6 +23,7 @@ case "$E1V5_PROTOCOL" in
     typeset -gr E1V5_SMOKE_TIMESTEPS=20500
     typeset -gr E1V5_PREFLIGHT_TIMESTEPS=400160
     typeset -gra E1V5_VALIDATOR_PROTOCOL_ARGS=(--protocol exposure_v2)
+    typeset -gr E1V5_EVIDENCE_REVISION=c4a7dcd92b621c0884f3dcef0b170961e1ec625b
     ;;
   *)
     print -u2 -- "unknown v5 seller exposure protocol: $E1V5_PROTOCOL"

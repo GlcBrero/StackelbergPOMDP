@@ -110,6 +110,9 @@ def test_v5_exposure_v2_changes_only_fresh_exposure_and_holdout_namespace():
         assert validator.PREFLIGHT_TIMESTEPS == 400_160
         assert validator.PREFLIGHT_BEHAVIOR_SEED_START == 11_400_001
         assert validator.PREFLIGHT_FIXED_SEED_START == 11_500_001
+        assert validator.EXPOSURE_V2_DIAGNOSTIC_REVISION == (
+            "c4a7dcd92b621c0884f3dcef0b170961e1ec625b"
+        )
         assert validator.SMOKE_TIMESTEPS == standard["smoke_timesteps"]
         assert validator.FORMAL_TIMESTEPS == standard["formal_timesteps"]
         assert validator.canonical_architecture() == standard["architecture"]
@@ -492,6 +495,8 @@ def test_v5_exposure_v2_launcher_is_explicit_and_inherits_fresh_fail_closed_path
     assert "conditioning_recovery_v5_shared_context_exposure_v2" in common
     assert "E1V5_PREFLIGHT_TIMESTEPS=400160" in common
     assert "E1V5_VALIDATOR_PROTOCOL_ARGS=(--protocol exposure_v2)" in common
+    assert "E1V5_EVIDENCE_REVISION=c4a7dcd92b621c" in common
+    assert '--evidence-code-revision "$E1V5_DIAGNOSTIC_REVISION"' in launcher
     assert (
         '"${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-gate' in common
     )

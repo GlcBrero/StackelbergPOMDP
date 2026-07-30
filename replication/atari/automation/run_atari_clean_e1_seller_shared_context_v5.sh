@@ -100,6 +100,10 @@ e1v5_require_scoped_clean
 typeset -gr E1V5_REVISION=$(git -C "$E1V5_SOURCE_ROOT" rev-parse HEAD)
 [[ ${#E1V5_REVISION} -eq 40 && "$E1V5_REVISION" != *[!0-9a-f]* ]] || \
   e1v5_die "v5 source revision is not a full lowercase SHA"
+typeset -gr E1V5_DIAGNOSTIC_REVISION=${E1V5_EVIDENCE_REVISION:-$E1V5_REVISION}
+[[ ${#E1V5_DIAGNOSTIC_REVISION} -eq 40 \
+    && "$E1V5_DIAGNOSTIC_REVISION" != *[!0-9a-f]* ]] || \
+  e1v5_die "v5 diagnostic revision is not a full lowercase SHA"
 export STACKPOMDP_SPACE_INVADERS_ROM="$ROM"
 export PYTHONPATH="$E1V5_SOURCE_ROOT"
 export PYTHONNOUSERSITE=1
@@ -133,7 +137,7 @@ e1v5_wait_for_stable_zip "$E1V5_SMOKE"
     --training-log "$E1V5_SMOKE_TRACE" \
     --evaluation "$E1V5_SMOKE_EVALUATION" \
     --e0b "$E1V5_E0B" \
-    --code-revision "$E1V5_REVISION"
+    --code-revision "$E1V5_DIAGNOSTIC_REVISION"
 )
 
 if [[ ! -f "$E1V5_PREFLIGHT" || -L "$E1V5_PREFLIGHT" ]]; then
@@ -178,7 +182,7 @@ if [[ ! -e "$E1V5_PREFLIGHT_BEHAVIOR" \
       --e0b "$E1V5_E0B" \
       --rom "$ROM" \
       --output "$E1V5_PREFLIGHT_BEHAVIOR" \
-      --code-revision "$E1V5_REVISION"
+      --code-revision "$E1V5_DIAGNOSTIC_REVISION"
   )
 fi
 (
@@ -192,7 +196,7 @@ fi
     --behavior-report "$E1V5_PREFLIGHT_BEHAVIOR" \
     --e0b "$E1V5_E0B" \
     --rom "$ROM" \
-    --code-revision "$E1V5_REVISION"
+    --code-revision "$E1V5_DIAGNOSTIC_REVISION"
 )
 
 if [[ ! -f "$E1V5_GATE" || -L "$E1V5_GATE" ]]; then
@@ -226,6 +230,7 @@ fi
     --preflight-behavior "$E1V5_PREFLIGHT_BEHAVIOR" \
     --formal-checkpoint "$E1V5_FORMAL" \
     --code-root "$E1V5_SOURCE_ROOT" \
+    --evidence-code-revision "$E1V5_DIAGNOSTIC_REVISION" \
     --output "$E1V5_GATE"
 )
 

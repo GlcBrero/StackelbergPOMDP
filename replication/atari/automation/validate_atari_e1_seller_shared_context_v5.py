@@ -55,6 +55,15 @@ PREFLIGHT_FIXED_EVENT_STEPS = (20, 50, 80, 110, 140)
 
 STANDARD_PROTOCOL = "standard_v1"
 EXPOSURE_PROTOCOL = "exposure_v2"
+EXPOSURE_V2_DIAGNOSTIC_REVISION = (
+    "c4a7dcd92b621c0884f3dcef0b170961e1ec625b"
+)
+VALIDATOR_REPAIR_ALLOWED_PATHS = (
+    "replication/atari/automation/atari_e1_seller_shared_context_v5_common.zsh",
+    "replication/atari/automation/run_atari_clean_e1_seller_shared_context_v5.sh",
+    "replication/atari/automation/validate_atari_e1_seller_shared_context_v5.py",
+    "tests/test_atari_e1_seller_shared_context_v5_automation.py",
+)
 DEFAULT_PROTOCOL = STANDARD_PROTOCOL
 PROTOCOL_CONFIGURATIONS = {
     STANDARD_PROTOCOL: {
@@ -303,6 +312,61 @@ def _git_revision(code_root):
         "v5 code revision is not a full lowercase SHA",
     )
     return revision
+
+
+def _validate_diagnostic_revision_bridge(
+        code_root, *, runtime_revision, evidence_revision,
+):
+    """Prove that reused diagnostics differ only by the validator repair."""
+
+    if evidence_revision == runtime_revision:
+        return {
+            "applied": False,
+            "evidence_revision": evidence_revision,
+            "runtime_revision": runtime_revision,
+        }
+    _require(
+        ACTIVE_PROTOCOL == EXPOSURE_PROTOCOL
+        and evidence_revision == EXPOSURE_V2_DIAGNOSTIC_REVISION,
+        "v5 diagnostic revision bridge is not preregistered",
+    )
+    root = Path(code_root).expanduser().resolve()
+    ancestor = subprocess.run(
+        [
+            "git", "-C", str(root), "merge-base", "--is-ancestor",
+            evidence_revision, runtime_revision,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    _require(
+        ancestor.returncode == 0,
+        "v5 diagnostic revision is not an ancestor of the runtime",
+    )
+    changed = tuple(filter(None, subprocess.run(
+        [
+            "git", "-C", str(root), "diff", "--name-only",
+            f"{evidence_revision}..{runtime_revision}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()))
+    _require(
+        changed == VALIDATOR_REPAIR_ALLOWED_PATHS,
+        "v5 diagnostic/runtime revisions differ outside the exact "
+        "validator-only repair",
+    )
+    return {
+        "applied": True,
+        "reason": "float32_gradient_norm_validator_tolerance",
+        "evidence_revision": evidence_revision,
+        "runtime_revision": runtime_revision,
+        "changed_paths": list(changed),
+        "training_implementation_changed": False,
+        "gradient_norm_absolute_tolerance": V5_GRADIENT_NORM_ATOL,
+    }
 
 
 def _git_scoped_clean(code_root):
@@ -1196,6 +1260,17 @@ def formal_candidates(checkpoint):
 def build_gate(args):
     _git_scoped_clean(args.code_root)
     revision = _git_revision(args.code_root)
+    evidence_revision = args.evidence_code_revision or revision
+    _require(
+        isinstance(evidence_revision, str)
+        and re.fullmatch(r"[0-9a-f]{40}", evidence_revision) is not None,
+        "v5 diagnostic evidence revision is invalid",
+    )
+    revision_bridge = _validate_diagnostic_revision_bridge(
+        args.code_root,
+        runtime_revision=revision,
+        evidence_revision=evidence_revision,
+    )
     output = Path(args.output).expanduser().resolve()
     _exact_name(output, GATE_NAME, "v5 diagnostics gate")
     e0b = Path(args.e0b).expanduser().resolve()
@@ -1225,7 +1300,7 @@ def build_gate(args):
         training_log=args.smoke_training_log,
         evaluation=args.smoke_evaluation,
         e0b=e0b,
-        expected_revision=revision,
+        expected_revision=evidence_revision,
     )
     preflight = validate_preflight(
         checkpoint=args.preflight_checkpoint,
@@ -1235,7 +1310,7 @@ def build_gate(args):
         behavioral_report=args.preflight_behavior,
         e0b=e0b,
         rom=rom,
-        expected_revision=revision,
+        expected_revision=evidence_revision,
     )
     _require(
         smoke["checkpoint"]["sha256"]
@@ -1255,6 +1330,8 @@ def build_gate(args):
         "source_kind": SOURCE_KIND,
         "exposure_protocol": canonical_protocol_provenance(),
         "code_revision": revision,
+        "diagnostic_evidence_revision": evidence_revision,
+        "validator_revision_bridge": revision_bridge,
         "legacy_recovery_artifacts_admitted": False,
         "prerequisites": {
             "e0b": {"path": str(e0b), "sha256": CANONICAL_E0B_SHA256},
@@ -1335,6 +1412,22 @@ def validate_gate(path, *, code_root=None):
         and re.fullmatch(r"[0-9a-f]{40}", revision) is not None,
         "v5 gate revision is invalid",
     )
+    evidence_revision = value.get("diagnostic_evidence_revision", revision)
+    _require(
+        isinstance(evidence_revision, str)
+        and re.fullmatch(r"[0-9a-f]{40}", evidence_revision) is not None,
+        "v5 diagnostic evidence revision is invalid",
+    )
+    if code_root is not None:
+        expected_bridge = _validate_diagnostic_revision_bridge(
+            code_root,
+            runtime_revision=revision,
+            evidence_revision=evidence_revision,
+        )
+        _require(
+            value.get("validator_revision_bridge") == expected_bridge,
+            "v5 validator-only revision bridge changed",
+        )
     _validate_prerequisites(value)
     _require(
         value.get("economic_architecture") == canonical_architecture()
@@ -1352,7 +1445,7 @@ def validate_gate(path, *, code_root=None):
         training_log=smoke_record.get("training_trace", {}).get("path"),
         evaluation=smoke_record.get("evaluation", {}).get("path"),
         e0b=e0b,
-        expected_revision=revision,
+        expected_revision=evidence_revision,
     )
     _require(smoke_record == smoke, "v5 smoke evidence changed")
     preflight_record = value.get("conditioning_preflight", {})
@@ -1368,7 +1461,7 @@ def validate_gate(path, *, code_root=None):
         ).get("path"),
         e0b=e0b,
         rom=rom,
-        expected_revision=revision,
+        expected_revision=evidence_revision,
     )
     _require(
         preflight_record == preflight,
@@ -1462,6 +1555,7 @@ def parse_args(argv=None):
             "preflight-behavior", "formal-checkpoint", "code-root", "output",
     ):
         gate.add_argument(f"--{name}", required=True)
+    gate.add_argument("--evidence-code-revision")
 
     validate = commands.add_parser("validate-gate")
     validate.add_argument("--gate", required=True)
