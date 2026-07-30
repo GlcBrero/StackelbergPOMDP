@@ -60,6 +60,7 @@ from stackelberg_pomdp.atari.stackpomdp_env import (
     BilateralAtariConfig,
 )
 from stackelberg_pomdp.atari.stackpomdp_policy import (
+    SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
 )
@@ -86,6 +87,13 @@ E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
 E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_two_branch_initialization_provenance"
 )
+E1_SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE = (
+    "atari_e1_shared_context_initialization_provenance"
+)
+FROZEN_E1_SELLER_ARCHITECTURES = {
+    SELLER_TWO_BRANCH_BETA_V4,
+    SELLER_SHARED_CONTEXT_BETA_V5,
+}
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
     "replication/atari/sb3_common.py",
@@ -324,32 +332,45 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                 policy_metadata["direct_threshold_initialization"] = (
                     expected_initialization
                 )
-            if getattr(policy, "economic_architecture", None) == (
-                    SELLER_TWO_BRANCH_BETA_V4
-            ):
+            frozen_architecture = getattr(
+                policy, "economic_architecture", None
+            )
+            if frozen_architecture in FROZEN_E1_SELLER_ARCHITECTURES:
                 from replication.atari.train_atari_meta_response_sb3 import (
                     gameplay_actor_sha256,
+                    shared_context_initialization_provenance,
                     two_branch_initialization_provenance,
                     validate_frozen_gameplay_actor,
                 )
 
-                expected_initialization = (
-                    two_branch_initialization_provenance(policy)
-                )
+                if frozen_architecture == SELLER_TWO_BRANCH_BETA_V4:
+                    initialization_key = "two_branch_initialization"
+                    initialization_label = "seller-v4"
+                    initialization_attribute = (
+                        E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE
+                    )
+                    expected_initialization = (
+                        two_branch_initialization_provenance(policy)
+                    )
+                else:
+                    initialization_key = "shared_context_initialization"
+                    initialization_label = "seller-v5"
+                    initialization_attribute = (
+                        E1_SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE
+                    )
+                    expected_initialization = (
+                        shared_context_initialization_provenance(policy)
+                    )
                 recorded_initialization = getattr(
-                    model,
-                    E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE,
-                    None,
+                    model, initialization_attribute, None
                 )
                 if recorded_initialization != expected_initialization:
                     raise ValueError(
-                        f"{label} seller-v4 policy lacks exact saved "
+                        f"{label} {initialization_label} policy lacks exact saved "
                         "initialization provenance"
                     )
                 validate_frozen_gameplay_actor(model)
-                policy_metadata["two_branch_initialization"] = (
-                    expected_initialization
-                )
+                policy_metadata[initialization_key] = expected_initialization
                 policy_metadata["frozen_gameplay_actor_sha256"] = (
                     gameplay_actor_sha256(policy)
                 )
@@ -372,6 +393,10 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             if "two_branch_initialization" in policy_metadata:
                 result["two_branch_initialization"] = policy_metadata[
                     "two_branch_initialization"
+                ]
+            if "shared_context_initialization" in policy_metadata:
+                result["shared_context_initialization"] = policy_metadata[
+                    "shared_context_initialization"
                 ]
         manifest = getattr(model, E2_PROVENANCE_ATTRIBUTE, None)
         if manifest is not None:
@@ -809,6 +834,14 @@ def _new_model(args, vec_env, *, provenance_manifest):
             "validation and actor transfer"
         )
     source_policy = recorded_source.get("policy", {})
+    source_parameterization = source_policy.get(
+        "economic_architecture", {}
+    ).get("parameterization")
+    source_frozen_architecture = (
+        source_parameterization
+        if source_parameterization in FROZEN_E1_SELLER_ARCHITECTURES
+        else None
+    )
     if (
             provenance.get("source_economic_role")
             != source_policy.get("economic_role")
@@ -832,11 +865,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
                 ) == "seller_direct_threshold_residual_beta_v3"
             )
             or provenance.get("source_economic_architecture") != (
-                SELLER_TWO_BRANCH_BETA_V4
-                if source_policy.get("economic_architecture", {}).get(
-                    "parameterization"
-                ) == SELLER_TWO_BRANCH_BETA_V4
-                else None
+                source_frozen_architecture
             )
     ):
         raise RuntimeError(

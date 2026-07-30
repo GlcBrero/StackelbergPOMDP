@@ -1414,6 +1414,9 @@ def main(argv=None):
         two_branch_initialization = getattr(
             model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None
         )
+        shared_context_initialization = getattr(
+            model, SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None
+        )
         validate_frozen_gameplay_actor(model)
         if run is not None:
             wandb_provenance = {
@@ -1441,6 +1444,10 @@ def main(argv=None):
                     wandb_provenance[
                         "two_branch_initialization_provenance"
                     ] = two_branch_initialization
+                if shared_context_initialization is not None:
+                    wandb_provenance[
+                        "shared_context_initialization_provenance"
+                    ] = shared_context_initialization
             run.config.update(wandb_provenance, allow_val_change=True)
         if not args.eval_only:
             callback = EpisodeCheckpointCallback(
@@ -1499,6 +1506,10 @@ def main(argv=None):
                 evaluation_provenance[
                     "two_branch_initialization"
                 ] = two_branch_initialization
+            if shared_context_initialization is not None:
+                evaluation_provenance[
+                    "shared_context_initialization"
+                ] = shared_context_initialization
         evaluation["provenance"] = evaluation_provenance
         write_csv(
             fixed_context_csv_path(args.checkpoint),

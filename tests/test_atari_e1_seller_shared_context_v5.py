@@ -10,6 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
 from replication.atari import train_atari_meta_response_sb3 as trainer
+from replication.atari import train_atari_stackpomdp_leader_sb3 as leader_trainer
 from replication.atari.sb3_common import (
     PhaseBalancedPPO,
     SELLER_V5_OPTIMIZER_GROUPS,
@@ -403,3 +404,211 @@ def test_v5_cli_contract_requires_uniform_balanced_rates_and_clip(tmp_path):
         trainer.parse_args(common + ["--e1-sampler-mode", "all-equal-v1"])
     with pytest.raises(SystemExit):
         trainer.parse_args(common + ["--max-grad-norm", "0.4"])
+
+
+def test_v5_main_persists_initialization_in_wandb_and_evaluation(
+        monkeypatch, tmp_path,
+):
+    initialization = trainer.shared_context_initialization_contract()
+    architecture = seller_shared_context_architecture_provenance()
+    model = SimpleNamespace(
+        policy=SimpleNamespace(
+            economic_architecture=SELLER_SHARED_CONTEXT_BETA_V5,
+        ),
+        num_timesteps=82_000,
+        target_kl=None,
+        atari_e1_source_provenance={"sha256": "0" * 64},
+        atari_e1_sampler_provenance={"mode": "uniform"},
+        atari_e1_sampler_history=[],
+        atari_e1_resume_source_provenance=None,
+        atari_e1_economic_architecture_provenance=architecture,
+        atari_e1_threshold_residual_training_code_revision="1" * 40,
+        atari_e1_shared_context_initialization_provenance=initialization,
+        atari_economic_head_initialization={
+            "mean": 0.5,
+            "concentration": 2.0,
+        },
+        atari_actor_loss_mode="balanced",
+    )
+    args = SimpleNamespace(
+        role="seller",
+        seed=1,
+        checkpoint=str(tmp_path / "seller_v5.zip"),
+        num_envs=1,
+        start_method="spawn",
+        eval_only=True,
+        resume=str(tmp_path / "resume.zip"),
+        gameplay_horizon=200,
+        event_tail_steps=0,
+    )
+
+    class _Config:
+        def __init__(self):
+            self.values = {}
+
+        def update(self, values, *, allow_val_change):
+            assert allow_val_change is True
+            self.values.update(values)
+
+    run = SimpleNamespace(config=_Config())
+    vec_env = SimpleNamespace(close=lambda: None)
+    captured = {}
+    monkeypatch.setattr(trainer, "parse_args", lambda argv=None: args)
+    monkeypatch.setattr(
+        trainer, "make_vec_env", lambda *args, **kwargs: vec_env
+    )
+    monkeypatch.setattr(trainer, "init_wandb", lambda *args, **kwargs: run)
+    monkeypatch.setattr(trainer, "build_model", lambda *args, **kwargs: model)
+    monkeypatch.setattr(
+        trainer, "validate_frozen_gameplay_actor", lambda model: None
+    )
+    monkeypatch.setattr(
+        trainer,
+        "evaluate_response",
+        lambda *args, **kwargs: {"summary": {}, "fixed_contexts": []},
+    )
+    monkeypatch.setattr(trainer, "write_csv", lambda *args, **kwargs: None)
+
+    def finish_run(run, *, checkpoint, evaluation, total_timesteps):
+        captured.update({
+            "run": run,
+            "checkpoint": checkpoint,
+            "evaluation": evaluation,
+            "total_timesteps": total_timesteps,
+        })
+
+    monkeypatch.setattr(trainer, "finish_run", finish_run)
+    trainer.main([])
+
+    assert run.config.values[
+        "shared_context_initialization_provenance"
+    ] == initialization
+    assert captured["evaluation"]["provenance"][
+        "shared_context_initialization"
+    ] == initialization
+
+
+def _attach_v5_e1_checkpoint_contract(model):
+    architecture = trainer._attach_economic_architecture_contract(model)
+    initialization = trainer._attach_shared_context_initialization_provenance(
+        model, initialize=True
+    )
+    model.atari_e1_threshold_residual_training_code_revision = "2" * 40
+    model.atari_e1_source_provenance = {
+        "frozen_gameplay_actor_sha256": trainer.gameplay_actor_sha256(
+            model.policy
+        ),
+    }
+    return architecture, initialization
+
+
+def test_e2_metadata_validates_v5_initialization_and_frozen_gameplay(
+        tmp_path,
+):
+    model = _model()
+    architecture, initialization = _attach_v5_e1_checkpoint_contract(model)
+    checkpoint = tmp_path / "seller_v5.zip"
+    model.save(checkpoint)
+
+    metadata = leader_trainer.checkpoint_policy_metadata(
+        checkpoint, label="frozen E1 response"
+    )
+    assert metadata["economic_architecture"] == architecture
+    assert metadata["shared_context_initialization"] == initialization
+    assert metadata["policy_metadata"][
+        "shared_context_initialization"
+    ] == initialization
+    assert metadata["policy_metadata"][
+        "frozen_gameplay_actor_sha256"
+    ] == trainer.gameplay_actor_sha256(model.policy)
+
+    delattr(model, trainer.SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE)
+    missing = tmp_path / "seller_v5_missing_initialization.zip"
+    model.save(missing)
+    with pytest.raises(ValueError, match="seller-v5.*initialization provenance"):
+        leader_trainer.checkpoint_policy_metadata(missing)
+
+    setattr(
+        model,
+        trainer.SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE,
+        initialization,
+    )
+    model.atari_e1_source_provenance["frozen_gameplay_actor_sha256"] = {
+        "tampered": "3" * 64,
+    }
+    bad_hash = tmp_path / "seller_v5_bad_gameplay_hash.zip"
+    model.save(bad_hash)
+    with pytest.raises(RuntimeError, match="frozen seller gameplay actor changed"):
+        leader_trainer.checkpoint_policy_metadata(bad_hash)
+
+
+def test_v5_seller_e1_can_initialize_seller_leader_e2(monkeypatch, tmp_path):
+    args = leader_trainer.parse_args([
+        "--leader-role", "seller",
+        "--response-checkpoint", str(tmp_path / "buyer_e1.zip"),
+        "--leader-e1-checkpoint", str(tmp_path / "seller_v5.zip"),
+        "--checkpoint", str(tmp_path / "seller_e2.zip"),
+        "--num-envs", "1",
+        "--no-wandb",
+    ])
+    architecture = seller_shared_context_architecture_provenance()
+    source_policy = {
+        "economic_role": "seller",
+        "economic_input_mode": "full",
+        "economic_architecture": architecture,
+    }
+    manifest = {
+        "artifacts": {
+            "same_role_e1_initialization": {
+                "sha256": "4" * 64,
+                "policy": source_policy,
+            },
+        },
+    }
+    captured = {}
+
+    class _Policy:
+        def load_actor_checkpoint(
+                self, checkpoint, *, include_economic, device,
+        ):
+            captured["transfer"] = (checkpoint, include_economic, device)
+            return {
+                "sha256": "4" * 64,
+                "source_economic_role": "seller",
+                "source_economic_input_mode": "full",
+                "source_economic_threshold_residual": False,
+                "source_economic_threshold_residual_direct_input": False,
+                "source_economic_architecture": (
+                    SELLER_SHARED_CONTEXT_BETA_V5
+                ),
+                "modules": leader_trainer.E2_ACTOR_TRANSFER_MODULES,
+                "critic_transferred": False,
+            }
+
+        def reset_economic_head(self, *, mean, concentration):
+            captured["reset"] = (mean, concentration)
+
+        def clear_obs_action_map(self):
+            captured["cache_cleared"] = True
+
+    class _PPO:
+        def __init__(self, policy_class, env, **kwargs):
+            self.policy = _Policy()
+
+    monkeypatch.setattr(
+        leader_trainer, "ppo_class_for_actor_loss_mode", lambda mode: _PPO
+    )
+
+    def attach(model, value):
+        model.e2_provenance_manifest = value
+        return value
+
+    monkeypatch.setattr(leader_trainer, "attach_e2_provenance", attach)
+    model = leader_trainer._new_model(
+        args, vec_env="vec", provenance_manifest=manifest
+    )
+
+    assert captured["transfer"][1] is False
+    assert captured["reset"] == (0.5, 2.0)
+    assert captured["cache_cleared"] is True
+    assert model.e2_provenance_manifest is manifest
