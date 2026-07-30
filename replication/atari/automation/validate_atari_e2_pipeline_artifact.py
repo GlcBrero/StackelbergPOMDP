@@ -90,6 +90,13 @@ E1_PRIMARY_GATE_NAME = (
     "e1_buyer_temporal_mix_v1_primary_economic_confirmation_v1.gate.json"
 )
 E1_PRIMARY_EVALUATOR = "clean_atari_e1_primary_economic_confirmation_v1"
+E1_PRIMARY_EVALUATOR_CODE_REVISION = (
+    "dedab3e3615642b292046c2f07b7f1d9dd4bbce0"
+)
+E1_PRIMARY_AUTHORITY_CODE_ROOT = Path(os.environ.get(
+    "STACKPOMDP_ATARI_PRIMARY_AUTHORITY_CODE_ROOT",
+    "/private/tmp/stackpomdp-atari-primary-code-dedab3e",
+)).expanduser().resolve()
 E1_PRIMARY_PROTOCOL_KIND = (
     "stackpomdp.atari.e1_buyer_primary_economic_protocol.v1"
 )
@@ -1308,17 +1315,47 @@ def _run_primary_economic_gate_validator(
         *, protocol_path: Path, report_path: Path, gate_path: Path,
         selected_checkpoint: Path,
 ) -> dict:
-    """Validate the active E1 release in a process isolated from pinned E2.
+    """Validate the immutable buyer release with its recorded evaluator.
 
-    E2 deliberately imports policy code from the detached commit named by the
-    shared launcher contract.  The release validator and its evaluator
-    dependencies are newer active automation, so importing them into this
-    process would either fail or mix scientific runtimes.  A short child
-    process receives the active source root explicitly; this process and every
-    subsequent E2 import remain pinned.
+    The primary buyer was certified at a historical revision, independently
+    of the later E2/v5 runtime.  Revalidation therefore executes the exact
+    recorded detached worktree while the caller remains pinned to its current
+    E2 policy code.  Current runtime code is never substituted for historical
+    release authority.
     """
 
-    module_path = Path(__file__).expanduser().parent / E1_PRIMARY_MODULE_NAME
+    protocol_path = Path(protocol_path).expanduser().resolve()
+    gate_path = Path(gate_path).expanduser().resolve()
+    protocol = load_json(protocol_path)
+    gate = load_json(gate_path)
+    protocol_revision = protocol.get("evaluator_code_revision")
+    gate_revision = gate.get("evaluator_code_revision")
+    expect_equal(
+        protocol_revision,
+        E1_PRIMARY_EVALUATOR_CODE_REVISION,
+        label="primary protocol evaluator revision",
+    )
+    expect_equal(
+        gate_revision,
+        protocol_revision,
+        label="primary gate evaluator revision",
+    )
+    authority_root = E1_PRIMARY_AUTHORITY_CODE_ROOT
+    if authority_root.is_symlink():
+        fail(
+            "primary-economic authority worktree is unavailable or unsafe: "
+            f"{authority_root}"
+        )
+    authority_root = authority_root.resolve()
+    expect_equal(
+        validate_selector_code_root(authority_root),
+        protocol_revision,
+        label="primary authority worktree revision",
+    )
+    module_path = (
+        authority_root / "replication/atari/automation"
+        / E1_PRIMARY_MODULE_NAME
+    )
     if module_path.is_symlink():
         fail(
             "primary-economic release validator is unavailable or unsafe: "
@@ -1332,7 +1369,7 @@ def _run_primary_economic_gate_validator(
         )
     environment = os.environ.copy()
     environment.pop("STACKPOMDP_CODE_ROOT", None)
-    environment["PYTHONPATH"] = str(AUTOMATION_SOURCE_ROOT)
+    environment["PYTHONPATH"] = str(authority_root)
     environment["PYTHONNOUSERSITE"] = "1"
     try:
         completed = subprocess.run(
@@ -1342,9 +1379,9 @@ def _run_primary_economic_gate_validator(
                 "--report", str(report_path),
                 "--gate", str(gate_path),
                 "--selected-checkpoint", str(selected_checkpoint),
-                "--code-root", str(AUTOMATION_SOURCE_ROOT),
+                "--code-root", str(authority_root),
             ],
-            cwd=str(AUTOMATION_SOURCE_ROOT),
+            cwd=str(authority_root),
             env=environment,
             check=True,
             capture_output=True,
@@ -2500,12 +2537,21 @@ def write_e1_seller_release(args: argparse.Namespace) -> dict:
 
 
 def validated_e1_seller_release(path: Path) -> dict:
-    value = load_json(path)
-    expect_equal(
-        value.get("schema"), "stackpomdp.atari.e1_seller_release.v2",
-        label="E1 seller-release schema",
+    """Validate the exact historical seller-training buyer release.
+
+    Its ``code_head`` identifies the older release authority, not the current
+    E2 runtime.  The canonical validator binds the complete release bytes,
+    historical code revision, buyer checkpoint/report, and all support files.
+    """
+
+    from replication.atari.automation import (
+        validate_atari_e1_seller_conditioning_recovery as recovery,
     )
-    expect_equal(value.get("code_head"), validate_code_root(), label="code HEAD")
+
+    try:
+        value = recovery.validate_seller_release(path)
+    except ValueError as error:
+        fail(f"canonical E1 seller-release validation failed: {error}")
     expect_equal(
         value.get("seller_training_actor_loss_mode"), "balanced",
         label="E1 seller training actor-loss mode",

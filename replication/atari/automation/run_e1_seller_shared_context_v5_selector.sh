@@ -39,7 +39,7 @@ trap 'interrupt_e1v5_selector 143' TERM
 e1v5s_prepare_runtime
 (
   cd "$E1V5S_CODE_ROOT"
-  "$E1V5_PYTHON" "$E1V5_VALIDATOR" \
+  "$E1V5_PYTHON" "$E1V5S_DIAGNOSTICS_VALIDATOR" \
     "${E1V5_VALIDATOR_PROTOCOL_ARGS[@]}" validate-gate \
     --gate "$E1V5_GATE"
 )

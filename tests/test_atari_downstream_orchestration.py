@@ -287,6 +287,26 @@ def test_primary_validation_subprocess_separates_active_and_pinned_code(
         monkeypatch, tmp_path,
 ):
     observed = {}
+    authority_root = tmp_path / "primary-authority"
+    module = (
+        authority_root / "replication/atari/automation"
+        / validator.E1_PRIMARY_MODULE_NAME
+    )
+    module.parent.mkdir(parents=True)
+    module.write_text("# exact historical validator fixture\n", encoding="utf-8")
+    protocol_path = tmp_path / "protocol.json"
+    report_path = tmp_path / "report.json"
+    gate_path = tmp_path / "gate.json"
+    protocol_path.write_text(json.dumps({
+        "evaluator_code_revision": (
+            validator.E1_PRIMARY_EVALUATOR_CODE_REVISION
+        ),
+    }), encoding="utf-8")
+    gate_path.write_text(json.dumps({
+        "evaluator_code_revision": (
+            validator.E1_PRIMARY_EVALUATOR_CODE_REVISION
+        ),
+    }), encoding="utf-8")
 
     def run(command, **kwargs):
         observed["command"] = command
@@ -301,24 +321,26 @@ def test_primary_validation_subprocess_separates_active_and_pinned_code(
 
     monkeypatch.setattr(validator.subprocess, "run", run)
     monkeypatch.setenv("STACKPOMDP_CODE_ROOT", "/private/tmp/pinned-e2")
-    # The helper checks that its active sibling exists before spawning.
     monkeypatch.setattr(
-        validator, "E1_PRIMARY_MODULE_NAME",
-        Path(validator.__file__).name,
+        validator, "E1_PRIMARY_AUTHORITY_CODE_ROOT", authority_root,
+    )
+    monkeypatch.setattr(
+        validator,
+        "validate_selector_code_root",
+        lambda path: validator.E1_PRIMARY_EVALUATOR_CODE_REVISION,
     )
     result = validator._run_primary_economic_gate_validator(
-        protocol_path=tmp_path / "protocol.json",
-        report_path=tmp_path / "report.json",
-        gate_path=tmp_path / "gate.json",
+        protocol_path=protocol_path,
+        report_path=report_path,
+        gate_path=gate_path,
         selected_checkpoint=tmp_path / "selected.zip",
     )
     assert result["kind"] == validator.E1_PRIMARY_GATE_KIND
-    assert observed["cwd"] == str(validator.AUTOMATION_SOURCE_ROOT)
-    assert observed["env"]["PYTHONPATH"] == str(
-        validator.AUTOMATION_SOURCE_ROOT
-    )
+    assert observed["cwd"] == str(authority_root.resolve())
+    assert observed["env"]["PYTHONPATH"] == str(authority_root.resolve())
+    assert observed["command"][1] == str(module.resolve())
     assert observed["command"][-2:] == [
-        "--code-root", str(validator.AUTOMATION_SOURCE_ROOT),
+        "--code-root", str(authority_root.resolve()),
     ]
     assert "STACKPOMDP_CODE_ROOT" not in observed["env"]
 

@@ -26,6 +26,8 @@ typeset -gr ROM_SHA256=7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384
 typeset -gr E2_PROFILE="${STACKPOMDP_ATARI_E2_PROFILE:-v3-direct-threshold-residual}"
 typeset -gr E2_V3_EXPECTED_HEAD=87fc165000517e874881cac63850133b9982de7f
 typeset -gr E2_V5_EXPECTED_HEAD=c4a7dcd92b621c0884f3dcef0b170961e1ec625b
+typeset -gr E1_PRIMARY_AUTHORITY_EXPECTED_HEAD=dedab3e3615642b292046c2f07b7f1d9dd4bbce0
+typeset -gr E1_PRIMARY_AUTHORITY_CODE_ROOT=/private/tmp/stackpomdp-atari-primary-code-dedab3e
 case "$E2_PROFILE" in
   v3-direct-threshold-residual)
     typeset -gr E2_ACTIVE_CODE_ROOT="$CODE_ROOT"
@@ -226,6 +228,7 @@ function e2_release_active_locks() {
 
 function e2_prepare_runtime() {
   local head worktree_status automation_status lock
+  local primary_head primary_status primary_lock
   typeset -g E2_AUTOMATION_REVISION=$(git -C "$AUTOMATION_ROOT" rev-parse HEAD)
   [[ ${#E2_AUTOMATION_REVISION} -eq 40 \
       && "$E2_AUTOMATION_REVISION" != *[!0-9a-f]* ]] || {
@@ -274,10 +277,43 @@ function e2_prepare_runtime() {
     print -u2 "refusing E2 launch from unreviewed code: expected $E2_ACTIVE_EXPECTED_HEAD, observed $head"
     return 1
   fi
-  worktree_status=$(git -C "$E2_ACTIVE_CODE_ROOT" status --short --untracked-files=no)
+  worktree_status=$(git -C "$E2_ACTIVE_CODE_ROOT" status --short)
   if [[ -n "$worktree_status" ]]; then
     print -u2 "refusing E2 launch from a modified detached worktree: $E2_ACTIVE_CODE_ROOT"
     print -u2 "$worktree_status"
+    return 1
+  fi
+  if [[ ! -e "$E1_PRIMARY_AUTHORITY_CODE_ROOT" ]]; then
+    primary_lock="${E1_PRIMARY_AUTHORITY_CODE_ROOT}.init.lock"
+    local primary_init_token="$(hostname)-$$-$(date +%s)-${RANDOM}"
+    local primary_init_status=0
+    e2_claim_transient_lock \
+      "$primary_lock" "$primary_init_token" \
+      "primary-buyer authority worktree initialization" || return $?
+    if [[ ! -e "$E1_PRIMARY_AUTHORITY_CODE_ROOT" ]]; then
+      set +e
+      git -C "$ROOT" worktree add --detach \
+        "$E1_PRIMARY_AUTHORITY_CODE_ROOT" \
+        "$E1_PRIMARY_AUTHORITY_EXPECTED_HEAD"
+      primary_init_status=$?
+      set -e
+    fi
+    e2_release_transient_lock || return $?
+    (( primary_init_status == 0 )) || return "$primary_init_status"
+  elif [[ ! -d "$E1_PRIMARY_AUTHORITY_CODE_ROOT/.git" \
+      && ! -f "$E1_PRIMARY_AUTHORITY_CODE_ROOT/.git" ]]; then
+    print -u2 "reserved primary-authority path is not a git worktree: $E1_PRIMARY_AUTHORITY_CODE_ROOT"
+    return 1
+  fi
+  primary_head=$(git -C "$E1_PRIMARY_AUTHORITY_CODE_ROOT" rev-parse HEAD)
+  if [[ "$primary_head" != "$E1_PRIMARY_AUTHORITY_EXPECTED_HEAD" ]]; then
+    print -u2 "refusing primary-buyer authority from another revision: expected $E1_PRIMARY_AUTHORITY_EXPECTED_HEAD, observed $primary_head"
+    return 1
+  fi
+  primary_status=$(git -C "$E1_PRIMARY_AUTHORITY_CODE_ROOT" status --short)
+  if [[ -n "$primary_status" ]]; then
+    print -u2 "refusing modified primary-buyer authority worktree: $E1_PRIMARY_AUTHORITY_CODE_ROOT"
+    print -u2 "$primary_status"
     return 1
   fi
   if [[ ! -x "$PYTHON" ]]; then
@@ -291,6 +327,7 @@ function e2_prepare_runtime() {
   mkdir -p "$CHECKPOINT_ROOT" "$WANDB_ROOT" "$LOG_ROOT" "$E2_OUTPUT"
   cd "$E2_ACTIVE_CODE_ROOT"
   export STACKPOMDP_CODE_ROOT="$E2_ACTIVE_CODE_ROOT"
+  export STACKPOMDP_ATARI_PRIMARY_AUTHORITY_CODE_ROOT="$E1_PRIMARY_AUTHORITY_CODE_ROOT"
   export STACKPOMDP_SPACE_INVADERS_ROM="$ROM"
   export PYTHONPATH=.
   export PYTHONNOUSERSITE=1

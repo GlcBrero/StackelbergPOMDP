@@ -30,6 +30,7 @@ esac
 
 typeset -g E1V5S_CODE_ROOT="$E1V5_SOURCE_ROOT"
 typeset -g E1V5S_VALIDATOR="$E1V5_SOURCE_ROOT/$E1V5S_VALIDATOR_RELATIVE"
+typeset -g E1V5S_DIAGNOSTICS_VALIDATOR="$E1V5_SOURCE_ROOT/$E1V5_VALIDATOR_RELATIVE"
 
 function e1v5s_candidate_arguments() {
   local step
@@ -68,6 +69,7 @@ function e1v5s_prepare_runtime() {
     e1v5_die "seller-v5 selector runtime is dirty: $runtime"
   E1V5S_CODE_ROOT="$runtime"
   E1V5S_VALIDATOR="$runtime/$E1V5S_VALIDATOR_RELATIVE"
+  E1V5S_DIAGNOSTICS_VALIDATOR="$runtime/$E1V5_VALIDATOR_RELATIVE"
   export STACKPOMDP_SPACE_INVADERS_ROM="$ROM"
   export PYTHONPATH="$runtime"
   export PYTHONNOUSERSITE=1

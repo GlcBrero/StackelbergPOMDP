@@ -397,9 +397,10 @@ a selected alias nor an E2-visible gate. A passing confirmation publishes:
 - `replication/atari/results/e1_selections/e1_seller_conditioning_recovery_v5_shared_context_exposure_v2_all6_selector_v1.gate.json`;
 - `replication/atari/checkpoints/clean/meta_seller_e1_ppo_balanced_conditioning_recovery_v5_shared_context_exposure_v2_seed1_selected.zip`.
 
-Every artifact records exact candidate, E0b, ROM, primary-buyer release,
-training-code, and selector-code provenance. Rerunning validates immutable
-artifacts instead of overwriting them.
+Together, the family, report, and release gate bind the exact candidate, E0b,
+ROM, primary-buyer release, training-code, and selector-code provenance. A
+rerun revalidates an existing family and passing gate and never overwrites an
+artifact.
 
 Once that gate exists, the versioned v5 E2 pipeline can train and select both
 leader roles sequentially:

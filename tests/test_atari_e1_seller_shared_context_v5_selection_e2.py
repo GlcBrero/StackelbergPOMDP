@@ -19,6 +19,9 @@ from replication.atari.automation import (
 from replication.atari.automation import (
     validate_atari_e2_pipeline_artifact as e2,
 )
+from replication.atari.automation import (
+    validate_atari_e1_seller_conditioning_recovery as recovery,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +43,11 @@ E2_V5_WRAPPERS = (
     AUTOMATION / "run_e2_buyer_shared_context_v5_final_selector.sh",
     AUTOMATION / "run_e2_seller_shared_context_v5_final_selector.sh",
     AUTOMATION / "run_atari_clean_e2_shared_context_v5_sequential.sh",
+)
+REAL_CANONICAL_SELLER_RELEASE = Path(
+    "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/"
+    "replication/atari/checkpoints/clean/"
+    "meta_seller_e1_ppo_balanced_seed1_firefix_retrain.buyer_gate.json"
 )
 
 
@@ -457,6 +465,57 @@ def test_v5_gate_normalization_binds_architecture_release_and_diagnostics(
     ] == {"path": str(gate_path), "sha256": gate_digest}
 
 
+def test_historical_seller_release_is_not_reinterpreted_as_current_e2_code(
+        monkeypatch,
+):
+    historical_head = recovery.PINNED_E2_CODE_HEAD
+    value = {
+        "schema": "stackpomdp.atari.e1_seller_release.v2",
+        "code_head": historical_head,
+        "seller_training_actor_loss_mode": "balanced",
+        "buyer_gate": {"source_kind": e2.E1_PRIMARY_SOURCE_KIND},
+    }
+    monkeypatch.setattr(
+        recovery, "validate_seller_release", lambda path: value
+    )
+    monkeypatch.setattr(
+        e2,
+        "validate_e1_gate_record",
+        lambda gate, role: {
+            "source_kind": e2.E1_PRIMARY_SOURCE_KIND,
+        },
+    )
+    monkeypatch.setattr(
+        e2,
+        "validate_code_root",
+        lambda: pytest.fail("historical release compared with current E2 HEAD"),
+    )
+    assert e2.validated_e1_seller_release(Path("/immutable/release.json")) == value
+
+
+@pytest.mark.skipif(
+    not REAL_CANONICAL_SELLER_RELEASE.is_file()
+    or not e2.E1_PRIMARY_AUTHORITY_CODE_ROOT.is_dir(),
+    reason="canonical local Atari release artifacts are unavailable",
+)
+def test_current_v5_runtime_accepts_real_historical_buyer_seller_prerequisites(
+        monkeypatch,
+):
+    """Exercise both immutable E1 prerequisites through the c4 v5 contract."""
+
+    e2.configure_e2_profile(e2.E2_PROFILE_V5)
+    current_v5_head = e2.E2_PROFILES[e2.E2_PROFILE_V5]["code_head"]
+    monkeypatch.setattr(e2, "validate_code_root", lambda: current_v5_head)
+    release = e2.validated_e1_seller_release(REAL_CANONICAL_SELLER_RELEASE)
+    assert release["code_head"] == recovery.PINNED_E2_CODE_HEAD
+    assert release["code_head"] != current_v5_head
+    assert release["buyer_gate"]["source_kind"] == e2.E1_PRIMARY_SOURCE_KIND
+    assert release["buyer_gate"]["checkpoint_sha256"] == (
+        "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79"
+    )
+    assert e2.E1_PRIMARY_AUTHORITY_CODE_ROOT.name.endswith("dedab3e")
+
+
 def test_v5_authority_is_fail_closed_from_diagnostics_to_publication(
         monkeypatch, tmp_path,
 ):
@@ -656,6 +715,10 @@ def test_v5_shell_namespace_job_types_wrappers_and_both_role_mappings():
         "atari_e2_shared_context_v5_exposure_v2_seller_leader"
     ) in common
     assert "e2_e1_gate_cohort_${E2_NAMESPACE}.json" in common
+    assert "status --short --untracked-files=no" not in common
+    assert common.count('status --short)') >= 2
+    assert "E1_PRIMARY_AUTHORITY_EXPECTED_HEAD=" in common
+    assert "E1_PRIMARY_AUTHORITY_CODE_ROOT=" in common
     for wrapper in E2_V5_WRAPPERS:
         text = wrapper.read_text(encoding="utf-8")
         assert "STACKPOMDP_ATARI_E2_PROFILE=v5-shared-context-exposure-v2" in text
@@ -697,6 +760,13 @@ def test_selection_launchers_use_exposure_namespace_and_no_fallback():
     launcher = SELECTION_LAUNCHER.read_text(encoding="utf-8")
     wrapper = SELECTION_EXPOSURE_WRAPPER.read_text(encoding="utf-8")
     assert "STACKPOMDP_E1V5_PROTOCOL=exposure_v2" in wrapper
+    assert "E1V5S_DIAGNOSTICS_VALIDATOR" in common
+    assert (
+        '"$E1V5_PYTHON" "$E1V5S_DIAGNOSTICS_VALIDATOR"' in launcher
+    )
+    assert (
+        '"$E1V5_PYTHON" "$E1V5_VALIDATOR"' not in launcher
+    )
     assert "${candidate_args[@]/--candidate/--checkpoint}" in launcher
     assert "screen winner failed fresh confirmation; E2 remains closed" in launcher
     assert "selection_gate" not in common.lower() or "validate-selection-gate" in common
