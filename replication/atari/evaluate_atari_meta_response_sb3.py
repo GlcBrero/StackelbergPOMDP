@@ -816,6 +816,7 @@ def _episode(
         fifth_economic_override=None,
         all_trade_economic_override=None,
         v4_context_ablation=False,
+        v5_context_ablation=False,
 ):
     if (
             fifth_economic_override is not None
@@ -825,6 +826,8 @@ def _episode(
             "fifth-trade and all-trade economic overrides are mutually "
             "exclusive"
         )
+    if v4_context_ablation and v5_context_ablation:
+        raise ValueError("v4 and v5 context ablations are mutually exclusive")
     local = copy(args)
     local.fixed_event_steps = args.fixed_event_steps
     env = trainer.make_env(
@@ -832,9 +835,12 @@ def _episode(
         seed=int(seed),
         context_sampler=lambda rng, values=np.asarray(context): values.copy(),
     )
-    ablation_active = bool(v4_context_ablation)
-    if ablation_active:
+    v4_ablation_active = bool(v4_context_ablation)
+    v5_ablation_active = bool(v5_context_ablation)
+    if v4_ablation_active:
         model.policy.set_v4_context_ablation(True)
+    elif v5_ablation_active:
+        model.policy.set_v5_context_ablation(True)
     try:
         observation = env.reset()
         done = False
@@ -857,9 +863,13 @@ def _episode(
             total += float(reward)
             steps += 1
     finally:
-        env.close()
-        if ablation_active:
-            model.policy.set_v4_context_ablation(False)
+        try:
+            env.close()
+        finally:
+            if v4_ablation_active:
+                model.policy.set_v4_context_ablation(False)
+            elif v5_ablation_active:
+                model.policy.set_v5_context_ablation(False)
     row = {
         "phase": phase,
         "checkpoint_path": checkpoint_metadata["path"],
@@ -886,8 +896,10 @@ def _episode(
                 all_trade_override_applications
             ),
         })
-    if ablation_active:
+    if v4_ablation_active:
         row["v4_context_ablation"] = True
+    elif v5_ablation_active:
+        row["v5_context_ablation"] = True
     row.pop("episode", None)
     return row
 
@@ -1103,10 +1115,21 @@ def audit_episode(row, *, role):
             all_override_applications,
         ))
 
-    ablation = row.get("v4_context_ablation", False)
-    if ablation not in (False, True):
+    ablations = {
+        field: row.get(field, False)
+        for field in ("v4_context_ablation", "v5_context_ablation")
+    }
+    for field, ablation in ablations.items():
+        if ablation not in (False, True):
+            violations.append(_violation(
+                row, field, "Boolean", ablation
+            ))
+    if all(value is True for value in ablations.values()):
         violations.append(_violation(
-            row, "v4_context_ablation", "Boolean", ablation
+            row,
+            "context_ablation_version",
+            "at most one active architecture ablation",
+            ablations,
         ))
 
     if not np.isclose(numeric["purchases"], accepted, atol=0.0, rtol=0.0):
@@ -1188,6 +1211,7 @@ def evaluate_rows(
         fifth_economic_override=None,
         all_trade_economic_override=None,
         v4_context_ablation=False,
+        v5_context_ablation=False,
 ):
     rows = [
         _episode(
@@ -1200,6 +1224,7 @@ def evaluate_rows(
             fifth_economic_override=fifth_economic_override,
             all_trade_economic_override=all_trade_economic_override,
             v4_context_ablation=v4_context_ablation,
+            v5_context_ablation=v5_context_ablation,
         )
         for seed, context in zip(seeds, contexts)
     ]
@@ -1209,7 +1234,7 @@ def evaluate_rows(
     event_rows = []
     for row in rows:
         for event in row["events"]:
-            event_rows.append({
+            event_row = {
                 "phase": phase,
                 "checkpoint_path": metadata["path"],
                 "checkpoint_sha256": metadata["sha256"],
@@ -1225,7 +1250,15 @@ def evaluate_rows(
                     "v4_context_ablation", False
                 )),
                 **event,
-            })
+            }
+            if metadata.get("economic_architecture", {}).get(
+                    "parameterization"
+            ) == trainer.SELLER_SHARED_CONTEXT_BETA_V5:
+                event_row.pop("v4_context_ablation")
+                event_row["v5_context_ablation"] = bool(row.get(
+                    "v5_context_ablation", False
+                ))
+            event_rows.append(event_row)
     return {
         "summary": _summary(rows, role=args.role),
         "protocol": {"passed": not violations, "violations": violations},
@@ -2126,6 +2159,23 @@ def seller_v4_behavioral_gate(
     }
 
 
+def seller_v5_behavioral_gate(
+        *, random_result, fixed_results, ablated_random_result,
+        forced_constant_results=None, formal=False,
+):
+    """Apply the unchanged v4 numerical gates to seller-v5 behavior."""
+
+    result = dict(seller_v4_behavioral_gate(
+        random_result=random_result,
+        fixed_results=fixed_results,
+        ablated_random_result=ablated_random_result,
+        forced_constant_results=forced_constant_results,
+        formal=formal,
+    ))
+    result["name"] = "seller_shared_context_behavioral_gate_v5"
+    return result
+
+
 def seller_threshold_residual_final_gate(
         *, random_result, fixed_results, conditioning_probe
 ):
@@ -2527,14 +2577,29 @@ def run_selection(args):
                 v4_architecture = residual_parameterization == (
                     trainer.SELLER_TWO_BRANCH_BETA_V4
                 )
+                v5_architecture = residual_parameterization == (
+                    trainer.SELLER_SHARED_CONTEXT_BETA_V5
+                )
                 ablated_random_result = None
                 forced_constant_results = None
-                if local.role == SELLER and v4_architecture:
-                    from replication.atari import (
-                        probe_atari_e1_seller_two_branch as v4_probe
-                    )
+                if local.role == SELLER and (
+                        v4_architecture or v5_architecture
+                ):
+                    if v5_architecture:
+                        from replication.atari import (
+                            probe_atari_e1_seller_shared_context
+                            as context_probe
+                        )
+                        ablation_kwargs = {"v5_context_ablation": True}
+                        context_gate = seller_v5_behavioral_gate
+                    else:
+                        from replication.atari import (
+                            probe_atari_e1_seller_two_branch as context_probe
+                        )
+                        ablation_kwargs = {"v4_context_ablation": True}
+                        context_gate = seller_v4_behavioral_gate
                     conditioning_probe = (
-                        v4_probe.collect_conditioning_report(model)
+                        context_probe.collect_conditioning_report(model)
                     )
                     ablated_random_result = evaluate_rows(
                         model,
@@ -2543,7 +2608,7 @@ def run_selection(args):
                         seeds=confirmation_seeds,
                         contexts=confirmation_contexts,
                         phase="confirmation_random_context_ablated",
-                        v4_context_ablation=True,
+                        **ablation_kwargs,
                     )
                     forced_constant_results = {
                         float(value): evaluate_rows(
@@ -2560,7 +2625,7 @@ def run_selection(args):
                         )
                         for value in CANONICAL_FIXED_VALUES
                     }
-                    gate = seller_v4_behavioral_gate(
+                    gate = context_gate(
                         random_result=random_result,
                         fixed_results=fixed_results,
                         ablated_random_result=ablated_random_result,
