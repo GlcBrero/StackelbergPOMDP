@@ -175,34 +175,14 @@ Two follow-up controls remain separate from that diagnostic:
 
 Neither control releases a leader run automatically.
 
-If and only if a paper-profile checkpoint passes all 32 commitments, the
-six-cell `hidden_queries_certified_seed2_pilot.sbatch` diagnostic may compare
-A2C, PPO, and clean mirrored ES under observed and hidden queries.  It binds
-the exact certified checkpoint path and does not constitute a multi-seed
-paper cohort.
+Superseded custom-ES pilots and calibration outputs remain available only as
+historical raw evidence.  Their implementation and launchers are deliberately
+absent from the maintained package, and they must not be combined with native
+RLlib ES results.  See [LEGACY_PROVENANCE.md](LEGACY_PROVENANCE.md) for the
+historical interpretation.  The only maintained ES paper cohort is the
+separate native-Ray array described above.
 
-That original seed-2 pilot is retained as failed calibration evidence; its
-A2C/PPO action-caching protocol and short 20-update ES budget are not the
-corrected treatments above.  The successor diagnostic
-`hidden_queries_pg_es_calibration_s1to3.sbatch` runs the audited PG and ES
-implementations under observed/hidden queries for seeds 1--3, reusing the one
-response checkpoint certified exactly on all 32 commitments.  It is a
-12-task calibration cohort (PG: 200,000 executed steps at LR `.008`; ES:
-3,000,000 candidate transitions with the explicit settings above), not final
-paper evidence or an extension of the qualitative-v1 sweep.
-
-That calibration completed successfully: all 12 manifests and artifact hashes
-validated; observed-query PG achieved final per-stage rewards `-.2`, `-.2`,
-and `0`, hidden-query PG achieved `-2` on all three seeds, and both ES
-conditions achieved `0` on all three seeds.  The separate
-`hidden_queries_pg_es_extension_s4to10.sbatch` therefore adds exactly the 28
-non-overlapping seed-4--10 cells.  All 28 extension tasks subsequently
-completed with exit code zero and passed the same manifest and artifact audit.
-Together, the two immutable roots form the qualitative-v2 ten-seed cohort;
-its checksummed derived figure and figure-grouped logs are under
-`results/hidden_queries_pg_es_qualitative_v2/`.
-
-## Ten-seed paper cohort
+## Ray-free ten-seed base sweep
 
 Planning writes commands but executes nothing:
 
@@ -227,12 +207,15 @@ immutable attempt while retaining the failed attempt for diagnosis.  A missing
 E1 checkpoint blocks only its seed-matched meta-response cells; unrelated Q
 diagnostics and other seeds can still run.
 
-The plan contains 10 E1 runs and 140 leader runs:
+The plan contains 10 E1 runs and 120 leader runs:
 
-- 60 hidden-query runs: A2C/PPO/ES x observed/hidden x 10 seeds;
+- 40 hidden-query runs: A2C/PPO x observed/hidden x 10 seeds;
 - 20 phase-observability runs;
 - 20 reset-versus-carried-Q runs; and
 - 40 response-reward runs across the two coordination matrices.
+
+Native ES is intentionally excluded from this base sweep because it runs in
+the dedicated Ray environment and paired 25-task launcher documented above.
 
 No sweep command submits SLURM jobs.  `status` is read-only:
 
@@ -243,9 +226,9 @@ python replication/matrix_ablations/sweep.py status --sweep-id qualitative-v1
 ### Unity launch
 
 The maintained cluster workflow uses an isolated source snapshot and five
-submissions: ten E1 tasks, sixty response-independent leader tasks, one E1
+submissions: ten E1 tasks, forty response-independent leader tasks, one E1
 certification gate, eighty meta-response leader tasks, and one final plotting
-task.  The 150 logical experiments therefore use 152 SLURM task executions.
+task.  The 130 logical experiments therefore use 132 SLURM task executions.
 Array workers select exactly one plan record with `--record-index`; they never
 race by trying to execute an entire stage.
 
