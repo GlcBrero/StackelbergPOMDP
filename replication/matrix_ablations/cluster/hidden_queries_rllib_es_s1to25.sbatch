@@ -8,11 +8,10 @@
 #SBATCH --output=replication/matrix_ablations/native_es_%A_%a.out
 #SBATCH --error=replication/matrix_ablations/native_es_%A_%a.err
 
-set -euo pipefail
-
 source /etc/profile
 module load conda/latest
 conda activate stackelberg-pomdp-ray-es
+set -euo pipefail
 
 export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=1
