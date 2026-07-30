@@ -40,6 +40,13 @@ EVALUATOR = evaluator.EVALUATOR_NAME
 FORMAL_TIMESTEPS = diagnostics.FORMAL_TIMESTEPS
 FORMAL_STEP_TIMESTEPS = diagnostics.FORMAL_STEP_TIMESTEPS
 FORMAL_CANDIDATE_TIMESTEPS = (*FORMAL_STEP_TIMESTEPS, FORMAL_TIMESTEPS)
+FORMAL_CANDIDATE_SNAPSHOT_PHASES = (
+    *(
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT
+        for _ in FORMAL_STEP_TIMESTEPS
+    ),
+    diagnostics.POST_UPDATE_SNAPSHOT,
+)
 
 SELECTION_PROTOCOLS = {
     diagnostics.STANDARD_PROTOCOL: {
@@ -184,7 +191,9 @@ def _formal_evaluation(path, *, metadata):
     return record
 
 
-def _candidate_metadata(path, *, e0b, training_revision, timesteps):
+def _candidate_metadata(
+        path, *, e0b, training_revision, timesteps, snapshot_phase,
+):
     metadata = diagnostics._load_metadata(
         path, e0b=e0b, expected_revision=training_revision
     )
@@ -193,6 +202,13 @@ def _candidate_metadata(path, *, e0b, training_revision, timesteps):
         checkpoint=path,
         timesteps=timesteps,
         expected_revision=training_revision,
+        snapshot_phase=snapshot_phase,
+    )
+    metadata["checkpoint_snapshot_phase"] = snapshot_phase
+    metadata["expected_optimizer_adam_step"] = (
+        diagnostics.expected_optimizer_adam_step(
+            timesteps, snapshot_phase=snapshot_phase,
+        )
     )
     return metadata
 
@@ -227,9 +243,12 @@ def build_formal_family(args):
             e0b=e0b,
             training_revision=training_revision,
             timesteps=timesteps,
+            snapshot_phase=snapshot_phase,
         )
-        for path, timesteps in zip(
-            candidate_paths, FORMAL_CANDIDATE_TIMESTEPS
+        for path, timesteps, snapshot_phase in zip(
+            candidate_paths,
+            FORMAL_CANDIDATE_TIMESTEPS,
+            FORMAL_CANDIDATE_SNAPSHOT_PHASES,
         )
     ]
     hashes = [record["sha256"] for record in candidates]
@@ -288,6 +307,9 @@ def build_formal_family(args):
         "training_config": diagnostics.canonical_training_config(),
         "sampler": diagnostics.canonical_sampler(),
         "formal_release": dict(formal),
+        "candidate_snapshot_phases": list(
+            FORMAL_CANDIDATE_SNAPSHOT_PHASES
+        ),
         "candidate_metadata": candidates,
         "candidate_sha256": hashes,
         "training_trace": trace,
@@ -365,6 +387,11 @@ def _validate_family_contract(value, *, code_root=None):
         value.get("formal_release") == formal,
         "seller-v5 formal-release record changed",
     )
+    _require(
+        value.get("candidate_snapshot_phases")
+        == list(FORMAL_CANDIDATE_SNAPSHOT_PHASES),
+        "seller-v5 formal checkpoint snapshot phases changed",
+    )
     candidates = value.get("candidate_metadata", [])
     hashes = value.get("candidate_sha256", [])
     paths = formal["candidate_paths"]
@@ -379,14 +406,19 @@ def _validate_family_contract(value, *, code_root=None):
         == list(FORMAL_CANDIDATE_TIMESTEPS),
         "seller-v5 formal candidate paths/clocks changed",
     )
-    for record, path, timesteps, digest in zip(
-            candidates, paths, FORMAL_CANDIDATE_TIMESTEPS, hashes,
+    for record, path, timesteps, snapshot_phase, digest in zip(
+            candidates,
+            paths,
+            FORMAL_CANDIDATE_TIMESTEPS,
+            FORMAL_CANDIDATE_SNAPSHOT_PHASES,
+            hashes,
     ):
         fresh = _candidate_metadata(
             path,
             e0b=value["e0b_source"]["path"],
             training_revision=value["training_code_revision"],
             timesteps=timesteps,
+            snapshot_phase=snapshot_phase,
         )
         _require(
             record == fresh and sha256_file(path) == digest == fresh["sha256"],
@@ -463,6 +495,7 @@ def _selector_metadata(record):
         if key not in {
             "optimizer_adam_step", "resume_source",
             "frozen_gameplay_actor_sha256",
+            "checkpoint_snapshot_phase", "expected_optimizer_adam_step",
         }
     }
 

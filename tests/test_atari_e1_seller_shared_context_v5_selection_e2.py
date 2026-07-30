@@ -183,6 +183,7 @@ def test_formal_family_binds_exact_ordered_six_and_rejects_duplicate_bytes(
             "path": str(Path(path).resolve()),
             "sha256": hashes[str(Path(path).resolve())],
             "training_timesteps": kwargs["timesteps"],
+            "checkpoint_snapshot_phase": kwargs["snapshot_phase"],
         },
     )
     monkeypatch.setattr(
@@ -216,6 +217,18 @@ def test_formal_family_binds_exact_ordered_six_and_rejects_duplicate_bytes(
     assert family["candidate_sha256"] == [
         hashes[path] for path in formal["candidate_paths"]
     ]
+    assert family["candidate_snapshot_phases"] == [
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT,
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT,
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT,
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT,
+        diagnostics.RETAINED_PRE_UPDATE_SNAPSHOT,
+        diagnostics.POST_UPDATE_SNAPSHOT,
+    ]
+    assert [
+        row["checkpoint_snapshot_phase"]
+        for row in family["candidate_metadata"]
+    ] == family["candidate_snapshot_phases"]
     assert family["training_code_revision"] == training_revision
     assert family["selector_code_revision"] == selector_revision
 

@@ -86,6 +86,82 @@ def test_v5_automation_contract_is_exact_and_versioned():
     )
 
 
+def test_v5_optimizer_clock_distinguishes_retained_and_final_snapshots():
+    assert validator.CANONICAL_ROLLOUT_TIMESTEPS == 820
+    retained = validator.expected_optimizer_adam_step(
+        400_160,
+        snapshot_phase=validator.RETAINED_PRE_UPDATE_SNAPSHOT,
+    )
+    final = validator.expected_optimizer_adam_step(
+        400_160,
+        snapshot_phase=validator.POST_UPDATE_SNAPSHOT,
+    )
+    assert retained == 1_948
+    assert final == 1_952
+    assert final - retained == validator.canonical_training_config()[
+        "n_epochs"
+    ]
+
+    with pytest.raises(ValueError, match="snapshot phase"):
+        validator.expected_optimizer_adam_step(
+            400_160, snapshot_phase="unknown"
+        )
+    with pytest.raises(ValueError, match="rollout boundary"):
+        validator.expected_optimizer_adam_step(
+            400_161,
+            snapshot_phase=validator.POST_UPDATE_SNAPSHOT,
+        )
+
+
+def test_v5_checkpoint_metadata_rejects_phase_swaps_and_off_by_one(tmp_path):
+    checkpoint = (tmp_path / "formal_step400160.zip").resolve()
+    revision = "a" * 40
+    frozen = "b" * 64
+    metadata = {
+        "path": str(checkpoint),
+        "training_timesteps": 400_160,
+        "training_config": validator.canonical_training_config(),
+        "economic_architecture": validator.canonical_architecture(),
+        "shared_context_initialization": validator.canonical_initialization(),
+        "atari_e1_sampler_provenance": validator.canonical_sampler(),
+        "atari_e1_sampler_history": validator.canonical_sampler_history(),
+        "resume_source": None,
+        "optimizer_adam_step": 1_948,
+        "e1_training_code_revision": revision,
+        "frozen_gameplay_actor_sha256": frozen,
+        "e0b_source_provenance": {
+            "frozen_gameplay_actor": True,
+            "frozen_gameplay_actor_sha256": frozen,
+        },
+    }
+    validator._validate_checkpoint_metadata(
+        metadata,
+        checkpoint=checkpoint,
+        timesteps=400_160,
+        expected_revision=revision,
+        snapshot_phase=validator.RETAINED_PRE_UPDATE_SNAPSHOT,
+    )
+
+    with pytest.raises(ValueError, match="optimizer clock"):
+        validator._validate_checkpoint_metadata(
+            metadata,
+            checkpoint=checkpoint,
+            timesteps=400_160,
+            expected_revision=revision,
+            snapshot_phase=validator.POST_UPDATE_SNAPSHOT,
+        )
+    for wrong_clock in (1_947, 1_949, 1_952):
+        changed = dict(metadata, optimizer_adam_step=wrong_clock)
+        with pytest.raises(ValueError, match="optimizer clock"):
+            validator._validate_checkpoint_metadata(
+                changed,
+                checkpoint=checkpoint,
+                timesteps=400_160,
+                expected_revision=revision,
+                snapshot_phase=validator.RETAINED_PRE_UPDATE_SNAPSHOT,
+            )
+
+
 def test_v5_exposure_v2_changes_only_fresh_exposure_and_holdout_namespace():
     validator.configure_protocol(validator.STANDARD_PROTOCOL)
     standard = {

@@ -43,6 +43,14 @@ ARCHITECTURE = "seller_shared_context_beta_v5"
 SAMPLER_MODE = "uniform"
 ACTOR_LOSS_MODE = "balanced"
 
+POST_UPDATE_SNAPSHOT = "post_update"
+RETAINED_PRE_UPDATE_SNAPSHOT = "retained_pre_update"
+CHECKPOINT_SNAPSHOT_PHASES = (
+    POST_UPDATE_SNAPSHOT,
+    RETAINED_PRE_UPDATE_SNAPSHOT,
+)
+CANONICAL_ROLLOUT_TIMESTEPS = 820
+
 FORMAL_TIMESTEPS = 2_000_800
 CHECKPOINT_INTERVAL = 400_160
 FORMAL_STEP_TIMESTEPS = (400_160, 800_320, 1_200_480, 1_600_640, 2_000_800)
@@ -290,6 +298,44 @@ def canonical_training_config():
     }
 
 
+def expected_optimizer_adam_step(timesteps, *, snapshot_phase):
+    """Return the exact Adam clock for one canonical checkpoint snapshot.
+
+    Stable-Baselines3 invokes ``EpisodeCheckpointCallback._on_step`` while it
+    is collecting a rollout, before PPO optimizes that rollout.  A retained
+    ``_stepN`` checkpoint therefore has observed all ``N`` transitions but is
+    one four-epoch PPO update behind the post-``learn`` base checkpoint.  Both
+    are intentional candidate snapshots and must remain distinguishable.
+    """
+
+    _require(
+        snapshot_phase in CHECKPOINT_SNAPSHOT_PHASES,
+        "unknown v5 checkpoint snapshot phase",
+    )
+    config = canonical_training_config()
+    rollout_timesteps = CANONICAL_ROLLOUT_TIMESTEPS
+    _require(
+        int(config["batch_size"]) == rollout_timesteps,
+        "v5 canonical PPO no longer uses one full-rollout minibatch",
+    )
+    epochs_per_rollout = int(config["n_epochs"])
+    timesteps = int(timesteps)
+    _require(
+        timesteps > 0 and timesteps % rollout_timesteps == 0,
+        "v5 checkpoint is not at a complete canonical rollout boundary",
+    )
+    completed_adam_steps = (
+        timesteps // rollout_timesteps * epochs_per_rollout
+    )
+    if snapshot_phase == RETAINED_PRE_UPDATE_SNAPSHOT:
+        completed_adam_steps -= epochs_per_rollout
+    _require(
+        completed_adam_steps >= 0,
+        "v5 checkpoint snapshot precedes the first optimizer update",
+    )
+    return completed_adam_steps
+
+
 def canonical_sampler_history():
     return [{
         "start_total_timesteps": 0,
@@ -448,6 +494,7 @@ def _load_metadata(checkpoint, *, e0b, expected_revision):
 
 def _validate_checkpoint_metadata(
         metadata, *, checkpoint, timesteps, expected_revision,
+        snapshot_phase=POST_UPDATE_SNAPSHOT,
 ):
     _same_path(metadata.get("path"), checkpoint, label="v5 checkpoint")
     _require(
@@ -477,8 +524,11 @@ def _validate_checkpoint_metadata(
         metadata.get("resume_source") is None,
         "v5 diagnostic resumed another checkpoint",
     )
+    expected_optimizer_step = expected_optimizer_adam_step(
+        timesteps, snapshot_phase=snapshot_phase,
+    )
     _require(
-        metadata.get("optimizer_adam_step") == timesteps // 820 * 4,
+        metadata.get("optimizer_adam_step") == expected_optimizer_step,
         "v5 diagnostic optimizer clock changed",
     )
     _require(
