@@ -1,0 +1,138 @@
+{
+  "algorithm": "REINFORCE",
+  "checkpoint_filename": "model.zip",
+  "checkpoint_sha256": "e76ea2a593de80a93056911dfc7fcf1755544b15a674318aa9a1fa957ca7eb80",
+  "kind": "matrix_meta_follower",
+  "metadata": {
+    "completed_updates": 2600,
+    "evaluation": {
+      "commitments": 32,
+      "max_regret": 0.0,
+      "maximum": 0.0,
+      "mean": -4.15625,
+      "mean_regret": 0.0,
+      "median": -4.0,
+      "minimum": -10.0,
+      "n": 32,
+      "optimal_commitments": 32,
+      "sem": 0.5958684618188166,
+      "std": 3.370741040378261
+    },
+    "executed_equivalent_steps": 260000,
+    "follower_gradient_samples": 130000,
+    "response_training": {
+      "advantage_normalization": false,
+      "baseline": "none",
+      "batch_mode": "complete_episodes",
+      "batch_steps": 50,
+      "canonical_legacy_learning_rate": 0.02,
+      "checkpoint_geometry": {
+        "executed_env_steps_interval": 10000,
+        "follower_gradient_samples_interval": 5000,
+        "update_interval": 100
+      },
+      "checkpoint_semantics": "post_optimizer_update",
+      "commitment_distribution": "uniform_deterministic_tables",
+      "default_pretraining_iterations": 500,
+      "entropy_coefficient": 0.0,
+      "finite_sample_reward_protocol_differs_from_legacy": true,
+      "gamma": 1.0,
+      "gradient_clipping": false,
+      "learning_rate": 0.02,
+      "legacy_final_run_state_count": 3,
+      "legacy_training_reward_offset": -2.5,
+      "loss": "negative_mean_logp_times_undiscounted_reward_to_go",
+      "optimizer": "Adam",
+      "optimizer_epsilon": 1e-08,
+      "policy": "bias_free_linear_categorical",
+      "policy_initialization": "normc_0.01",
+      "provenance": [
+        "stackerlberg/train/experiments/configurations.py:smipd_hiddenqueries_pg_pg_new",
+        "stackerlberg/models/linear_torch_model.py:LinearTorchModel",
+        "stackerlberg/wrappers/dict_to_discrete_obs_wrapper.py:DictToDiscreteObsWrapper",
+        "ray/rllib/algorithms/pg/pg_torch_policy.py:pg_torch_loss",
+        "ray/rllib/algorithms/pg/utils.py:post_process_advantages"
+      ],
+      "rollout_geometry": {
+        "collection_target_env_steps": 100,
+        "episodes_per_update": 10,
+        "executed_env_steps_per_update": 100,
+        "follower_gradient_samples_per_update": 50,
+        "query_env_steps_per_update": 50
+      },
+      "state_count": 5,
+      "target": "current_paper_spec_qualitative_revalidation",
+      "training_reward_offset": -4.0,
+      "uses_canonical_legacy_learning_rate": true
+    },
+    "seed": 2,
+    "training_config_sha256": "f5148f4a44f620a0e5b1c2300291e0a8a4e4816d9c847a316f4f8176928f147c"
+  },
+  "response_game": {
+    "centered_follower_payoffs": [
+      [
+        -1.0,
+        0.0
+      ],
+      [
+        -3.0,
+        -2.0
+      ]
+    ],
+    "episode_length": 5,
+    "follower_observation_encoding": "mixed_radix_follower_state_then_ordered_commitment_v1",
+    "follower_observation_layout": [
+      "follower_state",
+      "ordered_leader_commitment"
+    ],
+    "follower_observation_space_n": 160,
+    "memory_mode": "joint",
+    "num_follower_actions": 2,
+    "num_follower_states": 5,
+    "num_leader_actions": 2,
+    "profile": {
+      "context_encoding_version": "mixed_radix_follower_state_then_ordered_commitment_v1",
+      "interpretation": "current_paper_spec_qualitative_revalidation",
+      "memory_mode": "joint",
+      "profile_id": "paper_joint_v1",
+      "query_state_order": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "reporting_transform": "identity_on_centered_per_stage_reward",
+      "state_index_formula": "0=Start; 1+2*leader_action+follower_action",
+      "state_labels": [
+        "Start",
+        "CC",
+        "CD",
+        "DC",
+        "DD"
+      ],
+      "training_reward_offset": -4.0
+    },
+    "profile_id": "paper_joint_v1",
+    "profile_sha256": "ec8cd8e2f36d1e80c8976f31804203ecc701af5a6afe8c5a874fbcb2fb6a1623",
+    "query_states": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "raw_follower_payoffs": [
+      [
+        3.0,
+        4.0
+      ],
+      [
+        1.0,
+        2.0
+      ]
+    ],
+    "training_reward_offset": -4.0
+  },
+  "schema_version": 2
+}

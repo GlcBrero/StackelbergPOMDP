@@ -273,31 +273,70 @@
     "todo": "Port the StackeRLberg Atari commands into this manifest or keep this as a companion-code target with exact handoff instructions."
   },
   "fig_hidden_queries_ablation": {
-    "status": "companion_stackerlberg",
-    "description": "Hidden-query ablation for theorem-assumption violations.",
+    "status": "owned_here",
+    "description": "Ray-free hidden-query RL ablation for theorem-assumption violations.",
     "figure_or_table": "fig_hidden",
-    "owner": "Code/StackeRLberg",
-    "todo": "Add exact StackeRLberg command and output mapping."
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "args": {
+      "experiment": "hidden_queries",
+      "condition": "{observed|hidden}",
+      "algorithm": "{A2C|PPO}",
+      "seed": "{seed}"
+    },
+    "sweep": "replication/matrix_ablations/sweep.py"
+  },
+  "fig_hidden_queries_native_es_ablation": {
+    "status": "owned_here",
+    "description": "Native RLlib 2.0.1 ES hidden-query paper cohort in its dedicated environment.",
+    "figure_or_table": "fig_hidden",
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "args": {
+      "experiment": "hidden_queries",
+      "condition": "{observed|hidden}",
+      "algorithm": "ES",
+      "profile_id": "paper_joint_v1",
+      "seed": "{1..25}"
+    },
+    "environment": "environment-ray-es.yml",
+    "slurm_array": "replication/matrix_ablations/cluster/hidden_queries_rllib_es_s1to25.sbatch"
   },
   "fig_memory_phase_ablation": {
-    "status": "companion_stackerlberg",
+    "status": "owned_here",
     "description": "Memory-based leader / phase-variable ablation.",
     "figure_or_table": "fig_memory_pg",
-    "owner": "Code/StackeRLberg",
-    "todo": "Add exact StackeRLberg command and output mapping."
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "args": {
+      "experiment": "phase_observability",
+      "condition": "{visible|hidden}",
+      "algorithm": "A2C",
+      "seed": "{seed}"
+    },
+    "sweep": "replication/matrix_ablations/sweep.py"
   },
   "fig_reward_during_learning_ablation": {
-    "status": "companion_stackerlberg",
+    "status": "owned_here",
     "description": "Leader reward during follower-learning ablation.",
     "figure_or_table": "fig_bots_leaderreward",
-    "owner": "Code/StackeRLberg",
-    "todo": "Add exact StackeRLberg command and output mapping."
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "args": {
+      "experiment": "response_reward",
+      "condition": "{excluded|included}",
+      "algorithm": "A2C",
+      "seed": "{seed}"
+    },
+    "sweep": "replication/matrix_ablations/sweep.py"
   },
   "fig_continuous_follower_learning_ablation": {
-    "status": "companion_stackerlberg",
+    "status": "owned_here",
     "description": "Continuous follower-learning/reset ablation.",
     "figure_or_table": "fig_reset",
-    "owner": "Code/StackeRLberg",
-    "todo": "Add exact StackeRLberg command and output mapping."
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "args": {
+      "experiment": "q_reset",
+      "condition": "{reset|ongoing}",
+      "algorithm": "A2C",
+      "seed": "{seed}"
+    },
+    "sweep": "replication/matrix_ablations/sweep.py"
   }
 }
