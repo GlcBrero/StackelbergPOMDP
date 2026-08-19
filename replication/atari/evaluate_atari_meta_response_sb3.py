@@ -283,12 +283,11 @@ def candidate_sampler_contract(model):
 
 
 def candidate_economic_architecture_contract(model):
-    """Return residual architecture provenance without rewriting ordinary E1.
+    """Return provenance for an ordinary policy or the paper's seller head.
 
-    The canonical architecture (feature disabled) remains the implicit default
-    so existing E0/E1 checkpoints and their historical metadata stay byte- and
-    schema-compatible.  The optional seller residual architecture must carry
-    the exact model-level contract attached by the E1 trainer.
+    The release selector intentionally rejects superseded seller-recovery
+    parameterizations.  Their constructor fields remain readable only so an
+    old checkpoint can produce a clear compatibility error.
     """
 
     policy = model.policy
@@ -299,6 +298,11 @@ def candidate_economic_architecture_contract(model):
     if not enabled:
         return None
     expected = _jsonable(policy.economic_architecture_provenance())
+    if expected.get("parameterization") != trainer.SELLER_SHARED_CONTEXT_BETA_V5:
+        raise ValueError(
+            "the release pipeline supports only the shared-context-v5 "
+            "seller architecture"
+        )
     recorded = getattr(
         model, trainer.ECONOMIC_ARCHITECTURE_ATTRIBUTE, None
     )
@@ -2567,37 +2571,18 @@ def run_selection(args):
                     raise RuntimeError(
                         "candidate bytes changed during confirmation"
                     )
-                residual_parameterization = metadata.get(
+                economic_parameterization = metadata.get(
                     "economic_architecture", {}
                 ).get("parameterization")
-                residual_architecture = residual_parameterization in {
-                    "seller_threshold_residual_beta_v1",
-                    "seller_direct_threshold_residual_beta_v3",
-                }
-                v4_architecture = residual_parameterization == (
-                    trainer.SELLER_TWO_BRANCH_BETA_V4
-                )
-                v5_architecture = residual_parameterization == (
+                v5_architecture = economic_parameterization == (
                     trainer.SELLER_SHARED_CONTEXT_BETA_V5
                 )
                 ablated_random_result = None
                 forced_constant_results = None
-                if local.role == SELLER and (
-                        v4_architecture or v5_architecture
-                ):
-                    if v5_architecture:
-                        from replication.atari import (
-                            probe_atari_e1_seller_shared_context
-                            as context_probe
-                        )
-                        ablation_kwargs = {"v5_context_ablation": True}
-                        context_gate = seller_v5_behavioral_gate
-                    else:
-                        from replication.atari import (
-                            probe_atari_e1_seller_two_branch as context_probe
-                        )
-                        ablation_kwargs = {"v4_context_ablation": True}
-                        context_gate = seller_v4_behavioral_gate
+                if local.role == SELLER and v5_architecture:
+                    from replication.atari import (
+                        probe_atari_e1_seller_shared_context as context_probe
+                    )
                     conditioning_probe = (
                         context_probe.collect_conditioning_report(model)
                     )
@@ -2608,7 +2593,7 @@ def run_selection(args):
                         seeds=confirmation_seeds,
                         contexts=confirmation_contexts,
                         phase="confirmation_random_context_ablated",
-                        **ablation_kwargs,
+                        v5_context_ablation=True,
                     )
                     forced_constant_results = {
                         float(value): evaluate_rows(
@@ -2625,7 +2610,7 @@ def run_selection(args):
                         )
                         for value in CANONICAL_FIXED_VALUES
                     }
-                    gate = context_gate(
+                    gate = seller_v5_behavioral_gate(
                         random_result=random_result,
                         fixed_results=fixed_results,
                         ablated_random_result=ablated_random_result,
@@ -2640,27 +2625,6 @@ def run_selection(args):
                         and conditioning_probe.get("warmup_gate", {}).get(
                             "passed"
                         ) is True
-                    )
-                elif local.role == SELLER and residual_architecture:
-                    if residual_parameterization == (
-                            "seller_direct_threshold_residual_beta_v3"
-                    ):
-                        from replication.atari import (
-                            probe_atari_e1_seller_direct_threshold_residual
-                            as residual_probe
-                        )
-                    else:
-                        from replication.atari import (
-                            probe_atari_e1_seller_threshold_residual
-                            as residual_probe
-                        )
-                    conditioning_probe = (
-                        residual_probe.collect_conditioning_report(model)
-                    )
-                    gate = seller_threshold_residual_final_gate(
-                        random_result=random_result,
-                        fixed_results=fixed_results,
-                        conditioning_probe=conditioning_probe,
                     )
                 else:
                     conditioning_probe = None

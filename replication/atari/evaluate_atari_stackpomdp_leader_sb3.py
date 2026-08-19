@@ -47,6 +47,7 @@ from replication.atari.sb3_common import (
 from replication.atari.train_atari_stackpomdp_leader_sb3 import (
     E2_PROVENANCE_ATTRIBUTE,
     e2_implementation_provenance,
+    validate_e2_gameplay_actor_freeze,
     validate_e2_provenance_manifest,
 )
 from stackelberg_pomdp.atari.core import default_rom_path
@@ -353,11 +354,15 @@ def validate_candidate_provenance(model, *, response_hash, config):
         "economic_hidden": int(policy.economic_hidden),
         "critic_hidden": int(policy.critic_hidden),
         "pretrained_lr_scale": float(policy.pretrained_lr_scale),
+        "gameplay_actor_frozen": bool(getattr(
+            policy, "gameplay_actor_frozen", False
+        )),
         "game_action_count": int(policy.game_action_count),
         "actor_loss_mode": actual_actor_loss_mode,
         "economic_head_initialization": actual_economic_initialization,
     }
     recorded_leader_policy = dict(scientific.get("leader_policy", {}))
+    recorded_leader_policy.setdefault("gameplay_actor_frozen", False)
     recorded_leader_policy.setdefault(
         "actor_loss_mode", recorded_actor_loss_mode
     )
@@ -368,6 +373,7 @@ def validate_candidate_provenance(model, *, response_hash, config):
         raise ValueError(
             "E2 candidate policy architecture does not match its provenance"
         )
+    validate_e2_gameplay_actor_freeze(model, initialize=False)
     recorded_target_kl = recorded_optimization.get("target_kl")
     actual_target_kl = getattr(model, "target_kl", None)
     for label, value in (

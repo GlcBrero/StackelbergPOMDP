@@ -61,7 +61,6 @@ from stackelberg_pomdp.atari.protocol import (
 )
 from stackelberg_pomdp.atari.stackpomdp_policy import (
     BETA_PARAMETER_EPSILON,
-    ECONOMIC_ARCHITECTURES,
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
@@ -89,7 +88,6 @@ SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_shared_context_initialization_provenance"
 )
 FROZEN_SELLER_ARCHITECTURES = {
-    SELLER_TWO_BRANCH_BETA_V4,
     SELLER_SHARED_CONTEXT_BETA_V5,
 }
 
@@ -151,13 +149,7 @@ def _run_variant_suffix(args):
         )
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
-    if _economic_threshold_residual_direct_input(args):
-        parts.append("direct_threshold_residual_v3")
-    elif _economic_threshold_residual(args):
-        parts.append("threshold_residual_v1")
-    if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4:
-        parts.append("two_branch_v4")
-    elif _economic_architecture(args) == SELLER_SHARED_CONTEXT_BETA_V5:
+    if _economic_architecture(args) == SELLER_SHARED_CONTEXT_BETA_V5:
         parts.append("shared_context_v5")
     if _e1_sampler_mode(args) == ALL_EQUAL_E1_SAMPLER:
         parts.append("all_equal_v1")
@@ -1173,32 +1165,17 @@ def parse_args(argv=None):
     parser.add_argument("--n-epochs", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
-    parser.add_argument(
-        "--economic-threshold-residual",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "seller-only E1 parameterization: keep the ordinary 64-input "
-            "economic head, then blend its Beta mean equally with the "
-            "current event's opponent threshold"
-        ),
-    )
-    parser.add_argument(
-        "--economic-threshold-residual-direct-input",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "seller-only E1 v3 parameterization: append the current event's "
-            "opponent threshold to the 64D economic base-head input while "
-            "retaining the fixed residual mean anchor"
-        ),
+    # These internal defaults keep old constructor metadata readable while
+    # removing superseded recovery variants from the release CLI.
+    parser.set_defaults(
+        economic_threshold_residual=False,
+        economic_threshold_residual_direct_input=False,
     )
     parser.add_argument(
         "--economic-architecture",
-        choices=sorted(ECONOMIC_ARCHITECTURES),
+        choices=(SELLER_SHARED_CONTEXT_BETA_V5,),
         help=(
-            "opt-in versioned seller actor; v4 trains event-specific context "
-            "outputs and v5 trains one event-conditioned shared context route"
+            "paper seller actor: one event-conditioned shared context route"
         ),
     )
     parser.add_argument(

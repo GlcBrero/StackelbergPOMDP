@@ -153,28 +153,6 @@ W&B is off by default.  Each invocation writes an immutable config, progress
 JSONL, final evaluation, model/parameters, and an atomic completion manifest.
 Existing run artifacts are never overwritten.
 
-### Focused REINFORCE diagnostic
-
-The four-task diagnostic compares learning rates `.01` and the historical
-default `.02` on seeds 1 and 2.  Each task runs 1,000 optimizer updates and
-exhaustively evaluates all 32 deterministic commitments after every 100
-updates.  The script lives under `cluster/diagnostics/` so diagnostic jobs are
-not confused with a paper cohort:
-
-```bash
-sbatch replication/matrix_ablations/cluster/diagnostics/e1_reinforce.sbatch
-```
-
-Two follow-up controls remain separate from that diagnostic:
-
-- `e1_reinforce_legacy_parity.sbatch` runs the historical three-state,
-  eight-commitment, offset-`-2.5` profile for 500 updates at LR `.02`;
-- `e1_reinforce_paper_exposure_matched.sbatch` gives each of the 32 paper
-  commitments the same expected number of pretraining episodes that each of
-  the eight historical commitments received (2,600 updates).
-
-Neither control releases a leader run automatically.
-
 Superseded custom-ES pilots and calibration outputs remain available only as
 historical raw evidence.  Their implementation and launchers are deliberately
 absent from the maintained package, and they must not be combined with native
@@ -266,8 +244,7 @@ python replication/matrix_ablations/plot.py \
   --figure fig_hidden \
   --seeds 1-25 \
   --require-seeds-per-cell 25 \
-  --paper-logs-root \
-  "/Users/gbrero/active-research/StackelbergPOMDP/Research Artifacts/paper/data/paper_logs"
+  --paper-logs-root /path/to/journal-artifact/paper/data/paper_logs
 ```
 
 For policy gradient, the plotter records `evaluation_mean` against environment

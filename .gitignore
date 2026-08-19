@@ -4,15 +4,37 @@ __pycache__/
 
 .DS_Store
 .idea/
+.vscode/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+*.egg-info/
+build/
+dist/
 
 stackelberg_pomdp/logs/
 results/
 ray_results/
 wandb/
+output/
+
+# Internal working notes are archived outside the public source tree.
+/AUTONOMOUS_RUN_REPORT.md
+/PAPEREDITOR_STATUS.md
+/docs/experiment_tracker.md
 
 *.zip
 *.pkl
 
 # Atari ROMs are required locally but cannot be distributed with the code.
 stackelberg_pomdp/atari/roms/*.bin
+
+# Atari replication outputs are external, content-addressed artifacts.  Keep
+# code and small curated manifests in Git, never local checkpoints/run trees.
+replication/atari/checkpoints/**
+replication/atari/results/**
+replication/atari/runs/**
+replication/atari/wandb/**

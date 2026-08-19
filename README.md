@@ -1,71 +1,98 @@
-# Stackelberg POMDP: A Reinforcement Learning Approach for Economic Design
+# Stackelberg POMDP
 
-This repository hosts the source code associated with the paper "Stackelberg POMDP: A Reinforcement Learning Approach for Economic Design." 
-The arXiv version of the paper can be accessed at: https://arxiv.org/abs/2210.03852
+Official research code for *Stackelberg POMDP: Learning to Lead via
+Reinforcement Learning*. The project turns a leader's commitment problem into
+a partially observable Markov decision process whose response phase executes a
+policy-interactive follower algorithm and whose reward phase evaluates the
+resulting follower response.
 
-## Companion codebase
+The repository contains maintained implementations and replication interfaces
+for the paper's indirect mechanism-design, platform-pricing, matrix-game, and
+Atari Space Invaders experiments. Historical cohorts that cannot be regenerated
+faithfully with the corrected implementation are labeled as archived data,
+rather than silently approximated. The main learning stack uses
+Stable-Baselines3; a separate, strictly pinned Ray environment is retained only
+for the paper's native ES comparison.
 
-This repository implements the Stackelberg POMDP framework with **tabular follower oracles and a centralized critic**, using Stable-Baselines3. It covers the platform-market (Bertrand pricing) and indirect mechanism-design experiments, and absorbs the earlier `ai_collusion` codebase in full.
+## Installation
 
-For the matrix-game and Atari bilateral-trade experiments — which use **neural-network followers trained via external alternating optimization** in Ray RLlib — see the companion repository [StackeRLberg](https://github.com/mgerstgrasser/StackeRLberg).
+The reference environment uses Python 3.9 and pinned package versions:
 
-The split reflects an architectural trade-off: centralized critics are natural for tabular follower state but not for high-dimensional pixel observations.
-
-### Installation
-
-Create the conda environment:
-
-```
+```bash
 conda env create -f environment.yml
 conda activate stackelberg-pomdp
 ```
 
-Run commands from the repository root:
+Ray RLlib 2.0.1 is intentionally isolated from the main environment. Create
+its environment only when reproducing the native ES comparison:
 
+```bash
+conda env create -f environment-ray-es.yml
+conda activate stackelberg-pomdp-ray-es
 ```
+
+Commands should be run from the repository root. Both environments set
+`PYTHONNOUSERSITE=1` to prevent accidental imports from user-level packages.
+
+Atari runs additionally require a locally supplied Space Invaders ROM. The ROM
+is not redistributed by this repository; setup and integrity instructions are
+in [`replication/atari/README.md`](replication/atari/README.md).
+
+## Reproducing paper experiments
+
+`replication/targets.json` is the machine-readable paper manifest and
+`replication/run.py` is its local entry point:
+
+```bash
+# Inspect the paper-to-code map.
 python replication/run.py --list
+
+# Check every runnable command against its experiment parser without training.
+python replication/run.py --validate
+
+# Inspect or execute one target and seed.
+python replication/run.py fig_simple_allocation_stackpomdp_mappo --seed 1 --dry-run
+python replication/run.py fig_simple_allocation_stackpomdp_mappo --seed 1
 ```
 
-The environment sets `PYTHONNOUSERSITE=1` so Python does not accidentally import
-packages from `~/.local`.
+Some targets expand into named variants. Use `--variant NAME` to run one
+variant or omit it to run the complete target. Each manifest entry is labeled
+as runnable here, analytic, archived-data-only, or delegated to a specialized
+replication workflow; the runner never substitutes a modern implementation for
+a historical plotted cohort.
 
-### Normal Form Games
+The detailed target map, executed historical rollout conventions, and direct
+experiment entry points are documented in
+[`replication/README.md`](replication/README.md). Atari's curriculum,
+checkpoint requirements, and evaluation gates are documented separately in
+[`replication/atari/README.md`](replication/atari/README.md).
 
-You can run normal form games in two modes: deterministic and randomized. 
-In the deterministic mode, the leader must choose a single, specific matrix row. Conversely, in the randomized mode, they may employ a probabilistic strategy, allowing them to play any row with certain probabilities.
-- To run the Escape game in deterministic mode, use the following command:
-```
-python -m stackelberg_pomdp.experiments.normal_form --game_name game_1 --randomized false
-```
-- For randomized mode, use the following command:
-```
-python -m stackelberg_pomdp.experiments.normal_form --game_name game_1 --randomized true
-```
-The Maintain game can be run in the same way by replacing `game_1` with `game_2`.
+## Repository layout
 
-### Matrix Design Games
+- `stackelberg_pomdp/`: environments, response algorithms, policies, and
+  experiment entry points.
+- `replication/`: final-paper manifests, diagnostics, launchers, and protocol
+  documentation.
+- `tests/`: fast contract and regression tests; ROM-dependent integration is
+  optional.
+Generated checkpoints, logs, W&B run directories, and plot outputs are not
+versioned. Curated paper data and figure-generation scripts are distributed in
+the journal reproducibility artifact rather than mixed with training source.
 
-To run matrix design games, use the following command:
-```
-python -m stackelberg_pomdp.experiments.matrix_design
-```
-You can specify the observation type for the critic by replacing `critic_obs` with `full` 
-for MAPPO or `none` for PPO. You can also specify the POMDP construction by
-setting `pomdp_mode` to `stackelberg`, `hidden_queries`, or
-`reward_during_response`.
-Use `--tot_num_response_episodes` to set the follower-response horizon.
+## Verification
 
-### Simple Allocation Mechanisms
+After installing the main environment, validate the public manifest and run
+the test suite:
 
-To run simple allocation mechanisms with a message space size of `i`, use the following command:
-```
-python -m stackelberg_pomdp.experiments.simple_allocation --num_messages i
+```bash
+python replication/run.py --validate
+pytest -q
 ```
 
-### Sequential Price Mechanisms
+The core tests do not require an Atari ROM. See the Atari README for the
+optional real-ALE smoke test.
 
-To run a sequential price mechanism with `t` types and `i` messages, use the following command:
-```
-python -m stackelberg_pomdp.experiments.mspm --setting MSGSpace --num_types t --num_messages i
-```
-Use `--seed SEED` to control both environment randomness and learner initialization for replication runs.
+## Citation and license
+
+Citation metadata are provided in [`CITATION.cff`](CITATION.cff). This software
+is released under the [MIT License](LICENSE).

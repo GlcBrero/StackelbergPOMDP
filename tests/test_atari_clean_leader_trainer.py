@@ -66,6 +66,7 @@ def _checkpoint_metadata(
         mode,
         digest=None,
         manifest=None,
+        gameplay_actor_frozen=False,
 ):
     policy = {
         "policy_class": (
@@ -88,6 +89,8 @@ def _checkpoint_metadata(
             ),
         },
     }
+    if mode == "event_only":
+        policy["gameplay_actor_frozen"] = bool(gameplay_actor_frozen)
     result = {
         "path": str(path),
         "sha256": digest or ("a" * 64 if role == "buyer" else "b" * 64),
@@ -123,6 +126,7 @@ def test_rollout_is_exactly_queries_gameplay_and_cached_trades(tmp_path):
     assert args.event_tail_steps == 0
     assert args.actor_loss_mode == STANDARD_ACTOR_LOSS_MODE
     assert args.target_kl is None
+    assert args.freeze_gameplay_actor is False
     assert args.wandb_project == "StackPOMDP"
 
     with pytest.raises(SystemExit):
@@ -352,6 +356,14 @@ def test_scientific_config_distinguishes_actor_loss_mode(tmp_path):
     ))
     assert target["optimization"]["target_kl"] == pytest.approx(0.01)
 
+    frozen = trainer.e2_scientific_config(_args(
+        tmp_path,
+        "--freeze-gameplay-actor",
+    ))
+    assert frozen["leader_policy"]["gameplay_actor_frozen"] is True
+    assert standard["leader_policy"]["gameplay_actor_frozen"] is False
+    assert frozen != standard
+
 
 def test_provenance_rejects_config_or_manifest_tampering(tmp_path):
     args = _args(tmp_path)
@@ -456,6 +468,76 @@ def test_real_sb3_checkpoint_round_trip_retains_manifest(tmp_path):
             restored, default_mean=0.1, default_concentration=1.0
         ) == {"mean": 0.5, "concentration": 2.0}
     finally:
+        vec_env.close()
+
+
+def test_frozen_gameplay_actor_round_trip_trains_only_economic_actor(tmp_path):
+    vec_env = DummyVecEnv([_StableProtocolEnv])
+    model = None
+    restored = None
+    try:
+        model = ScaledLearningRatePPO(
+            StackPOMDPAtariPolicy,
+            vec_env,
+            policy_kwargs={
+                "economic_role": "buyer",
+                "economic_input_mode": "event_only",
+                "pretrained_lr_scale": 0.1,
+                "gameplay_actor_frozen": True,
+            },
+            learning_rate=1.0e-4,
+            n_steps=2,
+            batch_size=2,
+            n_epochs=1,
+            gamma=1.0,
+            gae_lambda=1.0,
+            device="cpu",
+            verbose=0,
+        )
+        policy = model.policy
+        assert policy.gameplay_actor_frozen is True
+        assert all(
+            not parameter.requires_grad
+            for module in policy.gameplay_actor_modules()
+            for parameter in module.parameters()
+        )
+        assert all(
+            parameter.requires_grad
+            for parameter in policy.economic_head.parameters()
+        )
+        assert all(
+            parameter.requires_grad
+            for parameter in policy.value_net.parameters()
+        )
+        optimized = {
+            id(parameter)
+            for group in policy.optimizer.param_groups
+            for parameter in group["params"]
+        }
+        trainable = {
+            id(parameter)
+            for parameter in policy.parameters()
+            if parameter.requires_grad
+        }
+        assert optimized == trainable
+
+        expected = trainer.validate_e2_gameplay_actor_freeze(
+            model, initialize=True
+        )
+        model.learn(total_timesteps=2)
+        assert trainer.validate_e2_gameplay_actor_freeze(
+            model, initialize=False
+        ) == expected
+        checkpoint = tmp_path / "frozen_gameplay_e2.zip"
+        model.save(checkpoint)
+        restored = ScaledLearningRatePPO.load(checkpoint, device="cpu")
+        assert restored.policy.gameplay_actor_frozen is True
+        assert trainer.validate_e2_gameplay_actor_freeze(
+            restored, initialize=False
+        ) == expected
+    finally:
+        del restored
+        del model
         vec_env.close()
 
 
@@ -605,6 +687,7 @@ def test_new_leader_transfers_actor_only_and_starts_fresh_economic_critic(
     assert captured["reset"] == (0.5, 2.0)
     assert captured["kwargs"]["policy_kwargs"]["economic_input_mode"] == "event_only"
     assert captured["kwargs"]["policy_kwargs"]["pretrained_lr_scale"] == 0.1
+    assert captured["kwargs"]["policy_kwargs"]["gameplay_actor_frozen"] is False
     assert captured["kwargs"]["gamma"] == 1.0
     assert captured["kwargs"]["gae_lambda"] == 1.0
     assert captured["cache_cleared"] is True

@@ -1,342 +1,544 @@
 {
+  "fig_simple_allocation_stackpomdp_mappo_m1": {
+    "status": "owned_here",
+    "description": "Simple Allocation message-capacity curve with one message (25-seed paper cohort).",
+    "figure_or_table": "SA-MessageComparison_1M",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 1,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
+      "critic_obs": "full",
+      "pomdp_mode": "stackelberg",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
+      "seed": "{seed}"
+    },
+    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 100}
+  },
+  "fig_simple_allocation_stackpomdp_mappo_m2": {
+    "status": "owned_here",
+    "description": "Simple Allocation message-capacity curve with two messages (25-seed paper cohort).",
+    "figure_or_table": "SA-MessageComparison_1M",
+    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "args": {
+      "num_messages": 2,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
+      "critic_obs": "full",
+      "pomdp_mode": "stackelberg",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
+      "seed": "{seed}"
+    },
+    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 50}
+  },
   "fig_simple_allocation_stackpomdp_mappo": {
     "status": "owned_here",
-    "description": "Train the Simple Allocation StackPOMDP + MAPPO curve used for SA-Ablation_new.",
-    "figure_or_table": "SA-Ablation_new",
+    "description": "Simple Allocation three-message StackPOMDP + MAPPO curve.",
+    "figure_or_table": "SA-MessageComparison_1M; SA-Ablation_new",
     "module": "stackelberg_pomdp.experiments.simple_allocation",
     "args": {
       "num_messages": 3,
-      "max_steps": 100000,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "stackelberg",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
       "seed": "{seed}"
+    },
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 100,
+      "complete_mw_updates": 33,
+      "incomplete_final_cycle_queries": 1,
+      "note": "The retained protocol executed all 100 queries. Query 100 starts an incomplete three-action MW cycle and therefore does not update the response weights."
     }
   },
   "fig_simple_allocation_hidden_queries_mappo": {
     "status": "owned_here",
-    "description": "Train the Simple Allocation hidden-queries + MAPPO theorem-violation curve.",
+    "description": "Simple Allocation three-message Basic-POMDP + MAPPO curve (queries execute but are hidden from the leader rollout).",
     "figure_or_table": "SA-Ablation_new",
     "module": "stackelberg_pomdp.experiments.simple_allocation",
     "args": {
       "num_messages": 3,
-      "max_steps": 100000,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "hidden_queries",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
       "seed": "{seed}"
-    }
-  },
-  "fig_simple_allocation_reward_during_response_mappo": {
-    "status": "owned_here",
-    "description": "Train the Simple Allocation reward-during-response + MAPPO theorem-violation curve.",
-    "figure_or_table": "SA-Ablation_new",
-    "module": "stackelberg_pomdp.experiments.simple_allocation",
-    "args": {
-      "num_messages": 3,
-      "max_steps": 100000,
-      "critic_obs": "full",
-      "pomdp_mode": "reward_during_response",
-      "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
   },
   "fig_simple_allocation_stackpomdp_ppo": {
     "status": "owned_here",
-    "description": "Train the Simple Allocation StackPOMDP + PPO ablation curve.",
+    "description": "Simple Allocation three-message StackPOMDP + decentralized-critic PPO curve.",
     "figure_or_table": "SA-Ablation_new",
     "module": "stackelberg_pomdp.experiments.simple_allocation",
     "args": {
       "num_messages": 3,
-      "max_steps": 100000,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
       "critic_obs": "none",
       "pomdp_mode": "stackelberg",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
       "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
   },
   "fig_simple_allocation_hidden_queries_ppo": {
     "status": "owned_here",
-    "description": "Train the Simple Allocation hidden-queries + PPO theorem-violation curve.",
+    "description": "Simple Allocation three-message Basic-POMDP + decentralized-critic PPO curve.",
     "figure_or_table": "SA-Ablation_new",
     "module": "stackelberg_pomdp.experiments.simple_allocation",
     "args": {
       "num_messages": 3,
-      "max_steps": 100000,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
       "critic_obs": "none",
       "pomdp_mode": "hidden_queries",
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 30,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 30,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
       "seed": "{seed}"
+    },
+    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
+  },
+  "fig_pi_mspm_2types_2messages": {
+    "status": "owned_here",
+    "description": "Two-type, two-message MSPM curve with certified MW response.",
+    "figure_or_table": "pi_spm_vs_mspm_exact_eval_selected; pi_spm_vs_mspm_exact_eval_allseeds",
+    "module": "stackelberg_pomdp.experiments.mspm",
+    "args": {
+      "setting": "PI",
+      "num_types": 2,
+      "num_messages": 2,
+      "max_steps": 1000000,
+      "tot_num_response_episodes": 100,
+      "tot_num_reward_episodes": 4,
+      "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05,
+      "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1,
+      "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full",
+      "learning_rate": 0.0003,
+      "ent_coef": 0,
+      "ppo_episodes_per_batch": 1,
+      "ppo_batch_size": 64,
+      "ppo_n_epochs": 10,
+      "eval_freq": 10000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 4,
+      "seed": "{seed}"
+    },
+    "cohort": {
+      "seeds": "1-25",
+      "selected_seeds": 12,
+      "selection": "Top 12 by mean unsmoothed evaluation reward over steps 950000-1000000; ties broken by seed.",
+      "plot_smoothing": "Trailing 100000 training steps."
     }
   },
-  "fig_simple_allocation_reward_during_response_ppo": {
+  "fig_pi_spm_2types": {
     "status": "owned_here",
-    "description": "Train the Simple Allocation reward-during-response + PPO theorem-violation curve.",
-    "figure_or_table": "SA-Ablation_new",
-    "module": "stackelberg_pomdp.experiments.simple_allocation",
+    "description": "Two-type standard-SPM comparator with deterministic exact evaluation.",
+    "figure_or_table": "pi_spm_vs_mspm_exact_eval_selected; pi_spm_vs_mspm_exact_eval_allseeds",
+    "module": "stackelberg_pomdp.experiments.spm_baseline",
     "args": {
-      "num_messages": 3,
-      "max_steps": 100000,
-      "critic_obs": "none",
-      "pomdp_mode": "reward_during_response",
+      "setting": "PI",
+      "num_types": 2,
+      "max_steps": 1000000,
+      "discrete_prices": false,
+      "spm_exact_eval_freq": 10000,
+      "spm_eval_deterministic": true,
+      "learning_rate": 0.0003,
+      "ent_coef": 0.01,
       "seed": "{seed}"
+    },
+    "cohort": {
+      "seeds": "1-10",
+      "selected_seeds": 5,
+      "selection": "Top 5 by mean unsmoothed evaluation reward over steps 950000-1000000; ties broken by seed.",
+      "plot_smoothing": "Trailing 100000 training steps."
     }
   },
   "table_mspm_3types_2messages": {
     "status": "owned_here",
-    "description": "Run MSPM with 3 types and 2 messages.",
-    "figure_or_table": "table:spmResults",
+    "description": "Three-type MSPM scaling-table cohort.",
+    "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace",
-      "num_types": 3,
-      "num_messages": 2,
+      "setting": "MSGSpace", "num_types": 3, "num_messages": 2,
+      "max_steps": 1000000, "tot_num_response_episodes": 300,
+      "tot_num_reward_episodes": 9, "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
+      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
+      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 9,
       "seed": "{seed}"
-    }
-  },
-  "table_spm_3types": {
-    "status": "owned_here",
-    "description": "Run the standard SPM PPO baseline with 3 types and no messages.",
-    "figure_or_table": "table:spmResults baseline",
-    "module": "stackelberg_pomdp.experiments.spm_baseline",
-    "args": {
-      "setting": "MSGSpace",
-      "num_types": 3,
-      "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 75}
   },
   "table_mspm_4types_2messages": {
     "status": "owned_here",
-    "description": "Run MSPM with 4 types and 2 messages.",
-    "figure_or_table": "table:spmResults",
+    "description": "Four-type MSPM scaling-table cohort.",
+    "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace",
-      "num_types": 4,
-      "num_messages": 2,
+      "setting": "MSGSpace", "num_types": 4, "num_messages": 2,
+      "max_steps": 1000000, "tot_num_response_episodes": 532,
+      "tot_num_reward_episodes": 16, "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
+      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
+      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 16,
       "seed": "{seed}"
-    }
-  },
-  "table_spm_4types": {
-    "status": "owned_here",
-    "description": "Run the standard SPM PPO baseline with 4 types and no messages.",
-    "figure_or_table": "table:spmResults baseline",
-    "module": "stackelberg_pomdp.experiments.spm_baseline",
-    "args": {
-      "setting": "MSGSpace",
-      "num_types": 4,
-      "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 133}
   },
   "table_mspm_5types_2messages": {
     "status": "owned_here",
-    "description": "Run MSPM with 5 types and 2 messages.",
-    "figure_or_table": "table:spmResults",
+    "description": "Five-type MSPM scaling-table cohort.",
+    "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace",
-      "num_types": 5,
-      "num_messages": 2,
+      "setting": "MSGSpace", "num_types": 5, "num_messages": 2,
+      "max_steps": 1000000, "tot_num_response_episodes": 832,
+      "tot_num_reward_episodes": 25, "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
+      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
+      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 25,
       "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 208}
   },
-  "table_spm_5types": {
+  "table_mspm_6types_2messages": {
     "status": "owned_here",
-    "description": "Run the standard SPM PPO baseline with 5 types and no messages.",
-    "figure_or_table": "table:spmResults baseline",
-    "module": "stackelberg_pomdp.experiments.spm_baseline",
-    "args": {
-      "setting": "MSGSpace",
-      "num_types": 5,
-      "seed": "{seed}"
-    }
-  },
-  "table_mspm_5types_3messages": {
-    "status": "owned_here",
-    "description": "Run MSPM with 5 types and 3 messages.",
-    "figure_or_table": "table:spmResults",
+    "description": "Six-type MSPM scaling-table cohort.",
+    "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace",
-      "num_types": 5,
-      "num_messages": 3,
+      "setting": "MSGSpace", "num_types": 6, "num_messages": 2,
+      "max_steps": 1000000, "tot_num_response_episodes": 1200,
+      "tot_num_reward_episodes": 36, "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
+      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
+      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 36,
       "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 300}
   },
-  "fig_maintain_randomized": {
-    "status": "owned_here",
-    "description": "Run the Maintain normal-form randomized-strategy experiment.",
-    "figure_or_table": "simpleMatrixGame2_new",
-    "module": "stackelberg_pomdp.experiments.normal_form",
-    "args": {
-      "game_name": "game_2",
-      "randomized": true,
-      "seed": "{seed}"
-    }
+  "table_spm_exact_optima": {
+    "status": "analytic",
+    "description": "The standard-SPM scaling column is computed analytically, not from training runs.",
+    "figure_or_table": "tab:mspmScalingComparison",
+    "values": {"3": "-1/18", "4": "-1/24", "5": "-1/20", "6": "-2/45"}
   },
   "fig_matrix_design_ablation": {
     "status": "owned_here",
-    "description": "Run the Matrix Design mechanism-design ablation.",
+    "description": "Four-variant Matrix Design control; one invocation expands to all four paper curves.",
     "figure_or_table": "MatrixDesign-Ablation_new",
     "module": "stackelberg_pomdp.experiments.matrix_design",
     "args": {
-      "tot_num_response_episodes": 4,
+      "max_steps": 5000000,
+      "algorithm": "PPO",
+      "learning_rate": 0.0007,
+      "tot_num_response_episodes": 30,
+      "tot_num_reward_episodes": 1,
+      "eval_freq": 5000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 1,
+      "fix_episode_actions": true,
+      "followers_algorithm": "MW",
+      "mw_epsilon": 0.1,
+      "mw_reset_weights_each_episode": true,
+      "align_mw_response_phase": false,
+      "ent_coef": 0.01,
+      "ppo_rollout_geometry": "historical_ratio_scaled",
+      "ppo_episodes_per_batch": 16,
+      "ppo_n_epochs": 4,
       "seed": "{seed}"
+    },
+    "variants": [
+      {"name": "stackpomdp_mappo", "args": {"critic_obs": "full", "pomdp_mode": "stackelberg"}},
+      {"name": "stackpomdp_ppo", "args": {"critic_obs": "none", "pomdp_mode": "stackelberg"}},
+      {"name": "basic_mappo", "args": {"critic_obs": "full", "pomdp_mode": "hidden_queries"}},
+      {"name": "basic_ppo", "args": {"critic_obs": "none", "pomdp_mode": "hidden_queries"}}
+    ],
+    "cohort": {
+      "seeds": "1-25",
+      "executed_response_games": 30,
+      "complete_mw_updates": 7,
+      "incomplete_final_cycle_queries": 2,
+      "note": "The retained protocol executed all 30 queries; the final two queries form an incomplete four-action MW cycle and do not update the response weights."
     }
+  },
+  "calibration_price_collusion_m4_grid": {
+    "status": "owned_prerequisite",
+    "description": "Historical 3-by-5 seller-learning calibration grid with five seeds per cell.",
+    "figure_or_table": "subapp:collusion_hyperparams calibration",
+    "module": "replication.bertrand.calibrate_price_learners",
+    "args": {
+      "m": 4,
+      "platform_intervention": "no_intervene",
+      "n_sessions": 5,
+      "seed_offset": 0,
+      "convergence_window": 100000,
+      "max_steps": 10000000
+    },
+    "variants": [
+      {"name": "alpha0p05_beta4em5", "args": {"alpha": 0.05, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em5"}},
+      {"name": "alpha0p05_beta1em4", "args": {"alpha": 0.05, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em4"}},
+      {"name": "alpha0p05_beta4em4", "args": {"alpha": 0.05, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em4"}},
+      {"name": "alpha0p05_beta1em3", "args": {"alpha": 0.05, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em3"}},
+      {"name": "alpha0p05_beta4em3", "args": {"alpha": 0.05, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em3"}},
+      {"name": "alpha0p15_beta4em5", "args": {"alpha": 0.15, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em5"}},
+      {"name": "alpha0p15_beta1em4", "args": {"alpha": 0.15, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em4"}},
+      {"name": "alpha0p15_beta4em4", "args": {"alpha": 0.15, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em4"}},
+      {"name": "alpha0p15_beta1em3", "args": {"alpha": 0.15, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em3"}},
+      {"name": "alpha0p15_beta4em3", "args": {"alpha": 0.15, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em3"}},
+      {"name": "alpha0p25_beta4em5", "args": {"alpha": 0.25, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em5"}},
+      {"name": "alpha0p25_beta1em4", "args": {"alpha": 0.25, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em4"}},
+      {"name": "alpha0p25_beta4em4", "args": {"alpha": 0.25, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em4"}},
+      {"name": "alpha0p25_beta1em3", "args": {"alpha": 0.25, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em3"}},
+      {"name": "alpha0p25_beta4em3", "args": {"alpha": 0.25, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em3"}}
+    ],
+    "cohort": {"seeds": "1-5 per cell", "cells": 15, "source_protocol": "historical run_calibrate_m4_new.sh"}
   },
   "fig_price_collusion_m4_calibration": {
     "status": "owned_here",
-    "description": "Calibrate Q-learning sellers on the paper m=4 grid [1.05, 1.7].",
+    "description": "Train the 25 no-intervention seller pairs used by the m=4 deviation panel.",
     "figure_or_table": "deviation_m4 calibration input",
     "module": "replication.bertrand.calibrate_price_learners",
     "args": {
       "m": 4,
       "alpha": 0.25,
       "beta": "1e-4",
-      "n_sessions": 5,
+      "platform_intervention": "no_intervene",
+      "n_sessions": 25,
+      "convergence_window": 100000,
+      "max_steps": 5000000,
+      "seed_offset": 0,
       "output_dir": "results/price_collusion_m4"
     }
   },
   "fig_price_collusion_punishment_m4": {
     "status": "owned_here",
-    "description": "Run the price-deviation punishment diagnostic from saved m=4 Q-tables.",
+    "description": "Apply one forced best-response cut and retain the 16-period price trajectory.",
     "figure_or_table": "deviation_m4",
     "module": "replication.bertrand.punishment_diagnostic",
     "args": {
-      "input_dir": "results/price_collusion_m4"
+      "input_dir": "results/price_collusion_m4",
+      "post_deviation_periods": 15
     }
   },
   "fig_collusion_learning_state": {
     "status": "owned_here",
-    "description": "Train the state-based StackPOMDP threshold intervention.",
+    "description": "Train the price-dependent-admission StackPOMDP platform rule.",
     "figure_or_table": "collusion_learning_25seeds",
     "module": "stackelberg_pomdp.experiments.price_collusion",
     "args": {
+      "platform_intervention": "learn_threshold",
       "platform_observation_space": "price_profile",
       "price_grid_length": 4,
       "price_min": 1.05,
       "price_max": 1.7,
+      "tot_num_response_episodes": 50000,
+      "tot_num_reward_episodes": 30,
+      "follower_alpha": 0.25,
+      "follower_beta": "1e-4",
+      "algorithm": "A2C",
+      "max_steps": 50000000,
+      "learning_rate": 0.0007,
+      "critic_obs": "full",
+      "fix_episode_actions": true,
+      "ent_coef": 0.01,
       "seed": "{seed}"
-    }
+    },
+    "cohort": {"seeds": "1-25"}
   },
-  "fig_collusion_learning_no_state": {
-    "status": "owned_here",
-    "description": "Train the no-state StackPOMDP threshold intervention.",
+  "fig_collusion_fixed_policy_training": {
+    "status": "owned_prerequisite",
+    "description": "Train the three fixed-policy seller cohorts; cycle evaluation is performed by the journal reproducibility pipeline.",
     "figure_or_table": "collusion_learning_25seeds",
-    "module": "stackelberg_pomdp.experiments.price_collusion",
+    "module": "replication.bertrand.calibrate_price_learners",
     "args": {
-      "platform_observation_space": "no_observation",
-      "price_grid_length": 4,
-      "price_min": 1.05,
-      "price_max": 1.7,
-      "seed": "{seed}"
-    }
-  },
-  "baseline_mspm_evolutionary_3types_2messages": {
-    "status": "owned_here",
-    "description": "Run the non-StackPOMDP evolutionary mechanism-search baseline for MSPM with 3 types and 2 messages.",
-    "figure_or_table": "table:spmResults baseline",
-    "module": "stackelberg_pomdp.experiments.mspm_evolutionary_baseline",
-    "args": {
-      "setting": "MSGSpace",
-      "num_types": 3,
-      "num_messages": 2,
-      "generations": 20,
-      "population_size": 24,
-      "elite_size": 6,
-      "response_records": 300,
-      "bcce_check_freq": 100,
-      "bcce_threshold": 0.05,
-      "output_dir": "results/mspm_evolutionary_baseline/3types_2messages_seed{seed}",
-      "seed": "{seed}"
-    }
-  },
-  "baseline_mspm_evolutionary_4types_2messages": {
-    "status": "owned_here",
-    "description": "Run the non-StackPOMDP evolutionary mechanism-search baseline for MSPM with 4 types and 2 messages.",
-    "figure_or_table": "table:spmResults baseline",
-    "module": "stackelberg_pomdp.experiments.mspm_evolutionary_baseline",
-    "args": {
-      "setting": "MSGSpace",
-      "num_types": 4,
-      "num_messages": 2,
-      "generations": 20,
-      "population_size": 24,
-      "elite_size": 6,
-      "response_records": 300,
-      "bcce_check_freq": 100,
-      "bcce_threshold": 0.05,
-      "output_dir": "results/mspm_evolutionary_baseline/4types_2messages_seed{seed}",
-      "seed": "{seed}"
-    }
-  },
-  "fig_atari_bilateral_trade": {
-    "status": "companion_stackerlberg",
-    "description": "Atari Space Invaders bilateral trade figure.",
-    "figure_or_table": "fig_atari_ppo_ppo_byvar",
-    "owner": "Code/StackeRLberg and atari experiment/",
-    "todo": "Port the StackeRLberg Atari commands into this manifest or keep this as a companion-code target with exact handoff instructions."
+      "m": 4,
+      "alpha": 0.25,
+      "beta": "1e-4",
+      "n_sessions": 25,
+      "convergence_window": 100000,
+      "max_steps": 10000000,
+      "seed_offset": 0
+    },
+    "variants": [
+      {"name": "no_intervention", "args": {"platform_intervention": "no_intervene", "output_dir": "results/collusion_fixed/no_intervention"}},
+      {"name": "pdp", "args": {"platform_intervention": "pdp", "output_dir": "results/collusion_fixed/pdp"}},
+      {"name": "dpdp", "args": {"platform_intervention": "dpdp", "output_dir": "results/collusion_fixed/dpdp"}}
+    ]
   },
   "fig_hidden_queries_ablation": {
-    "status": "owned_here",
-    "description": "Ray-free hidden-query RL ablation for theorem-assumption violations.",
+    "status": "archived_data_only",
+    "description": "The plotted PG/ES cohort is retained in the journal data bundle; current maintained matrix code intentionally uses a different audited response profile.",
     "figure_or_table": "fig_hidden",
-    "module": "stackelberg_pomdp.experiments.matrix_ablations",
-    "args": {
-      "experiment": "hidden_queries",
-      "condition": "{observed|hidden}",
-      "algorithm": "{A2C|PPO}",
-      "seed": "{seed}"
-    },
-    "sweep": "replication/matrix_ablations/sweep.py"
-  },
-  "fig_hidden_queries_native_es_ablation": {
-    "status": "owned_here",
-    "description": "Native RLlib 2.0.1 ES hidden-query paper cohort in its dedicated environment.",
-    "figure_or_table": "fig_hidden",
-    "module": "stackelberg_pomdp.experiments.matrix_ablations",
-    "args": {
-      "experiment": "hidden_queries",
-      "condition": "{observed|hidden}",
-      "algorithm": "ES",
-      "profile_id": "paper_joint_v1",
-      "seed": "{1..25}"
-    },
-    "environment": "environment-ray-es.yml",
-    "slurm_array": "replication/matrix_ablations/cluster/hidden_queries_rllib_es_s1to25.sbatch"
+    "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_hidden",
+    "protocol": {"rounds": 5, "seeds_per_condition": 25, "algorithms": ["PG", "RLlib 2.0.1 ES"], "conditions": ["observed", "hidden"]},
+    "todo": "Do not label the maintained paper_joint_v1 rerun as an exact regeneration of this archived legacy cohort."
   },
   "fig_memory_phase_ablation": {
-    "status": "owned_here",
-    "description": "Memory-based leader / phase-variable ablation.",
+    "status": "archived_data_only",
+    "description": "The plotted phase-visible/hidden PG cohort is retained in the journal data bundle.",
     "figure_or_table": "fig_memory_pg",
-    "module": "stackelberg_pomdp.experiments.matrix_ablations",
-    "args": {
-      "experiment": "phase_observability",
-      "condition": "{visible|hidden}",
-      "algorithm": "A2C",
-      "seed": "{seed}"
-    },
-    "sweep": "replication/matrix_ablations/sweep.py"
-  },
-  "fig_reward_during_learning_ablation": {
-    "status": "owned_here",
-    "description": "Leader reward during follower-learning ablation.",
-    "figure_or_table": "fig_bots_leaderreward",
-    "module": "stackelberg_pomdp.experiments.matrix_ablations",
-    "args": {
-      "experiment": "response_reward",
-      "condition": "{excluded|included}",
-      "algorithm": "A2C",
-      "seed": "{seed}"
-    },
-    "sweep": "replication/matrix_ablations/sweep.py"
+    "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_memory_pg",
+    "protocol": {"algorithm": "PG", "runs_per_curve": 10, "conditions": ["visible", "hidden"]}
   },
   "fig_continuous_follower_learning_ablation": {
-    "status": "owned_here",
-    "description": "Continuous follower-learning/reset ablation.",
+    "status": "archived_data_only",
+    "description": "The plotted fresh/carried-Q cohort predates the terminal-Q correction and is retained as data rather than rerunnable evidence.",
     "figure_or_table": "fig_reset",
-    "module": "stackelberg_pomdp.experiments.matrix_ablations",
-    "args": {
-      "experiment": "q_reset",
-      "condition": "{reset|ongoing}",
-      "algorithm": "A2C",
-      "seed": "{seed}"
+    "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_reset",
+    "protocol": {"leader_algorithm": "PG", "follower_algorithm": "tabular Q", "runs_per_learning_rate": 3, "conditions": ["reset", "ongoing"]}
+  },
+  "fig_reward_during_learning_ablation": {
+    "status": "archived_data_only",
+    "description": "The plotted response-reward SimpleQ/tabular-Q cohort is retained in the journal data bundle.",
+    "figure_or_table": "fig_bots_leaderreward",
+    "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_bots_leaderreward",
+    "protocol": {"leader_algorithm": "SimpleQ", "follower_algorithm": "tabular Q", "runs_per_condition": 10, "conditions": ["excluded", "included"], "leader_miscoordination_payoffs": [0, -5]}
+  },
+  "fig_atari_response_diagnostics": {
+    "status": "specialized_workflow",
+    "description": "Held-out response curves for the trained buyer and seller meta-followers in Atari bilateral trade.",
+    "figure_or_table": "fig:atari_response_diagnostics; atari_e1_responses",
+    "owner": "replication/atari/README.md",
+    "entrypoints": [
+      "replication/atari/train_atari_curriculum_sb3.py",
+      "replication/atari/train_atari_meta_response_sb3.py",
+      "replication/atari/evaluate_atari_meta_response_sb3.py"
+    ],
+    "protocol": {
+      "framework": "Stable-Baselines3 PPO",
+      "roles": ["buyer", "seller"],
+      "gameplay_horizon": 200,
+      "trade_events": 5,
+      "discount_factor": 1.0,
+      "checkpoint_selection": "common-seed screening followed by fresh-seed confirmation"
     },
-    "sweep": "replication/matrix_ablations/sweep.py"
+    "published_data": "Stackelberg-Journal-Version/reproducibility/data/atari/atari_e1_responses.csv"
+  },
+  "fig_atari_meta_stackpomdp": {
+    "status": "specialized_workflow",
+    "description": "Ten-seed Atari StackPOMDP leader training under buyer/seller role reversal.",
+    "figure_or_table": "fig:atari_meta_stackpomdp; atari_meta_stackpomdp",
+    "owner": "replication/atari/README.md",
+    "entrypoints": [
+      "replication/atari/train_atari_stackpomdp_leader_sb3.py",
+      "replication/atari/evaluate_atari_stackpomdp_leader_sb3.py",
+      "replication/atari/automation/unity_atari_e2_multiseed.sbatch",
+      "replication/atari/automation/compact_atari_e2_selection.py",
+      "replication/atari/automation/aggregate_atari_e2_multiseed.py"
+    ],
+    "protocol": {
+      "framework": "Stable-Baselines3 PPO",
+      "leader_roles": ["buyer", "seller"],
+      "independent_seeds_per_role": 10,
+      "training_transitions": 2000040,
+      "scheduled_checkpoint_transitions": [400680, 800520, 1200360, 1600200],
+      "held_out_screen_episodes_per_checkpoint": 20,
+      "fresh_confirmation_episodes": 100,
+      "gameplay_horizon": 200,
+      "query_events": 5,
+      "reward_game_trade_events": 5,
+      "discount_factor": 1.0
+    },
+    "published_data": "Stackelberg-Journal-Version/reproducibility/data/atari/atari_leader_training_curves.csv"
   }
 }

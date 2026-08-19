@@ -39,6 +39,10 @@ from stackelberg_pomdp.atari.protocol import (
 
 ECONOMIC_ROLES = {"buyer", "seller", "gameplay"}
 ECONOMIC_INPUT_MODES = {"full", "event_only"}
+# Only shared-context v5 is exposed by the release trainer.  SB3 reconstructs
+# a policy from constructor metadata before loading weights, so the earlier
+# v4/residual fields below remain as deserialization compatibility shims.  The
+# release evaluator rejects those superseded parameterizations explicitly.
 SELLER_TWO_BRANCH_BETA_V4 = "seller_two_branch_beta_v4"
 SELLER_SHARED_CONTEXT_BETA_V5 = "seller_shared_context_beta_v5"
 ECONOMIC_ARCHITECTURES = {
@@ -512,6 +516,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             economic_hidden=64,
             critic_hidden=256,
             pretrained_lr_scale=1.0,
+            gameplay_actor_frozen=False,
             economic_threshold_residual=False,
             economic_threshold_residual_direct_input=False,
             economic_architecture=None,
@@ -525,6 +530,8 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             )
         if not isinstance(economic_threshold_residual, (bool, np.bool_)):
             raise TypeError("economic_threshold_residual must be Boolean")
+        if not isinstance(gameplay_actor_frozen, (bool, np.bool_)):
+            raise TypeError("gameplay_actor_frozen must be Boolean")
         if not isinstance(
                 economic_threshold_residual_direct_input, (bool, np.bool_)
         ):
@@ -591,6 +598,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.economic_hidden = int(economic_hidden)
         self.critic_hidden = int(critic_hidden)
         self.pretrained_lr_scale = float(pretrained_lr_scale)
+        self.gameplay_actor_frozen = bool(gameplay_actor_frozen)
         self.economic_threshold_residual = bool(economic_threshold_residual)
         self.economic_threshold_residual_direct_input = bool(
             economic_threshold_residual_direct_input
@@ -741,7 +749,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         self.game_action_net.apply(partial(self.init_weights, gain=0.01))
         self.value_net.apply(partial(self.init_weights, gain=1.0))
         self._initialize_economic_head(mean=0.5, concentration=2.0)
-        if self.economic_architecture in {
+        if self.gameplay_actor_frozen or self.economic_architecture in {
                 SELLER_TWO_BRANCH_BETA_V4,
                 SELLER_SHARED_CONTEXT_BETA_V5,
         }:
@@ -777,13 +785,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         )
 
     def freeze_gameplay_actor(self):
-        """Freeze every transferred E0 actor parameter for seller v4/v5."""
-
-        if self.economic_architecture not in {
-                SELLER_TWO_BRANCH_BETA_V4,
-                SELLER_SHARED_CONTEXT_BETA_V5,
-        }:
-            raise ValueError("gameplay freezing is reserved for seller v4/v5")
+        """Freeze every parameter that can change the Atari game action."""
         for module in self.gameplay_actor_modules():
             for parameter in module.parameters():
                 parameter.requires_grad_(False)
@@ -907,13 +909,25 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
         pretrained = [
             parameter
             for parameter in self.parameters()
-            if id(parameter) in protected
+            if parameter.requires_grad and id(parameter) in protected
         ]
         ordinary = [
             parameter
             for parameter in self.parameters()
-            if id(parameter) not in protected
+            if parameter.requires_grad and id(parameter) not in protected
         ]
+        partition = pretrained + ordinary
+        trainable = {
+            id(parameter)
+            for parameter in self.parameters()
+            if parameter.requires_grad
+        }
+        grouped = {id(parameter) for parameter in partition}
+        if grouped != trainable or len(grouped) != len(partition):
+            raise RuntimeError(
+                "generic optimizer groups do not partition trainable "
+                "parameters exactly"
+            )
         return [
             {
                 "params": pretrained,
@@ -937,6 +951,7 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
             "economic_hidden": self.economic_hidden,
             "critic_hidden": self.critic_hidden,
             "pretrained_lr_scale": self.pretrained_lr_scale,
+            "gameplay_actor_frozen": self.gameplay_actor_frozen,
             "economic_threshold_residual": self.economic_threshold_residual,
             "economic_threshold_residual_direct_input": (
                 self.economic_threshold_residual_direct_input
@@ -1459,19 +1474,11 @@ class StackPOMDPAtariPolicy(ActorCriticPolicy):
 
 __all__ = [
     "BETA_PARAMETER_EPSILON",
-    "THRESHOLD_RESIDUAL_BLEND_WEIGHT",
-    "THRESHOLD_RESIDUAL_EPSILON",
     "CompositeAtariFeaturesExtractor",
     "ECONOMIC_INPUT_MODES",
     "ECONOMIC_ROLES",
-    "ECONOMIC_ARCHITECTURES",
     "GatedCompositeAtariDistribution",
     "SELLER_SHARED_CONTEXT_BETA_V5",
-    "SELLER_TWO_BRANCH_BETA_V4",
     "StackPOMDPAtariPolicy",
-    "current_event_threshold",
-    "direct_threshold_residual_architecture_provenance",
     "seller_shared_context_architecture_provenance",
-    "seller_two_branch_architecture_provenance",
-    "threshold_residual_architecture_provenance",
 ]

@@ -101,6 +101,8 @@ def _experiment_name(config_dict):
         config_dict["followers_algorithm"],
         f"mweps{_format_value(config_dict.get('mw_epsilon', MWFollowersWrapper.DEFAULT_EPS))}",
     ]
+    if config_dict.get("ppo_rollout_geometry", "complete_episodes") != "complete_episodes":
+        parts.append(f"ppogeom{config_dict['ppo_rollout_geometry']}")
     if config_dict.get("mw_fixed_seed") is not None:
         parts.append(f"mwseed{config_dict['mw_fixed_seed']}")
     parts.extend([

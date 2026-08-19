@@ -176,7 +176,7 @@ class BaseEnvSimpleMatrixGame(BaseEnv):
             randomized=False,
             randomization_type="linear",
     ):
-        super().__init__(game, logger, seed)
+        super().__init__(game=game, logger=logger, seed=seed)
 
         self.randomized = randomized
         self.randomization_type = randomization_type
@@ -241,7 +241,7 @@ class BaseEnvMatrixDesignGame(BaseEnv):
             seed=None,
             discrete_prices=False,
     ):
-        super().__init__(game, logger, seed)
+        super().__init__(game=game, logger=logger, seed=seed)
         self.discrete_prices = discrete_prices
         self.discrete_price_vec = (
             self.game.discrete_price_vector()
@@ -302,7 +302,7 @@ class BaseSimpleAllocation(BaseEnv):
             logger=None,
             seed=None,
     ):
-        super().__init__(game, logger, seed)
+        super().__init__(game=game, logger=logger, seed=seed)
 
         # Leader observes only the reported message and chooses an item/type.
         self.observation_space = Dict({'base_environment': Discrete(game.num_messages)})
@@ -355,7 +355,7 @@ class BaseSPM(BaseEnv):
             seed=None,
             discrete_prices=False,
     ):
-        super().__init__(game, logger, seed)
+        super().__init__(game=game, logger=logger, seed=seed)
         self.discrete_prices = discrete_prices
         self.discrete_price_vec = (
             self.game.discrete_price_vector()
@@ -462,7 +462,7 @@ class BaseMessageSPM(BaseSPM):
             logger=None,
             seed=None,
     ):
-        super().__init__(game, logger, seed)
+        super().__init__(game=game, logger=logger, seed=seed)
 
         # Followers observe private types and submit messages/bids.
         self.followers_observation_space = {follower: Discrete(self.game.num_types) for follower in self.followers_list}

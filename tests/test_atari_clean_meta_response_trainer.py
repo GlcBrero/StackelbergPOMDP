@@ -152,6 +152,20 @@ def test_parser_aligns_rollout_with_one_full_h_plus_five_episode(tmp_path):
     assert args.e1_sampler_mode == trainer.UNIFORM_E1_SAMPLER
 
 
+def test_release_cli_rejects_superseded_seller_recovery_variants(tmp_path):
+    common = [
+        "--role", SELLER,
+        "--e0b-checkpoint", str(tmp_path / "e0b.zip"),
+        "--no-wandb",
+    ]
+    with pytest.raises(SystemExit):
+        trainer.parse_args(common + ["--economic-threshold-residual"])
+    with pytest.raises(SystemExit):
+        trainer.parse_args(common + [
+            "--economic-architecture", "seller_two_branch_beta_v4",
+        ])
+
+
 def test_temporal_sampler_parser_is_explicit_and_horizon_bound(tmp_path):
     common = [
         "--role",

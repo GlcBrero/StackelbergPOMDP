@@ -278,6 +278,7 @@ def test_plot_collects_nested_pg_and_corrected_es_step_sizes(tmp_path):
             config["es_protocol"] = {
                 "implementation": "ray_rllib_es_2_0_1",
                 "stepsize": es_stepsize,
+                "report_length": 10,
             }
         config_path = run_dir / "config.json"
         progress_path = run_dir / "progress.jsonl"

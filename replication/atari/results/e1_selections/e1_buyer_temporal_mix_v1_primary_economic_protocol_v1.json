@@ -2,7 +2,7 @@
   "candidate_policy": {
     "candidate_search": false,
     "checkpoint": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
       "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79"
     },
     "checkpoint_metadata": {
@@ -25,7 +25,7 @@
           "inferred_for_legacy_checkpoint": false,
           "resume_sources": [
             {
-              "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
+              "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
               "resume_total_timesteps": 2000800,
               "sha256": "db8435016138947dda5b09b80f4ec2b5efe71684e58ca5cf9afef06d54e47cff",
               "training_total_timesteps": 2000800
@@ -95,7 +95,7 @@
         "uniform_context": "five independent Uniform(0,1) prices"
       },
       "e0b_source_provenance": {
-        "checkpoint": "/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+        "checkpoint": "replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
         "critic_transferred": false,
         "modules": [
           "features_extractor",
@@ -117,7 +117,7 @@
         ]
       },
       "economic_input_mode": "full",
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
       "role": "buyer",
       "sampler_contract_inferred_for_legacy_checkpoint": false,
       "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79",
@@ -243,11 +243,11 @@
   "source_kind": "primary_economic_v1",
   "sources": {
     "activation": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_activation_v1.json",
+      "path": "replication/atari/results/e1_selections/e1_buyer_temporal_contingency_activation_v1.json",
       "sha256": "6d63d7ba37db93d73e0ae5005e8214be0375a360ab87ccde475c9f261bcbabea"
     },
     "e0b": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+      "path": "replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
       "sha256": "3a9ded5c53e10bf0b2215f1223f7bde15ba23d197dd0c651590bcd980c375ca3"
     },
     "eligible_checkpoint_metadata": {
@@ -270,7 +270,7 @@
           "inferred_for_legacy_checkpoint": false,
           "resume_sources": [
             {
-              "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
+              "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_seed1_firefix_retrain_step2000800.zip",
               "resume_total_timesteps": 2000800,
               "sha256": "db8435016138947dda5b09b80f4ec2b5efe71684e58ca5cf9afef06d54e47cff",
               "training_total_timesteps": 2000800
@@ -340,7 +340,7 @@
         "uniform_context": "five independent Uniform(0,1) prices"
       },
       "e0b_source_provenance": {
-        "checkpoint": "/Users/gbrero/active-research/StackelbergPOMDP/Code/StackelbergPOMDP/replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
+        "checkpoint": "replication/atari/checkpoints/clean/space_invaders_e0b_ppo_seed1_firefix_retrain_selected.zip",
         "critic_transferred": false,
         "modules": [
           "features_extractor",
@@ -362,7 +362,7 @@
         ]
       },
       "economic_input_mode": "full",
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
       "role": "buyer",
       "sampler_contract_inferred_for_legacy_checkpoint": false,
       "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79",
@@ -395,23 +395,23 @@
       "training_timesteps": 2400960
     },
     "preflight": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_preflight_v1.json",
+      "path": "replication/atari/results/e1_selections/e1_buyer_temporal_contingency_preflight_v1.json",
       "sha256": "0a34e2447ea07665170d6b2fff6ee1e95c384203e996074c80af26a044b4c3c7"
     },
     "rom": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/stackelberg_pomdp/atari/roms/space_invaders.bin",
+      "path": "stackelberg_pomdp/atari/roms/space_invaders.bin",
       "sha256": "7224b17462b992d67f4e06a3c85f269c9822b06df6015bf038b55f384ced0301"
     },
     "source_checkpoint": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
+      "path": "replication/atari/checkpoints/clean/meta_buyer_e1_ppo_balanced_temporal_mix_v1_seed1_contingency_step2400960.zip",
       "sha256": "5d19fbb579f04da191ab006c5b9e9dcef574fb840e10544338dcab1b019d9e79"
     },
     "source_report": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_balanced_temporal_mix_v1_all6_selector_v2.json",
+      "path": "replication/atari/results/e1_selections/e1_buyer_balanced_temporal_mix_v1_all6_selector_v2.json",
       "sha256": "74c363ff3bee2a70d37153813d09bb899eb7015718eb7f291811d6bdf5c18de4"
     },
     "timing_diagnostic": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_all6_timing_diagnostic_v1.json",
+      "path": "replication/atari/results/e1_selections/e1_buyer_temporal_contingency_all6_timing_diagnostic_v1.json",
       "sha256": "dec463cc7f3a13c038cc83869e22d8f4971db3a7ecb8ef74833079498c7a907b"
     },
     "timing_limitation": {
@@ -431,7 +431,7 @@
       "timing_behavior_passed": false
     },
     "training_family": {
-      "path": "/Users/gbrero/active-research/StackelbergPOMDP/code/StackelbergPOMDP/replication/atari/results/e1_selections/e1_buyer_temporal_contingency_family_v1.json",
+      "path": "replication/atari/results/e1_selections/e1_buyer_temporal_contingency_family_v1.json",
       "sha256": "79dc19e3590f9ae6b568b20f124e4b23b931053caa973e51276cf24eb9220700"
     }
   }

@@ -71,6 +71,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 E2_PROVENANCE_SCHEMA = "stackelberg_pomdp.atari.e2_provenance"
 E2_PROVENANCE_VERSION = 1
 E2_PROVENANCE_ATTRIBUTE = "e2_provenance_manifest"
+E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE = (
+    "e2_frozen_gameplay_actor_sha256"
+)
 E2_PROTOCOL_IMPLEMENTATION = "clean_atari_stackpomdp_e2_v1"
 E2_ACTOR_TRANSFER_MODULES = ("features_extractor", "game_action_net")
 E2_ECONOMIC_INIT_MEAN = 0.5
@@ -131,6 +134,8 @@ def _run_variant_suffix(args):
     parts = []
     if _actor_loss_mode(args) != STANDARD_ACTOR_LOSS_MODE:
         parts.append(_actor_loss_mode(args))
+    if bool(getattr(args, "freeze_gameplay_actor", False)):
+        parts.append("frozen_gameplay")
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
     return "" if not parts else "_" + "_".join(parts)
@@ -151,6 +156,7 @@ def _scientific_config_with_legacy_defaults(config):
         "economic_head_beta_concentration", E2_ECONOMIC_INIT_CONCENTRATION
     )
     leader_policy = result.setdefault("leader_policy", {})
+    leader_policy.setdefault("gameplay_actor_frozen", False)
     leader_policy.setdefault("actor_loss_mode", actor_loss_mode)
     leader_policy.setdefault(
         "economic_head_initialization",
@@ -277,6 +283,10 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             "actor_loss_mode": actor_loss_mode,
             "economic_head_initialization": economic_initialization,
         }
+        if policy.economic_input_mode == "event_only":
+            policy_metadata["gameplay_actor_frozen"] = bool(getattr(
+                policy, "gameplay_actor_frozen", False
+            ))
         economic_architecture = None
         if bool(
                 getattr(policy, "economic_threshold_residual", False)
@@ -517,6 +527,7 @@ def e2_scientific_config(args):
             "economic_hidden": 64,
             "critic_hidden": 256,
             "pretrained_lr_scale": float(args.pretrained_lr_scale),
+            "gameplay_actor_frozen": bool(args.freeze_gameplay_actor),
             "game_action_count": 6,
             "actor_loss_mode": _actor_loss_mode(args),
             "economic_head_initialization": {
@@ -669,6 +680,54 @@ def attach_e2_provenance(model, manifest):
     return manifest
 
 
+def gameplay_actor_sha256(policy):
+    """Return stable hashes for the three transferred gameplay modules."""
+
+    from replication.atari.train_atari_meta_response_sb3 import (
+        gameplay_actor_sha256 as hash_gameplay_actor,
+    )
+
+    return hash_gameplay_actor(policy)
+
+
+def validate_e2_gameplay_actor_freeze(model, *, initialize=False):
+    """Certify that an opt-in frozen E2 gameplay actor never changes."""
+
+    policy = model.policy
+    frozen = bool(getattr(policy, "gameplay_actor_frozen", False))
+    recorded = getattr(
+        model, E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE, None
+    )
+    if not frozen:
+        if recorded is not None:
+            raise ValueError(
+                "trainable-gameplay E2 checkpoint stores a frozen-actor hash"
+            )
+        return None
+    actual = gameplay_actor_sha256(policy)
+    if recorded is None:
+        if not initialize:
+            raise ValueError(
+                "frozen-gameplay E2 checkpoint lacks its actor hash"
+            )
+        setattr(
+            model,
+            E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE,
+            dict(actual),
+        )
+    elif recorded != actual:
+        raise RuntimeError("frozen E2 gameplay actor changed")
+    for module in policy.gameplay_actor_modules():
+        if any(parameter.requires_grad for parameter in module.parameters()):
+            raise RuntimeError("frozen E2 gameplay actor became trainable")
+    if not all(
+            parameter.requires_grad
+            for parameter in policy.economic_head.parameters()
+    ):
+        raise RuntimeError("frozen-gameplay E2 economic head is not trainable")
+    return actual
+
+
 def provenance_sidecar_path(checkpoint):
     path = checkpoint_path(checkpoint)
     return path.with_name(f"{path.stem}.provenance.json")
@@ -800,6 +859,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
             "economic_hidden": 64,
             "critic_hidden": 256,
             "pretrained_lr_scale": args.pretrained_lr_scale,
+            "gameplay_actor_frozen": args.freeze_gameplay_actor,
         },
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
@@ -887,6 +947,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
     )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
+    validate_e2_gameplay_actor_freeze(model, initialize=True)
     print({"actor_transfer": provenance, "fresh_economic_head": True}, flush=True)
     return model
 
@@ -926,6 +987,13 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
         raise ValueError("--resume role does not match --leader-role")
     if model.policy.economic_input_mode != "event_only":
         raise ValueError("--resume is not an event-only E2 leader")
+    if bool(model.policy.gameplay_actor_frozen) != bool(
+            args.freeze_gameplay_actor
+    ):
+        raise ValueError(
+            "--freeze-gameplay-actor must match the saved E2 checkpoint "
+            f"({model.policy.gameplay_actor_frozen})"
+        )
     saved_target_kl = getattr(model, "target_kl", None)
     if (
             (saved_target_kl is None) != (args.target_kl is None)
@@ -985,6 +1053,7 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
     )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
+    validate_e2_gameplay_actor_freeze(model, initialize=False)
     return model
 
 
@@ -1064,6 +1133,14 @@ def parse_args(argv=None):
     parser.add_argument("--n-epochs", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
+    parser.add_argument(
+        "--freeze-gameplay-actor",
+        action="store_true",
+        help=(
+            "Freeze the transferred visual encoder, state encoder, and Atari "
+            "head; train only the economic actor and stage-private critic."
+        ),
+    )
     parser.add_argument(
         "--actor-loss-mode",
         choices=ACTOR_LOSS_MODES,
@@ -1196,17 +1273,25 @@ def main(argv=None):
             "response_algorithm": "frozen_meta_policy",
             "leader_economic_input": "event_only",
             "response_economic_input": "full",
+            "gameplay_actor_frozen": bool(args.freeze_gameplay_actor),
+            "trainable_actor_modules": (
+                ["economic_head"]
+                if args.freeze_gameplay_actor
+                else ["features_extractor", "game_action_net", "economic_head"]
+            ),
         }, allow_val_change=True)
     try:
         model = build_model(
             args, vec_env, provenance_manifest=manifest
         )
+        validate_e2_gameplay_actor_freeze(model, initialize=False)
         if not args.eval_only:
             model.learn(
                 total_timesteps=args.timesteps,
                 callback=make_training_callback(args, wandb_run=run),
                 reset_num_timesteps=not bool(args.resume),
             )
+            validate_e2_gameplay_actor_freeze(model, initialize=False)
             model.save(args.checkpoint)
         evaluation = evaluate_leader(model, args)
         evaluation["e2_provenance_manifest"] = manifest

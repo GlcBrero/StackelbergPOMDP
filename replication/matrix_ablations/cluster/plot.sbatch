@@ -5,8 +5,8 @@
 #SBATCH --mem=8G
 #SBATCH --time=00:30:00
 #SBATCH --no-requeue
-#SBATCH --output=/home/gianluca_brero_uri_edu/StackelbergPOMDP-matrix-qualitative-20260728/replication/matrix_ablations/slurm_logs/%x_%j.out
-#SBATCH --error=/home/gianluca_brero_uri_edu/StackelbergPOMDP-matrix-qualitative-20260728/replication/matrix_ablations/slurm_logs/%x_%j.err
+#SBATCH --output=replication/matrix_ablations/slurm_logs/%x_%j.out
+#SBATCH --error=replication/matrix_ablations/slurm_logs/%x_%j.err
 
 source /etc/profile
 module load conda/latest
@@ -20,10 +20,10 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/matplotlib-${SLURM_JOB_ID}"
 
-PROJECT_DIR="$HOME/StackelbergPOMDP-matrix-qualitative-20260728"
+PROJECT_DIR="${SLURM_SUBMIT_DIR:?submit this job from the repository root}"
 SWEEP_ROOT="replication/matrix_ablations/results/qualitative-v1"
 cd "$PROJECT_DIR"
-mkdir -p "$MPLCONFIGDIR"
+mkdir -p "$MPLCONFIGDIR" replication/matrix_ablations/slurm_logs
 
 python replication/matrix_ablations/trend.py --sweep-id qualitative-v1
 python replication/matrix_ablations/plot.py \

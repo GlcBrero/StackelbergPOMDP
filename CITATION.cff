@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying paper."
+title: "Stackelberg POMDP"
+type: software
+version: 1.0.0
+date-released: 2026-08-19
+license: MIT
+repository-code: "https://github.com/GlcBrero/StackelbergPOMDP"
+url: "https://github.com/GlcBrero/StackelbergPOMDP/releases/tag/jair-2026-v1.0.0"
+authors:
+  - family-names: Gerstgrasser
+    given-names: Matthias
+  - family-names: Brero
+    given-names: Gianluca
+  - family-names: Eden
+    given-names: Alon
+  - family-names: Chakrabarti
+    given-names: Darshan
+  - family-names: Lepore
+    given-names: Nicolas
+  - family-names: Li
+    given-names: Vincent
+  - family-names: Mibuari
+    given-names: Eric
+  - family-names: Greenwald
+    given-names: Amy
+  - family-names: Parkes
+    given-names: David C.
+preferred-citation:
+  type: article
+  title: "Stackelberg POMDP: Learning to Lead via Reinforcement Learning"
+  year: 2026
+  authors:
+    - family-names: Gerstgrasser
+      given-names: Matthias
+    - family-names: Brero
+      given-names: Gianluca
+    - family-names: Eden
+      given-names: Alon
+    - family-names: Chakrabarti
+      given-names: Darshan
+    - family-names: Lepore
+      given-names: Nicolas
+    - family-names: Li
+      given-names: Vincent
+    - family-names: Mibuari
+      given-names: Eric
+    - family-names: Greenwald
+      given-names: Amy
+    - family-names: Parkes
+      given-names: David C.

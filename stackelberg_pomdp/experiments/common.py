@@ -42,6 +42,16 @@ def add_common_training_args(parser, default_algorithm="PPO", default_max_steps=
     )
     parser.add_argument("--learning_method", type=str, default="RL:Standard")
     parser.add_argument("--ent_coef", type=float, default=0.01)
+    parser.add_argument(
+        "--ppo_rollout_geometry",
+        choices=("complete_episodes", "historical_ratio_scaled"),
+        default="complete_episodes",
+        help=(
+            "PPO rollout sizing rule. 'complete_episodes' is the maintained "
+            "default. 'historical_ratio_scaled' reproduces the legacy "
+            "Simple Allocation/Matrix Design paper cohorts."
+        ),
+    )
     parser.add_argument("--ppo_episodes_per_batch", type=int, default=16)
     parser.add_argument("--ppo_batch_size", type=int, default=None)
     parser.add_argument("--ppo_n_epochs", type=int, default=4)

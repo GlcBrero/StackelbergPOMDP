@@ -6,8 +6,8 @@
 #SBATCH --mem=4G
 #SBATCH --time=01:00:00
 #SBATCH --no-requeue
-#SBATCH --output=/home/gianluca_brero_uri_edu/StackelbergPOMDP-matrix-qualitative-20260728/replication/matrix_ablations/slurm_logs/%x_%A_%a.out
-#SBATCH --error=/home/gianluca_brero_uri_edu/StackelbergPOMDP-matrix-qualitative-20260728/replication/matrix_ablations/slurm_logs/%x_%A_%a.err
+#SBATCH --output=replication/matrix_ablations/slurm_logs/%x_%A_%a.out
+#SBATCH --error=replication/matrix_ablations/slurm_logs/%x_%A_%a.err
 
 source /etc/profile
 module load conda/latest
@@ -21,8 +21,9 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export WANDB_SILENT=true
 
-PROJECT_DIR="$HOME/StackelbergPOMDP-matrix-qualitative-20260728"
+PROJECT_DIR="${SLURM_SUBMIT_DIR:?submit this array from the repository root}"
 cd "$PROJECT_DIR"
+mkdir -p replication/matrix_ablations/slurm_logs
 
 python replication/matrix_ablations/sweep.py run \
   --sweep-id qualitative-v1 \

@@ -16,7 +16,21 @@ from replication.bertrand.price_collusion import DEFAULT_PRICE_COLLUSION
 POST_DEVIATION_PERIODS = 20
 
 
-def run_deviation(state):
+def build_parser():
+    """Build the CLI parser used by both the manifest runner and this script."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--input_dir', type=str, required=True,
+        help='Directory with saved Q-tables from calibrate_price_learners.py',
+    )
+    parser.add_argument(
+        '--post_deviation_periods', type=int, default=POST_DEVIATION_PERIODS,
+        help='Number of periods after the pre-deviation observation.',
+    )
+    return parser
+
+
+def run_deviation(state, post_deviation_periods=POST_DEVIATION_PERIODS):
     """Run deviation experiment from a saved converged state."""
     from stable_baselines3.common import logger
     from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
@@ -91,7 +105,7 @@ def run_deviation(state):
     traj_non.append(prices[actions_for_step[non_deviator]])
 
     # tau=2+: both play greedy from Q-tables
-    for t in range(POST_DEVIATION_PERIODS - 1):
+    for t in range(post_deviation_periods - 1):
         # Current state = last actions played
         obs_key = tuple(wrapper.current_actions[a] for a in agents)
 
@@ -118,10 +132,7 @@ def run_deviation(state):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir', type=str, required=True,
-                        help='Directory with saved Q-tables from calibrate_price_learners.py')
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     # Load all converged sessions
     files = sorted(glob.glob(os.path.join(args.input_dir, 'seed_*.pkl')))
@@ -156,7 +167,9 @@ if __name__ == '__main__':
             continue
         if cp[0] <= p_N + 0.01:  # skip competitive
             continue
-        res = run_deviation(s)
+        res = run_deviation(
+            s, post_deviation_periods=args.post_deviation_periods
+        )
         print(f"  seed={res['seed']}: collusive={res['converged_price']:.4f}, "
               f"deviation={res['deviation_price']:.4f}")
         results.append(res)
@@ -166,7 +179,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # Average trajectory
-    T = POST_DEVIATION_PERIODS + 1
+    T = args.post_deviation_periods + 1
     avg_dev = np.mean([r['traj_dev'][:T] for r in results], axis=0)
     avg_non = np.mean([r['traj_non'][:T] for r in results], axis=0)
 
