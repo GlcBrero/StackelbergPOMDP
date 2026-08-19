@@ -24,6 +24,15 @@ def add_common_training_args(parser, default_algorithm="PPO", default_max_steps=
     parser.add_argument("--followers_algorithm", type=str, default="MW", choices=("MW", "Qlearning", "RoundRobin"))
     parser.add_argument("--mw_epsilon", type=float, default=MWFollowersWrapper.DEFAULT_EPS)
     parser.add_argument("--mw_reset_weights_each_episode", type=str_to_bool, default=True)
+    parser.add_argument(
+        "--mw_fixed_seed",
+        type=int,
+        default=None,
+        help=(
+            "If set, restart MW's private-type sampling from this seed at "
+            "every StackPOMDP episode. Joint messages are enumerated exactly."
+        ),
+    )
     parser.add_argument("--align_mw_response_phase", type=str_to_bool, default=True)
     parser.add_argument(
         "--pomdp_mode",
@@ -54,6 +63,23 @@ def add_common_training_args(parser, default_algorithm="PPO", default_max_steps=
     parser.add_argument("--response_bcce_threshold", type=float, default=None)
     parser.add_argument("--response_bcce_min_records", type=int, default=1)
     parser.add_argument("--response_bcce_check_freq", type=int, default=1)
+    parser.add_argument(
+        "--response_bcce_max_extra_updates",
+        type=int,
+        default=10000,
+        help=(
+            "Fail loudly if certified MW needs more than this many complete "
+            "updates beyond the fixed response prefix."
+        ),
+    )
+    parser.add_argument(
+        "--response_bcce_failure_reward",
+        type=float,
+        default=None,
+        help=(
+            "Deprecated. Certified MW no longer uses an artificial failure reward."
+        ),
+    )
     parser.add_argument("--use_wandb", action="store_true", default=False)
 
 
@@ -71,6 +97,7 @@ def finalized_config(args, experiment_type):
     config = vars(args)
     config["experiment_type"] = experiment_type
     config["training_seed"] = config["seed"]
+    config["mw_action_update"] = "exact_expectation"
     return config
 
 

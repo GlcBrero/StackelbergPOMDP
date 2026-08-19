@@ -6,7 +6,6 @@ import os
 import gym
 try:
     import wandb
-    from wandb.integration.sb3 import WandbCallback
     HAS_WANDB = True
 except ImportError as wandb_import_error:
     HAS_WANDB = False
@@ -17,12 +16,12 @@ from stable_baselines3.common.monitor import Monitor
 
 # Local application/library specific imports
 try:
-    from .callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
+    from .callbacks import EVALUATION_WANDB_METRICS, FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from .env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
     from .gym_envs.envs.wrappers import MWFollowersWrapper
     from .rl_trainer_setup import get_custom_training_algorithm
 except ImportError:
-    from callbacks import FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
+    from callbacks import EVALUATION_WANDB_METRICS, FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
     from gym_envs.envs.wrappers import MWFollowersWrapper
     from rl_trainer_setup import get_custom_training_algorithm
@@ -40,7 +39,8 @@ def _mw_update_period_from_config(config_dict):
     if experiment_family == "simple_allocation":
         return int(config_dict["experiment_type"].split(":")[1])
     if experiment_family == "mspm":
-        return 2 * int(config_dict["experiment_type"].split(":")[3])
+        num_messages = int(config_dict["experiment_type"].split(":")[3])
+        return num_messages ** 2
     if experiment_family == "matrix_design":
         return 4
     return None
@@ -78,6 +78,7 @@ def _experiment_name(config_dict):
             f"steps{config_dict['max_steps']}",
             f"seed{config_dict['seed']}",
             f"lr{_format_value(config_dict.get('learning_rate', 7e-4))}",
+            f"ent{_format_value(config_dict.get('ent_coef', 0.01))}",
         ]
         return ".".join(_format_value(part).replace("/", "-") for part in parts)
 
@@ -90,6 +91,7 @@ def _experiment_name(config_dict):
         config_dict["algorithm"],
         f"seed{config_dict['seed']}",
         f"lr{_format_value(config_dict.get('learning_rate', 7e-4))}",
+        f"ent{_format_value(config_dict.get('ent_coef', 0.01))}",
         f"ppobatch{config_dict.get('ppo_batch_size') or 'episode'}",
         f"ppoepochs{config_dict.get('ppo_n_epochs', 4)}",
         f"pporollout{config_dict.get('ppo_episodes_per_batch', 16)}ep",
@@ -98,13 +100,19 @@ def _experiment_name(config_dict):
         f"critic{config_dict['critic_obs']}",
         config_dict["followers_algorithm"],
         f"mweps{_format_value(config_dict.get('mw_epsilon', MWFollowersWrapper.DEFAULT_EPS))}",
-        "mwreset" if config_dict.get('mw_reset_weights_each_episode', True) else "mwpersist",
-        config_dict.get("pomdp_mode", "stackelberg"),
     ]
+    if config_dict.get("mw_fixed_seed") is not None:
+        parts.append(f"mwseed{config_dict['mw_fixed_seed']}")
+    parts.extend([
+        "mwexactact",
+        "mwreset" if config_dict.get('mw_reset_weights_each_episode', True) else "mwpersist",
+    ])
+    parts.append(config_dict.get("pomdp_mode", "stackelberg"))
     if config_dict.get("response_bcce_threshold") is not None:
         parts.extend([
-            f"bcce{_format_value(config_dict['response_bcce_threshold'])}",
+            f"certbcce{_format_value(config_dict['response_bcce_threshold'])}",
             f"minrec{config_dict.get('response_bcce_min_records', 1)}",
+            f"maxextra{config_dict.get('response_bcce_max_extra_updates', 10000)}",
         ])
         if config_dict.get("response_bcce_check_freq", 1) != 1:
             parts.append(f"bccefreq{config_dict['response_bcce_check_freq']}")
@@ -161,11 +169,11 @@ def train_run(config_dict):
         ) from WANDB_IMPORT_ERROR
 
     if config_dict['use_wandb']:
-        wandb.tensorboard.patch(root_logdir=log_folder, pytorch=True)
         wandb.init(project="StackPOMDP", name=exp_name)
         wandb.config.setdefaults(config_dict)
         wandb.define_metric("global_step")
-        wandb.define_metric("reward", step_metric="global_step")
+        for metric_name in EVALUATION_WANDB_METRICS:
+            wandb.define_metric(metric_name, step_metric="global_step")
 
     # We now create the environments used for training and evaluation depending on which experiment we want to run
     experiment_type_to_env_function = {

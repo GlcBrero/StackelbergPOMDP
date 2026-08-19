@@ -4,13 +4,13 @@ from gym.spaces import Box, Dict, Discrete, MultiDiscrete
 import numpy as np
 
 from stackelberg_pomdp.follower_responses import (
+    CertifiedMWResponse,
     MultiplicativeWeightsResponse,
     QLearningResponse,
     RoundRobinResponse,
 )
 from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
 from stackelberg_pomdp.utils import (
-    check_empirical_bcce_gap,
     get_all_wrappers,
 )
 
@@ -49,9 +49,23 @@ class FollowerWrapper(gym.Wrapper):
     def response_strategy(self):
         return []
 
+    def response_phase_info(self):
+        """Return follower-specific diagnostics at the response boundary."""
+        return OrderedDict()
+
+    def request_response_completion(self):
+        """Ask the response process to finalize its reward-phase strategy."""
+        return True
+
+    def response_ready(self):
+        return True
+
+    def max_reward_phase_length(self, default_length):
+        return self.env.unwrapped.max_reward_phase_length(default_length)
+
 
 class MWFollowersWrapper(FollowerWrapper):
-    """Gym glue for multiplicative-weights follower responses."""
+    """Thin Gym adapter for a certified multiplicative-weights response."""
 
     follower_state_kind = "mw"
     DEFAULT_EPS = MultiplicativeWeightsResponse.DEFAULT_EPS
@@ -61,27 +75,47 @@ class MWFollowersWrapper(FollowerWrapper):
             env,
             epsilon=DEFAULT_EPS,
             reset_weights_each_episode=True,
+            fixed_seed=None,
+            response_bcce_threshold=None,
+            response_bcce_min_records=1,
+            response_bcce_check_freq=1,
+            response_bcce_max_extra_updates=10000,
     ):
 
         super().__init__(env)
 
-        self.epsilon = epsilon
-        self.reset_weights_each_episode = reset_weights_each_episode
-
+        self.fixed_seed = fixed_seed
         self.step_counter = 0
         self._rng = self.env.unwrapped._rng
-        self.response = MultiplicativeWeightsResponse(
+        self.response = CertifiedMWResponse(
             followers_list=self.followers_list,
             followers_observation_space=self.followers_observation_space,
             followers_action_space=self.followers_action_space,
             rng=self._rng,
-            epsilon=self.epsilon,
-            reset_weights_each_episode=self.reset_weights_each_episode,
+            epsilon=epsilon,
+            reset_weights_each_episode=reset_weights_each_episode,
+            certification_threshold=response_bcce_threshold,
+            certification_min_records=response_bcce_min_records,
+            certification_check_freq=response_bcce_check_freq,
+            certification_max_extra_updates=response_bcce_max_extra_updates,
+            fixed_seed=fixed_seed,
         )
 
     @property
     def weights(self):
         return self.response.weights
+
+    @property
+    def response_bcce_threshold(self):
+        return self.response.certification_threshold
+
+    @property
+    def last_response_bcce_gap(self):
+        return self.response.last_response_bcce_gap
+
+    @property
+    def last_response_bcce_certified(self):
+        return self.response.certified
 
     def _to_leader_obs(self):
         return self.env.leader_observation()
@@ -96,10 +130,42 @@ class MWFollowersWrapper(FollowerWrapper):
 
     def on_step_mode_changed(self, mode):
         if mode == "reward" and hasattr(self, "followers_obs"):
-            self.env.unwrapped.start_reward_phase()
+            base_env = self.env.unwrapped
+            base_env.start_reward_phase()
+            profiles = getattr(base_env, "reward_phase_profiles", None)
+            if profiles:
+                base_env.set_reward_phase_profiles(
+                    self.response.reward_scenarios(profiles)
+                )
             self._prepare_next_sub_env()
+        elif mode == "response":
+            self.env.unwrapped.end_reward_phase()
+
+    def set_response_leader_policy(self, leader_policy):
+        self.response.set_evaluation_context(self.env, leader_policy)
+
+    def request_response_completion(self):
+        return self.response.request_completion()
+
+    def response_ready(self):
+        return self.response.response_ready()
+
+    def response_phase_info(self):
+        return OrderedDict(self.response.phase_info())
+
+    def max_reward_phase_length(self, default_length):
+        base_length = self.env.unwrapped.max_reward_phase_length(default_length)
+        if self.response.certification_threshold is None:
+            return base_length
+        return base_length * self.response.max_action_profiles()
 
     def reset(self):
+
+        if self.fixed_seed is not None:
+            # Joint message profiles are enumerated exactly. Fix the remaining
+            # response randomness: the private type profiles sampled by the game.
+            self._rng.seed(self.fixed_seed)
+            self.env.unwrapped.game.set_seed(self.fixed_seed)
 
         self.response.reset_episode()
 
@@ -131,7 +197,6 @@ class MWFollowersWrapper(FollowerWrapper):
             self._finish_subepisode(reward, info)
 
         info["reward_generated"] = done
-        reward = info.get('surplus', reward)
         return OrderedDict({"base_environment": self._to_leader_obs()}), reward, False, info
 
     def _actions_for_base_env(self, leader_action, follower_actions):
@@ -167,8 +232,17 @@ class MWFollowersWrapper(FollowerWrapper):
     def _next_follower_actions(self, followers_observations):
 
         if self.this_step_mode == "reward":
-            # Reward phase uses the deterministic projection of final MW weights.
-            self.current_actions = self.response.reward_actions(followers_observations)
+            profile = self.env.unwrapped.current_reward_phase_profile()
+            if profile is not None and "follower_actions" in profile:
+                self.current_actions = dict(profile["follower_actions"])
+            else:
+                distribution = self.response.selected_response.action_distribution(
+                    followers_observations
+                )
+                self.current_actions = self._rng.choices(
+                    [actions for actions, _ in distribution],
+                    [probability for _, probability in distribution],
+                )[0]
             return self.current_actions
 
         return self.response.response_actions(followers_observations)
@@ -575,9 +649,6 @@ class StackPOMDPWrapper(gym.Wrapper):
             tot_num_reward_episodes=10,
             critic_obs="full",
             response_variant="stackelberg",
-            response_bcce_threshold=None,
-            response_bcce_min_records=1,
-            response_bcce_check_freq=1,
     ):
 
         super(StackPOMDPWrapper, self).__init__(env)
@@ -587,12 +658,7 @@ class StackPOMDPWrapper(gym.Wrapper):
         self.tot_num_reward_episodes = tot_num_reward_episodes
         self.critic_obs = critic_obs
         self.response_variant = response_variant
-        self.response_bcce_threshold = response_bcce_threshold
-        self.response_bcce_min_records = int(response_bcce_min_records)
-        self.response_bcce_check_freq = max(1, int(response_bcce_check_freq))
-        self.response_bcce_gap = None
         self.last_response_strategy = None
-        self.last_response_bcce_gap = None
         self.last_response_stop_reason = None
         self.last_response_updates = None
         self.last_response_weights = None
@@ -600,7 +666,6 @@ class StackPOMDPWrapper(gym.Wrapper):
 
         self.tot_num_steps = 0
         self.follower_wrapper = self._find_follower_wrapper()
-        self.response_leader_policy = None
 
         self.observation_space = Dict(self._observation_spaces())
 
@@ -639,11 +704,14 @@ class StackPOMDPWrapper(gym.Wrapper):
         max_subepisode_transitions = (
             self.follower_wrapper.max_subepisode_transitions()
         )
+        max_reward_games = self.follower_wrapper.max_reward_phase_length(
+            self.tot_num_reward_episodes
+        )
         if self.response_variant == "hidden_queries":
-            return int(self.reward_phase_length()) * max_subepisode_transitions
+            return int(max_reward_games) * max_subepisode_transitions
         generated_games = (
             int(self.tot_num_response_episodes)
-            + int(self.reward_phase_length())
+            + int(max_reward_games)
         )
         return generated_games * max_subepisode_transitions
 
@@ -659,8 +727,8 @@ class StackPOMDPWrapper(gym.Wrapper):
     def _in_reward_phase(self):
         return self.reward_phase_started and self.phase_episode_counter < self._episode_done_threshold()
 
-    def _hide_response_transition_from_buffer(self):
-        return self.response_variant == "hidden_queries"
+    def _hide_response_transition_from_buffer(self, response_extension=False):
+        return self.response_variant == "hidden_queries" or response_extension
 
     def _response_reward(self, response_reward):
         if self.response_variant == "reward_during_response":
@@ -676,27 +744,13 @@ class StackPOMDPWrapper(gym.Wrapper):
         return full_observation
 
     def _response_phase_done(self):
-        return self.phase_episode_counter >= self._response_phase_threshold()
-
-    def set_response_leader_policy(self, leader_policy):
-        self.response_leader_policy = leader_policy
+        if self.phase_episode_counter < self._response_phase_threshold():
+            return False
+        self.follower_wrapper.request_response_completion()
+        return self.follower_wrapper.response_ready()
 
     def _response_strategy_for_diagnostic(self):
         return self.follower_wrapper.response_strategy()
-
-    def _compute_response_bcce_gap(self):
-        if self.response_bcce_threshold is None:
-            return None
-        if self.response_leader_policy is None:
-            return None
-
-        response_strategy = self._response_strategy_for_diagnostic()
-        if len(response_strategy) < self.response_bcce_min_records:
-            return None
-
-        gap = check_empirical_bcce_gap(self, self.response_leader_policy, response_strategy)
-        self.response_bcce_gap = gap
-        return gap
 
     def _reward_phase_done(self):
         return self.phase_episode_counter >= self._episode_done_threshold()
@@ -707,6 +761,9 @@ class StackPOMDPWrapper(gym.Wrapper):
 
     def _step_response_phase(self, action):
         self._enter_response_mode()
+        response_extension = (
+            self.phase_episode_counter >= self._response_phase_threshold()
+        )
         obs, response_reward, done, info = self.env.step(action)
 
         self._count_generated_reward(info)
@@ -724,17 +781,16 @@ class StackPOMDPWrapper(gym.Wrapper):
                 if weights is not None
                 else None
             )
-            self.last_response_bcce_gap = self._compute_response_bcce_gap()
-            self.last_response_stop_reason = "fixed_response_phase"
-            if self.last_response_bcce_gap is not None:
-                info["response_bcce_gap"] = self.last_response_bcce_gap
-                info["response_bcce_records"] = len(self.last_response_strategy)
+            self.last_response_stop_reason = "response_ready"
             self._enter_reward_mode()
+            info.update(self.follower_wrapper.response_phase_info())
             obs = self._current_leader_observation()
             info["response_updates"] = self.last_response_updates
 
         reward = self._response_reward(response_reward)
-        info["exclude_from_buffer"] = self._hide_response_transition_from_buffer()
+        info["exclude_from_buffer"] = self._hide_response_transition_from_buffer(
+            response_extension=response_extension
+        )
         info["is_reward_phase"] = False
         info["response_phase_done"] = response_phase_done
         info["response_phase_stop_reason"] = self.last_response_stop_reason if response_phase_done else None
@@ -809,6 +865,40 @@ class StackPOMDPWrapper(gym.Wrapper):
 
 
 # Top-level wrappers operate above StackPOMDPWrapper.
+class ExpectedResponseRewardWrapper(gym.Wrapper):
+    """Integrate reward exactly over a selected randomized response.
+
+    The base environment already weights each exact type profile.  This
+    wrapper applies the conditional joint-action probability supplied by the
+    follower response, above the phase manager where reward transformations
+    belong.
+    """
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+
+        if (
+                info.get("is_reward_phase", False)
+                and info.get("reward_generated", False)
+                and "response_action_weight" in info
+        ):
+            action_weight = float(info["response_action_weight"])
+            type_weight = float(info.get("exact_profile_weight", 1.0))
+            pre_response_weight_reward = reward
+            reward = reward * action_weight
+
+            info["pre_response_weight_reward"] = pre_response_weight_reward
+            info["type_profile_weight"] = type_weight
+            info["exact_profile_weight"] = type_weight * action_weight
+            if "weighted_efficiency" in info:
+                info["weighted_efficiency"] *= action_weight
+            info["unconstrained_reward"] = reward
+            info["reward"] = reward
+            info["surplus"] = reward
+
+        return obs, reward, done, info
+
+
 """Detects cycles in reward-phase states and normalizes reward.
 
 During the reward phase, tracks base_environment observations. When a state

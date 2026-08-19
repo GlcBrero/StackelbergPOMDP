@@ -16,10 +16,13 @@ except ImportError:
     wandb = None
 
 from stackelberg_pomdp.baselines_utils import CustomPolicy
-from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
+from stackelberg_pomdp.follower_responses import CertifiedMWResponse
+from stackelberg_pomdp.gym_envs.envs.wrappers import (
+    MWFollowersWrapper,
+    StackPOMDPWrapper,
+)
 from stackelberg_pomdp.leader_policies import BaselinePolicyWrapper
 from stackelberg_pomdp.utils import (
-    check_empirical_bcce_gap,
     compute_empirical_welfare,
 )
 try:
@@ -28,11 +31,31 @@ except ImportError:
     from utils import get_all_wrappers
 
 
+EVALUATION_WANDB_METRICS = (
+    "reward",
+    "best_reward",
+    "bcce_gap",
+    "bcce_certified",
+    "response_candidate",
+    "response_candidate_last_mixed",
+    "response_candidate_last_deterministic",
+    "response_candidate_empirical_average",
+    "response_prefix_updates",
+    "response_extra_updates",
+    "response_total_updates",
+    "response_snapshot_count",
+)
+
+
 def _wandb_log(metrics, step):
     if wandb is not None and wandb.run is not None:
-        metrics = dict(metrics)
-        metrics["global_step"] = step
-        wandb.log(metrics)
+        payload = {
+            name: metrics[name]
+            for name in EVALUATION_WANDB_METRICS
+            if name in metrics and metrics[name] is not None
+        }
+        payload["global_step"] = step
+        wandb.log(payload)
 
 
 class FixPolicyActionsCallback(BaseCallback):
@@ -104,7 +127,11 @@ class TrainingProgressCallback(BaseCallback):
 
 
 class TrainingRewardCallback(BaseCallback):
-    """Print the reward-phase return actually observed during training."""
+    """Print the reward-phase return observed during training.
+
+    These values are local diagnostics only. Paper-facing W&B ``reward``
+    values come exclusively from the deterministic evaluation callbacks.
+    """
 
     def __init__(self, print_freq=1, zero_welfare_tol=None):
         super().__init__()
@@ -122,10 +149,12 @@ class TrainingRewardCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         self.stack_env = None
+        self.mw_env = None
         for env in get_all_wrappers(self.training_env):
             if type(env) == StackPOMDPWrapper:
                 self.stack_env = env
-                break
+            elif type(env) == MWFollowersWrapper:
+                self.mw_env = env
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -168,19 +197,16 @@ class TrainingRewardCallback(BaseCallback):
                 self.logger.record("clean_reward_phase_sum", self.reward_phase_sum)
                 self.logger.record("clean_reward_phase_avg", reward_phase_avg)
                 self.logger.record("reward_generated_steps", self.reward_generated_steps)
-                wandb_metrics = {}
                 if allocative_efficiency is not None:
                     self.logger.record("clean_allocative_efficiency", allocative_efficiency)
                     # Common paper-facing metric shared with the direct SPM baseline.
                     self.logger.record("paper_allocative_efficiency", allocative_efficiency)
-                self.logger.record("paper_expected_reward", reward_phase_avg)
-                self.logger.record("reward", reward_phase_avg)
-                wandb_metrics["reward"] = reward_phase_avg
-                bcce_gap = getattr(self.stack_env, "last_response_bcce_gap", None)
+                response = getattr(self.mw_env, "response", None)
+                bcce_gap = getattr(response, "last_response_bcce_gap", None)
                 bcce_certified = False
                 if bcce_gap is not None:
                     self.last_bcce_gap = bcce_gap
-                    if bcce_gap <= getattr(self.stack_env, "response_bcce_threshold", float("inf")):
+                    if response.certified:
                         bcce_certified = True
                         if (
                                 self.best_bcce_clean_reward_phase_sum is None
@@ -208,7 +234,6 @@ class TrainingRewardCallback(BaseCallback):
                         "best_bcce_allocative_efficiency",
                         self.best_bcce_allocative_efficiency,
                     )
-                _wandb_log(wandb_metrics, step=self.num_timesteps)
                 efficiency_text = (
                     f"allocative_efficiency={allocative_efficiency:.6g} "
                     if allocative_efficiency is not None
@@ -242,7 +267,10 @@ class TrainingRewardCallback(BaseCallback):
         if self.stack_env is None:
             return
 
-        policy = getattr(self.stack_env, "response_leader_policy", None)
+        response = getattr(self.mw_env, "response", None)
+        if response is None:
+            return
+        policy = getattr(response, "_leader_policy", None)
         if policy is None:
             policy = BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
         response_strategy = getattr(self.stack_env, "last_response_strategy", None)
@@ -253,7 +281,7 @@ class TrainingRewardCallback(BaseCallback):
         if not response_strategy:
             return
 
-        bcce_gap = check_empirical_bcce_gap(self.stack_env, policy, response_strategy)
+        bcce_gap = response.compute_bcce_gap(response_strategy, policy)
         leader_reward = compute_empirical_welfare(self.stack_env, policy, response_strategy)
 
         print(
@@ -266,13 +294,6 @@ class TrainingRewardCallback(BaseCallback):
         )
         self.logger.record("zero_welfare_bcce_gap", bcce_gap)
         self.logger.record("zero_welfare_leader_reward", leader_reward)
-        _wandb_log(
-            {
-                "zero_welfare_bcce_gap": bcce_gap,
-                "zero_welfare_leader_reward": leader_reward,
-            },
-            step=self.num_timesteps,
-        )
 
 
 class RewardEpisodeTraceCallback(BaseCallback):
@@ -393,6 +414,8 @@ class ExactSPMEvaluationCallback(BaseCallback):
         self.deterministic = deterministic
         self.action_samples = max(1, int(action_samples))
         self._last_eval_timestep = 0
+        self.best_reward = None
+        self.best_allocative_efficiency = None
 
     def _init_callback(self) -> None:
         self._log_evaluation(step=0)
@@ -407,6 +430,19 @@ class ExactSPMEvaluationCallback(BaseCallback):
 
     def _log_evaluation(self, step):
         metrics = self._evaluate()
+        self.best_reward = (
+            metrics["spm_exact_reward"]
+            if self.best_reward is None
+            else max(self.best_reward, metrics["spm_exact_reward"])
+        )
+        self.best_allocative_efficiency = (
+            metrics["spm_exact_allocative_efficiency"]
+            if self.best_allocative_efficiency is None
+            else max(
+                self.best_allocative_efficiency,
+                metrics["spm_exact_allocative_efficiency"],
+            )
+        )
         self.logger.record("spm_exact_reward", metrics["spm_exact_reward"])
         self.logger.record("spm_exact_allocated", metrics["spm_exact_allocated"])
         self.logger.record("spm_exact_efficient", metrics["spm_exact_efficient"])
@@ -415,6 +451,13 @@ class ExactSPMEvaluationCallback(BaseCallback):
         self.logger.record("paper_allocative_efficiency", metrics["spm_exact_allocative_efficiency"])
         metrics["exact_expected_reward"] = metrics["spm_exact_reward"]
         metrics["paper_allocative_efficiency"] = metrics["spm_exact_allocative_efficiency"]
+        _wandb_log(
+            {
+                "reward": metrics["spm_exact_reward"],
+                "best_reward": self.best_reward,
+            },
+            step=step,
+        )
         print(
             f"[spm_exact] steps={step} "
             f"reward={metrics['spm_exact_reward']:.6g} "
@@ -488,10 +531,12 @@ class ResponsePhaseDiagnosticsCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         self.stack_env = None
+        self.mw_env = None
         for env in get_all_wrappers(self.training_env):
             if type(env) == StackPOMDPWrapper:
                 self.stack_env = env
-                break
+            elif type(env) == MWFollowersWrapper:
+                self.mw_env = env
         if self.stack_env is None:
             raise ValueError("ResponsePhaseDiagnosticsCallback requires a StackPOMDPWrapper.")
 
@@ -506,37 +551,29 @@ class ResponsePhaseDiagnosticsCallback(BaseCallback):
         self.response_phase_count += 1
         if self.response_phase_count % self.print_freq != 0:
             return True
-        if not hasattr(self.stack_env, "response_strategy"):
+        if self.mw_env is None:
             return True
 
-        policy = getattr(self.stack_env, "response_leader_policy", None)
+        response_strategy = self.mw_env.response_strategy()
+        bcce_gap = self.mw_env.response.last_response_bcce_gap
+        policy = self.mw_env.response._leader_policy
         if policy is None:
             policy = BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
-        response_strategy = self.stack_env.response_strategy()
-        bcce_gap = check_empirical_bcce_gap(self.stack_env, policy, response_strategy)
-        bcce_leader_reward = compute_empirical_welfare(self.stack_env, policy, response_strategy)
+        bcce_leader_reward = compute_empirical_welfare(self.mw_env, policy, response_strategy)
 
-        self.stack_env.last_response_bcce_gap = bcce_gap
         print(
             f"[response] steps={self.num_timesteps} "
             f"episode={self.response_phase_count} "
-            f"bcce_gap={bcce_gap:.6g} "
+            f"bcce_gap={bcce_gap if bcce_gap is not None else 'not_checked'} "
             f"bcce_leader_reward={bcce_leader_reward:.6g} "
             f"snapshots={len(response_strategy)} "
             f"stop_reason={response_info.get('response_phase_stop_reason')}",
             flush=True,
         )
-        self.logger.record("bcce_gap", bcce_gap)
+        if bcce_gap is not None:
+            self.logger.record("bcce_gap", bcce_gap)
         self.logger.record("bcce_leader_reward", bcce_leader_reward)
         self.logger.record("response_snapshots", len(response_strategy))
-        _wandb_log(
-            {
-                "bcce_gap": bcce_gap,
-                "bcce_leader_reward": bcce_leader_reward,
-                "response_snapshots": len(response_strategy),
-            },
-            step=self.num_timesteps,
-        )
         return True
 
 
@@ -551,14 +588,18 @@ class ResponsePhasePolicyCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         self.stack_env = None
+        self.mw_env = None
         for env in get_all_wrappers(self.training_env):
             if type(env) == StackPOMDPWrapper:
                 self.stack_env = env
-                break
+            elif type(env) == MWFollowersWrapper:
+                self.mw_env = env
         if self.stack_env is None:
             raise ValueError("ResponsePhasePolicyCallback requires a StackPOMDPWrapper.")
+        if self.mw_env is None:
+            raise ValueError("ResponsePhasePolicyCallback requires MW followers.")
 
-        self.stack_env.set_response_leader_policy(
+        self.mw_env.set_response_leader_policy(
             BaselinePolicyWrapper(self.model.policy, self.stack_env, deterministic=False)
         )
 
@@ -593,6 +634,10 @@ class BackgroundEvalCallback(BaseCallback):
         self.n_eval_episodes = n_eval_episodes
         self.reward_steps = max(1, int(reward_steps))
         self._eval_thread = None
+        self.best_reward = None
+        self.best_allocative_efficiency = None
+        self._stack_env = None
+        self._mw_env = None
 
     def _init_callback(self) -> None:
         policy = self.model.policy
@@ -610,6 +655,18 @@ class BackgroundEvalCallback(BaseCallback):
         for env in get_all_wrappers(self.eval_env):
             if type(env) == StackPOMDPWrapper:
                 env.model = self._eval_policy
+                self._stack_env = env
+            elif type(env) == MWFollowersWrapper:
+                self._mw_env = env
+
+        if self._mw_env is not None and self._stack_env is not None:
+            self._mw_env.set_response_leader_policy(
+                BaselinePolicyWrapper(
+                    self._eval_policy,
+                    self._stack_env,
+                    deterministic=True,
+                )
+            )
 
     def _on_step(self) -> bool:
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
@@ -623,41 +680,175 @@ class BackgroundEvalCallback(BaseCallback):
                 if type(env) == StackPOMDPWrapper:
                     env.tot_num_steps = self.n_calls
 
-            self._eval_thread = threading.Thread(target=self._run_eval, daemon=True)
+            eval_step = self.num_timesteps
+            self._eval_thread = threading.Thread(
+                target=self._run_eval,
+                args=(eval_step,),
+                daemon=True,
+            )
             self._eval_thread.start()
         return True
 
-    def _run_eval(self):
+    def _run_eval(self, step):
         try:
             reward_phase_totals = []
+            raw_reward_phase_totals = []
+            allocative_efficiencies = []
+            bcce_gaps = []
+            bcce_certifications = []
+            response_candidates = []
+            response_prefix_updates = []
+            response_extra_updates = []
+            response_total_updates = []
+            response_snapshot_counts = []
             episode_lengths = []
             for _ in range(self.n_eval_episodes):
                 obs = self.eval_env.reset()
                 done = False
                 reward_phase_total = 0.0
+                raw_reward_phase_total = 0.0
+                efficiency_sum = 0.0
+                efficiency_weight_sum = 0.0
                 exact_reward_phase = False
                 episode_length = 0
                 while not done:
                     action, _ = self._eval_policy.predict(obs, deterministic=True)
                     obs, reward, done, info = self.eval_env.step(action)
                     if info.get("is_reward_phase", False):
-                        reward_phase_total += reward
+                        reward_phase_total += float(np.asarray(reward).item())
+                        raw_reward_phase_total += float(
+                            np.asarray(info.get("unconstrained_reward", reward)).item()
+                        )
                         if "exact_profile_weight" in info:
                             exact_reward_phase = True
+                        if "weighted_efficiency" in info:
+                            efficiency_sum += float(info["weighted_efficiency"])
+                            efficiency_weight_sum += float(
+                                info.get("exact_profile_weight", 1.0)
+                            )
+                        elif info.get("reward_generated", False) and "efficiency" in info:
+                            efficiency_sum += float(info["efficiency"])
+                            efficiency_weight_sum += 1.0
                     episode_length += 1
                 reward_phase_totals.append(
                     reward_phase_total
                     if exact_reward_phase
                     else reward_phase_total / self.reward_steps
                 )
+                raw_reward_phase_totals.append(
+                    raw_reward_phase_total
+                    if exact_reward_phase
+                    else raw_reward_phase_total / self.reward_steps
+                )
+                allocative_efficiencies.append(
+                    efficiency_sum / efficiency_weight_sum
+                    if efficiency_weight_sum
+                    else None
+                )
+                mw_env = self._mw_env
+                if mw_env is None:
+                    for wrapper in get_all_wrappers(self.eval_env):
+                        if type(wrapper) == MWFollowersWrapper:
+                            mw_env = wrapper
+                            break
+                response = getattr(mw_env, "response", None)
+                gap = getattr(response, "last_response_bcce_gap", None)
+                certified = response is None or response.certified
+                bcce_gaps.append(gap)
+                bcce_certifications.append(certified)
+                selected_response = getattr(response, "selected_response", None)
+                if selected_response is not None:
+                    response_candidates.append(selected_response.name)
+                    response_prefix_updates.append(
+                        response.certification_start_iteration
+                    )
+                    response_extra_updates.append(response.extra_updates)
+                    response_total_updates.append(response.completed_iterations)
+                    response_snapshot_counts.append(
+                        len(selected_response.strategy_snapshots)
+                    )
                 episode_lengths.append(episode_length)
 
             mean_reward_phase_avg = (
                 sum(reward_phase_totals) / len(reward_phase_totals)
             )
+            mean_raw_reward = (
+                sum(raw_reward_phase_totals) / len(raw_reward_phase_totals)
+            )
+            valid_efficiencies = [
+                value for value in allocative_efficiencies if value is not None
+            ]
+            mean_allocative_efficiency = (
+                sum(valid_efficiencies) / len(valid_efficiencies)
+                if valid_efficiencies
+                else None
+            )
+            all_certified = all(bcce_certifications)
+            if all_certified:
+                self.best_reward = (
+                    mean_raw_reward
+                    if self.best_reward is None
+                    else max(self.best_reward, mean_raw_reward)
+                )
+                if mean_allocative_efficiency is not None:
+                    self.best_allocative_efficiency = (
+                        mean_allocative_efficiency
+                        if self.best_allocative_efficiency is None
+                        else max(
+                            self.best_allocative_efficiency,
+                            mean_allocative_efficiency,
+                        )
+                    )
+            metrics = {
+                "reward": mean_reward_phase_avg,
+                "raw_reward": mean_raw_reward,
+                "bcce_certified": float(all_certified),
+                "best_reward": (
+                    self.best_reward
+                    if self.best_reward is not None
+                    else mean_reward_phase_avg
+                ),
+            }
+            if mean_allocative_efficiency is not None:
+                metrics["allocative_efficiency"] = mean_allocative_efficiency
+            if self.best_allocative_efficiency is not None:
+                metrics["best_allocative_efficiency"] = self.best_allocative_efficiency
+            finite_bcce_gaps = [gap for gap in bcce_gaps if gap is not None]
+            if finite_bcce_gaps:
+                metrics["bcce_gap"] = max(finite_bcce_gaps)
+            if response_candidates:
+                unique_candidates = sorted(set(response_candidates))
+                metrics["response_candidate"] = "|".join(unique_candidates)
+                for candidate in CertifiedMWResponse.CANDIDATE_PRIORITY:
+                    metrics[f"response_candidate_{candidate}"] = (
+                        response_candidates.count(candidate)
+                        / len(response_candidates)
+                    )
+                metrics["response_prefix_updates"] = float(
+                    np.mean(response_prefix_updates)
+                )
+                metrics["response_extra_updates"] = float(
+                    np.mean(response_extra_updates)
+                )
+                metrics["response_total_updates"] = float(
+                    np.mean(response_total_updates)
+                )
+                metrics["response_snapshot_count"] = float(
+                    np.mean(response_snapshot_counts)
+                )
+            _wandb_log(metrics, step=step)
             print(
-                f"[eval] steps={self.num_timesteps} "
+                f"[eval] steps={step} "
                 f"reward_phase_avg={mean_reward_phase_avg:.4g} "
+                f"raw_reward={mean_raw_reward:.4g} "
+                f"bcce_gap={metrics.get('bcce_gap')} "
+                f"bcce_certified={all_certified} "
+                f"best_reward={metrics['best_reward']:.4g} "
+                f"response_candidate={metrics.get('response_candidate')} "
+                f"response_prefix_updates={metrics.get('response_prefix_updates')} "
+                f"response_extra_updates={metrics.get('response_extra_updates')} "
+                f"response_total_updates={metrics.get('response_total_updates')} "
+                f"response_snapshots={metrics.get('response_snapshot_count')} "
                 f"episodes={len(reward_phase_totals)} "
                 f"length={sum(episode_lengths) / len(episode_lengths):.1f}",
                 flush=True,

@@ -13,6 +13,7 @@ from stackelberg_pomdp.gym_envs.envs.base_envs import (
     BertrandCompetitionEnv,
 )
 from stackelberg_pomdp.gym_envs.envs.wrappers import (
+    ExpectedResponseRewardWrapper,
     LoggingWrapper,
     MWFollowersWrapper,
     OpennessEvaluationWrapper,
@@ -25,7 +26,10 @@ from stackelberg_pomdp.gym_envs.envs.wrappers import (
 
 
 def _mw_update_period(env):
-    return sum(env.followers_action_space[follower].n for follower in env.followers_list)
+    period = 1
+    for follower in env.followers_list:
+        period *= env.followers_action_space[follower].n
+    return period
 
 
 def _requested_response_episodes(config_dict, default=50000):
@@ -203,10 +207,25 @@ def wrap_env(
         env = RoundRobinFollowersWrapper(env)
     elif followers_alg == "MW":
         tot_num_response_episodes = _align_mw_response_episodes(env, config_dict)
+        fixed_seed = config_dict.get('mw_fixed_seed')
+        if (
+                config_dict.get('response_bcce_threshold') is not None
+                and fixed_seed is None
+        ):
+            fixed_seed = 0
+            config_dict['mw_fixed_seed'] = fixed_seed
         env = MWFollowersWrapper(
             env,
             epsilon=config_dict.get('mw_epsilon', MWFollowersWrapper.DEFAULT_EPS),
             reset_weights_each_episode=config_dict.get('mw_reset_weights_each_episode', True),
+            fixed_seed=fixed_seed,
+            response_bcce_threshold=config_dict.get('response_bcce_threshold'),
+            response_bcce_min_records=config_dict.get('response_bcce_min_records', 1),
+            response_bcce_check_freq=config_dict.get('response_bcce_check_freq', 1),
+            response_bcce_max_extra_updates=config_dict.get(
+                'response_bcce_max_extra_updates',
+                10000,
+            ),
         )
     else:
         _set_effective_response_episodes(config_dict, tot_num_response_episodes)
@@ -229,12 +248,19 @@ def wrap_env(
             tot_num_reward_episodes=config_dict.get('tot_num_reward_episodes', 30),
             critic_obs=config_dict.get('critic_obs', 'full'),
             response_variant=pomdp_mode,
-            response_bcce_threshold=config_dict.get('response_bcce_threshold'),
-            response_bcce_min_records=config_dict.get('response_bcce_min_records', 1),
-            response_bcce_check_freq=config_dict.get('response_bcce_check_freq', 1),
         )
     else:
         raise ValueError(f"Unsupported pomdp_mode: {pomdp_mode}")
+
+    if config_dict.get('response_bcce_threshold') is not None and followers_alg != "MW":
+        raise ValueError("Certified response stopping is supported only for MW followers.")
+    if config_dict.get('response_bcce_failure_reward') is not None:
+        raise ValueError(
+            "response_bcce_failure_reward is obsolete: certified MW now extends "
+            "the response phase until it finds a valid response."
+        )
+    if followers_alg == "MW":
+        env = ExpectedResponseRewardWrapper(env)
 
     if use_cycle_reward:
         env = StationaryCycleRewardWrapper(env)

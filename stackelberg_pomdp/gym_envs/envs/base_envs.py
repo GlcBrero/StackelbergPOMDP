@@ -37,8 +37,12 @@ class BaseEnv(gym.Env):
             self.num_followers = len(self.followers_list)
 
     def run_episode(self, policy, types, bids):
+        missing = object()
         previous_freeze_types = self.freeze_types
-        previous_types = getattr(self, "types", None)
+        previous_types = getattr(self, "types", missing)
+        previous_mechanism_episode = getattr(self, "mechanism_episode", missing)
+        previous_max_social_welfare = getattr(self, "max_social_welfare", missing)
+        previous_allocative_efficiency = getattr(self, "allocative_efficiency", missing)
 
         try:
             # Counterfactual diagnostics must evaluate the requested type
@@ -57,11 +61,17 @@ class BaseEnv(gym.Env):
                 observation = self.reactive_leader_observation(bids)
         finally:
             self.freeze_types = previous_freeze_types
-            if previous_types is None:
-                if hasattr(self, "types"):
-                    del self.types
-            else:
-                self.types = previous_types
+            for attribute, value in (
+                    ("types", previous_types),
+                    ("mechanism_episode", previous_mechanism_episode),
+                    ("max_social_welfare", previous_max_social_welfare),
+                    ("allocative_efficiency", previous_allocative_efficiency),
+            ):
+                if value is missing:
+                    if hasattr(self, attribute):
+                        delattr(self, attribute)
+                else:
+                    setattr(self, attribute, value)
         return info
 
     def leader_state_observation_space(self):
@@ -127,6 +137,9 @@ class BaseEnv(gym.Env):
         """
         return default_length
 
+    def max_reward_phase_length(self, default_length):
+        return self.reward_phase_length(default_length)
+
     def max_subepisode_transitions(self):
         """Maximum leader transitions in one generated response/reward game."""
         return 1
@@ -135,9 +148,16 @@ class BaseEnv(gym.Env):
         """Initialize any environment-specific exact reward-phase schedule."""
         return
 
+    def end_reward_phase(self):
+        """Clear any environment-specific reward schedule."""
+        return
+
     def advance_reward_phase_profile(self):
         """Advance an exact reward-phase schedule, if one is active."""
         return False
+
+    def current_reward_phase_profile(self):
+        return None
 
     def log_info(self, info):
         return
@@ -464,12 +484,26 @@ class BaseMessageSPM(BaseSPM):
         return profiles
 
     def start_reward_phase(self):
-        self.reward_phase_profiles = self._build_reward_phase_profiles()
+        self.set_reward_phase_profiles(self._build_reward_phase_profiles())
+
+    def set_reward_phase_profiles(self, profiles):
+        self.reward_phase_profiles = list(profiles)
         self.reward_phase_profile_idx = 0
         if self.reward_phase_profiles:
             self.types = dict(self.reward_phase_profiles[0]["types"])
 
+    def end_reward_phase(self):
+        self.reward_phase_profiles = []
+        self.reward_phase_profile_idx = 0
+
     def reward_phase_length(self, default_length):
+        return (
+            len(self.reward_phase_profiles)
+            or len(self._build_reward_phase_profiles())
+            or default_length
+        )
+
+    def max_reward_phase_length(self, default_length):
         return len(self._build_reward_phase_profiles()) or default_length
 
     def advance_reward_phase_profile(self):
@@ -522,6 +556,13 @@ class BaseMessageSPM(BaseSPM):
                 result["reward"] = result["reward"] * weight
                 result["info"]["reward"] = result["reward"]
                 result["info"]["surplus"] = result["reward"]
+                if "response_action_weight" in profile:
+                    result["info"]["response_action_weight"] = profile[
+                        "response_action_weight"
+                    ]
+                    result["info"]["response_candidate"] = profile.get(
+                        "response_candidate"
+                    )
             result["info"]["type_profile"] = dict(self.types)
             result["info"]["mechanism_outcome"] = copy.deepcopy(
                 self.mechanism_episode.outcome

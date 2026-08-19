@@ -273,6 +273,12 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
 
         callback.on_rollout_start()
 
+        # Hidden response queries execute before the first stored transition.
+        # Preserve the outer reset boundary until a transition reaches the
+        # rollout buffer, otherwise GAE can connect consecutive outer episodes.
+        pending_buffer_episode_starts = np.array(
+            self._last_episode_starts, copy=True
+        )
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -326,7 +332,22 @@ class CustomOnPolicyAlgorithm(OnPolicyAlgorithm):
             # Store only the unexcluded transitions
             if not exclude_from_buffer:
                 n_steps += 1
-                rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
+                rollout_buffer.add(
+                    self._last_obs,
+                    actions,
+                    rewards,
+                    pending_buffer_episode_starts,
+                    values,
+                    log_probs,
+                )
+                pending_buffer_episode_starts = np.array(dones, copy=True)
+            else:
+                # An excluded terminal transition still begins a new outer
+                # episode, while a nonterminal excluded prefix preserves the
+                # pending boundary from the most recent reset.
+                pending_buffer_episode_starts = np.logical_or(
+                    pending_buffer_episode_starts, dones
+                )
             self._last_obs = new_obs
             self._last_episode_starts = dones
 

@@ -26,6 +26,8 @@ def build_parser():
         ppo_episodes_per_batch=1,
         ppo_batch_size=64,
         ppo_n_epochs=10,
+        mw_fixed_seed=0,
+        response_bcce_threshold=0.05,
     )
     return parser
 
