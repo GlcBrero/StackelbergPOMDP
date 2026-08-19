@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from stackelberg_pomdp.matrix_ablations.envs import (
+from stackelberg_pomdp.envs.matrix import (
     LegacyMatrixQLeaderEnv,
     MatrixFixedCommitmentResponseEnv,
     MatrixMetaLeaderEnv,

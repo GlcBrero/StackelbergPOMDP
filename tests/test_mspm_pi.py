@@ -8,7 +8,7 @@ import numpy as np
 from stable_baselines3.common.monitor import Monitor
 
 from stackelberg_pomdp.env_setups import get_mspm_env, get_spm_env
-from stackelberg_pomdp.baselines_utils import CustomPolicy
+from stackelberg_pomdp.policies.generic import CustomPolicy
 from stackelberg_pomdp.callbacks import (
     BackgroundEvalCallback,
     ExactSPMEvaluationCallback,
@@ -22,13 +22,13 @@ from stackelberg_pomdp.follower_responses import (
     MultiplicativeWeightsResponse,
 )
 from stackelberg_pomdp.games import PISetting
-from stackelberg_pomdp.gym_envs.envs.base_envs import BaseMessageSPM
-from stackelberg_pomdp.gym_envs.envs.wrappers import (
+from stackelberg_pomdp.envs.base import BaseMessageSPM
+from stackelberg_pomdp.wrappers.core import (
     ExpectedResponseRewardWrapper,
     MWFollowersWrapper,
     StackPOMDPWrapper,
 )
-from stackelberg_pomdp.leader_policies import BaselinePolicyWrapper
+from stackelberg_pomdp.policies.leader import BaselinePolicyWrapper
 from stackelberg_pomdp.rl_trainer_setup import (
     get_custom_training_algorithm,
     get_observation_split,

@@ -24,7 +24,7 @@ EVAL_STEPS = 250000
 def eval_model(model_path, config):
     """Load a trained model and run Q-learners under its intervention."""
     from stable_baselines3.common import logger
-    from stackelberg_pomdp.baselines_utils import CustomA2C
+    from stackelberg_pomdp.algorithms.on_policy import CustomA2C
     from stackelberg_pomdp.env_setups import get_bertrand_env
 
     log = logger.configure(format_strings=[])
@@ -110,7 +110,7 @@ if __name__ == '__main__':
             print(f"    {k}: {v} times")
 
     # Compute Delta
-    from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
 
     env = BertrandCompetitionEnv(m=4)
     prices = env.action_price_space

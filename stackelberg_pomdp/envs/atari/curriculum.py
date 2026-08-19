@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import gym
 import numpy as np
 
-from stackelberg_pomdp.atari.envs.gameplay import AtariGameplaySide
+from stackelberg_pomdp.envs.atari.gameplay import AtariGameplaySide
 from stackelberg_pomdp.atari.protocol import (
     AUTOMATIC_TRANSFER,
     CRITIC_STATE_DIM,

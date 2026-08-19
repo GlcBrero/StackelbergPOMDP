@@ -40,20 +40,20 @@ adapters.  The Atari leader then composes with the same game-agnostic
 `StackPOMDPWrapper` used by the normal-form and market experiments:
 
 ```text
-stackelberg_pomdp/atari/envs/                 ALE, gameplay, curriculum, trade
-stackelberg_pomdp/atari/policies/             actor--critic and frozen loading
-stackelberg_pomdp/atari/wrappers/             preprocessing/response adapters
+stackelberg_pomdp/envs/atari/                 ALE, gameplay, curriculum, trade
+stackelberg_pomdp/policies/atari/             actor--critic and frozen loading
+stackelberg_pomdp/wrappers/atari/             preprocessing/response adapters
 stackelberg_pomdp/atari/protocol.py           stable spaces and field layout
 stackelberg_pomdp/atari/sampling.py           trade schedules and commitments
 stackelberg_pomdp/atari/training.py           Atari PPO and training utilities
-stackelberg_pomdp/gym_envs/envs/wrappers.py   shared StackPOMDP phase wrapper
+stackelberg_pomdp/wrappers/core.py            shared StackPOMDP phase wrapper
 replication/atari/train_*.py                  experiment entrypoints
 replication/atari/evaluate_*.py               deterministic selectors/audits
 ```
 
 `stackelberg_pomdp/atari/stackpomdp_policy.py` is intentionally only a thin
 compatibility import: released SB3 checkpoints serialize that historical
-module path.  Maintained code imports `atari.policies.composite` directly.
+module path.  Maintained code imports `policies.atari.composite` directly.
 
 ## Runtime inputs
 

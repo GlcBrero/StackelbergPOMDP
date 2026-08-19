@@ -51,8 +51,8 @@ from replication.atari.train_atari_stackpomdp_leader_sb3 import (
     validate_e2_gameplay_actor_freeze,
     validate_e2_provenance_manifest,
 )
-from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
-from stackelberg_pomdp.atari.wrappers.meta_follower import (
+from stackelberg_pomdp.envs.atari.space_invaders import default_rom_path
+from stackelberg_pomdp.wrappers.atari.meta_follower import (
     make_stackpomdp_atari_leader_env,
 )
 from stackelberg_pomdp.atari.protocol import (
@@ -70,12 +70,12 @@ from stackelberg_pomdp.atari.protocol import (
     canonical_leader_state,
 )
 from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
-from stackelberg_pomdp.atari.envs.bilateral import (
+from stackelberg_pomdp.envs.atari.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.policies.composite import (
+from stackelberg_pomdp.policies.atari.composite import (
     ATARI_POLICY_PROVENANCE_ID,
     StackPOMDPAtariPolicy,
     canonical_atari_policy_provenance_id,

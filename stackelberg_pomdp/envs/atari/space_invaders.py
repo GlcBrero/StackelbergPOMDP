@@ -2,7 +2,7 @@
 
 This module intentionally contains no pricing, ammunition, preprocessing,
 RLlib, or policy code.  Those concerns are composed around the environment in
-``stackelberg_pomdp.atari.wrappers.preprocessing``.
+``stackelberg_pomdp.wrappers.atari.preprocessing``.
 """
 
 from pathlib import Path
@@ -46,11 +46,7 @@ def default_rom_path():
             f"STACKPOMDP_SPACE_INVADERS_ROM does not exist: {path}"
         )
 
-    vendored = (
-        Path(__file__).resolve().parent.parent
-        / "roms"
-        / "space_invaders.bin"
-    )
+    vendored = Path(__file__).resolve().parent / "roms" / "space_invaders.bin"
     if vendored.is_file():
         return vendored
 

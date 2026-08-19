@@ -1,3 +1,5 @@
+"""Game-agnostic follower, StackPOMDP, reward, and logging wrappers."""
+
 from collections import OrderedDict
 import gym
 from gym.spaces import Box, Dict, Discrete, MultiDiscrete
@@ -9,7 +11,7 @@ from stackelberg_pomdp.follower_responses import (
     QLearningResponse,
     RoundRobinResponse,
 )
-from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
+from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
 from stackelberg_pomdp.utils import (
     get_all_wrappers,
 )

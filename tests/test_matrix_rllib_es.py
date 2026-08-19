@@ -9,7 +9,7 @@ from stackelberg_pomdp.experiments.matrix_ablations import (
     leader_config,
     validate_leader_args,
 )
-from stackelberg_pomdp.matrix_ablations.envs import get_matrix_game
+from stackelberg_pomdp.envs.matrix import get_matrix_game
 from stackelberg_pomdp.matrix_ablations.rllib_es import (
     EXPECTED_RAY_VERSION,
     RLLIB_ES_IMPLEMENTATION,

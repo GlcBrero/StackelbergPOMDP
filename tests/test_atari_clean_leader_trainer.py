@@ -23,7 +23,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
 
 
@@ -70,7 +70,7 @@ def _checkpoint_metadata(
 ):
     policy = {
         "policy_class": (
-            "stackelberg_pomdp.atari.policies.composite."
+            "stackelberg_pomdp.policies.atari.composite."
             "StackPOMDPAtariPolicy"
         ),
         "economic_role": role,

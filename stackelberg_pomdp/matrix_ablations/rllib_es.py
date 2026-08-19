@@ -21,7 +21,7 @@ import gym
 import numpy as np
 import torch
 
-from .envs import (
+from stackelberg_pomdp.envs.matrix import (
     decode_meta_follower_observation,
     encode_meta_follower_observation,
     get_matrix_game,

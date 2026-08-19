@@ -1,6 +1,6 @@
 import argparse
 
-from stackelberg_pomdp.gym_envs.envs.wrappers import MWFollowersWrapper
+from stackelberg_pomdp.wrappers.core import MWFollowersWrapper
 
 
 def str_to_bool(value):

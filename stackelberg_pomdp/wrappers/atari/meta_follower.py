@@ -2,12 +2,12 @@
 
 The Atari stack deliberately separates three concerns:
 
-* :class:`~stackelberg_pomdp.atari.envs.bilateral.BilateralAtariRewardEnv`
+* :class:`~stackelberg_pomdp.envs.atari.bilateral.BilateralAtariRewardEnv`
   owns Atari and bilateral-trade dynamics;
 * :class:`FrozenMetaPolicyResponse` retains the exact leader query trace and
   conditions a frozen follower policy on its declared economic statistic;
 * :class:`AtariMetaFollowerWrapper` adapts that response to the generic
-  :class:`~stackelberg_pomdp.gym_envs.envs.wrappers.FollowerWrapper` contract.
+  :class:`~stackelberg_pomdp.wrappers.core.FollowerWrapper` contract.
 
 The existing game-agnostic ``StackPOMDPWrapper`` then owns response/reward
 phase management.  All five leader queries remain in the PPO rollout.
@@ -34,7 +34,7 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
-from stackelberg_pomdp.atari.envs.bilateral import (
+from stackelberg_pomdp.envs.atari.bilateral import (
     BUYER,
     ROLES,
     SELLER,
@@ -42,8 +42,8 @@ from stackelberg_pomdp.atari.envs.bilateral import (
     BilateralAtariRewardEnv,
     DualAtariTradeCore,
 )
-from stackelberg_pomdp.atari.policies.loading import load_frozen_atari_model
-from stackelberg_pomdp.gym_envs.envs.wrappers import (
+from stackelberg_pomdp.policies.atari.loading import load_frozen_atari_model
+from stackelberg_pomdp.wrappers.core import (
     FollowerWrapper,
     StackPOMDPWrapper,
 )

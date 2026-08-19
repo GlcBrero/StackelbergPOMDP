@@ -29,11 +29,11 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQuery, QueryTraceError
-from stackelberg_pomdp.atari.policies.composite import (
+from stackelberg_pomdp.policies.atari.composite import (
     GatedCompositeAtariDistribution,
     StackPOMDPAtariPolicy,
 )
-from stackelberg_pomdp.atari.wrappers.preprocessing import (
+from stackelberg_pomdp.wrappers.atari.preprocessing import (
     AmmoLedger,
     MaxAndSkipWrapper,
     ScarceAmmoWrapper,

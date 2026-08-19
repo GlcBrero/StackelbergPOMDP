@@ -29,7 +29,7 @@ from stackelberg_pomdp.atari.protocol import (
     actor_state,
     observation,
 )
-from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
 
 
 PROBE_NAME = "clean_atari_e1_seller_conditioning_probe_v1"

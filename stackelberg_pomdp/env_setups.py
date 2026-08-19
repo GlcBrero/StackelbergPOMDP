@@ -4,7 +4,7 @@ from stackelberg_pomdp.games import (
     get_mspm_setting,
     get_normal_form_game,
 )
-from stackelberg_pomdp.gym_envs.envs.base_envs import (
+from stackelberg_pomdp.envs.base import (
     BaseEnvMatrixDesignGame,
     BaseEnvSimpleMatrixGame,
     BaseMessageSPM,
@@ -12,7 +12,7 @@ from stackelberg_pomdp.gym_envs.envs.base_envs import (
     BaseSimpleAllocation,
     BertrandCompetitionEnv,
 )
-from stackelberg_pomdp.gym_envs.envs.wrappers import (
+from stackelberg_pomdp.wrappers.core import (
     ExpectedResponseRewardWrapper,
     LoggingWrapper,
     MWFollowersWrapper,

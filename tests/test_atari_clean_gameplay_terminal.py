@@ -1,8 +1,8 @@
 import gym
 import numpy as np
 
-from stackelberg_pomdp.atari.envs.gameplay import AtariGameplaySide
-from stackelberg_pomdp.atari.wrappers.preprocessing import MaxAndSkipWrapper
+from stackelberg_pomdp.envs.atari.gameplay import AtariGameplaySide
+from stackelberg_pomdp.wrappers.atari.preprocessing import MaxAndSkipWrapper
 
 
 class _LifecycleALE:

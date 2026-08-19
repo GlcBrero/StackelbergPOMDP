@@ -18,12 +18,12 @@ from stable_baselines3.common.monitor import Monitor
 try:
     from .callbacks import EVALUATION_WANDB_METRICS, FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from .env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
-    from .gym_envs.envs.wrappers import MWFollowersWrapper
+    from .wrappers.core import MWFollowersWrapper
     from .rl_trainer_setup import get_custom_training_algorithm
 except ImportError:
     from callbacks import EVALUATION_WANDB_METRICS, FixPolicyActionsCallback, CustomCheckpointCallback, BackgroundEvalCallback, ExactSPMEvaluationCallback, TrainingProgressCallback, ResponsePhaseDiagnosticsCallback, TrainingRewardCallback, ResponsePhasePolicyCallback, RewardEpisodeTraceCallback
     from env_setups import get_standard_matrix_env, get_simple_allocation_env, get_mspm_env, get_spm_env, get_matrix_design_env, get_bertrand_env
-    from gym_envs.envs.wrappers import MWFollowersWrapper
+    from wrappers.core import MWFollowersWrapper
     from rl_trainer_setup import get_custom_training_algorithm
 from stable_baselines3.common import logger
 

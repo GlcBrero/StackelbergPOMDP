@@ -125,7 +125,7 @@ def test_meta_follower_parser_resolves_paper_reinforce_protocol():
         meta_config,
         validate_meta_args,
     )
-    from stackelberg_pomdp.matrix_ablations.envs import get_matrix_game
+    from stackelberg_pomdp.envs.matrix import get_matrix_game
 
     args = build_parser().parse_args([
         "meta-follower", "--algorithm", "REINFORCE",

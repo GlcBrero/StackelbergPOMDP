@@ -1,4 +1,4 @@
-from stackelberg_pomdp.policy_cache import FixedActionPolicyMixin
+from stackelberg_pomdp.policies.cache import FixedActionPolicyMixin
 
 
 class _ScalarPolicy(FixedActionPolicyMixin):
@@ -41,3 +41,12 @@ def test_vector_policy_clears_only_completed_rows():
     policy.clear_obs_action_map(rows=[1])
 
     assert policy.obs_action_map == {(0, b"a"): "first"}
+
+
+def test_historical_generic_policy_import_remains_compatible():
+    from stackelberg_pomdp.baselines_utils import (
+        CustomPolicy as HistoricalCustomPolicy,
+    )
+    from stackelberg_pomdp.policies.generic import CustomPolicy
+
+    assert HistoricalCustomPolicy is CustomPolicy

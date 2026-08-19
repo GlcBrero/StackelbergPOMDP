@@ -10,12 +10,12 @@ from typing import Callable, Optional
 import gym
 import numpy as np
 
-from stackelberg_pomdp.atari.envs.bilateral import (
+from stackelberg_pomdp.envs.atari.bilateral import (
     SELLER,
     BilateralAtariRewardEnv,
     DualAtariTradeCore,
 )
-from stackelberg_pomdp.atari.policies.loading import (
+from stackelberg_pomdp.policies.atari.loading import (
     FrozenAtariPolicyController,
 )
 from stackelberg_pomdp.atari.protocol import (

@@ -41,12 +41,12 @@ from stackelberg_pomdp.atari.training import (
     ppo_class_for_actor_loss_mode,
     write_csv,
 )
-from stackelberg_pomdp.atari.envs.bilateral import (
+from stackelberg_pomdp.envs.atari.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.wrappers.fixed_commitment import (
+from stackelberg_pomdp.wrappers.atari.fixed_commitment import (
     make_atari_meta_response_env,
 )
 from stackelberg_pomdp.atari.sampling import (
@@ -61,7 +61,7 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     OPPONENT_COMMITMENT_SLICE,
 )
-from stackelberg_pomdp.atari.policies.composite import (
+from stackelberg_pomdp.policies.atari.composite import (
     BETA_PARAMETER_EPSILON,
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,

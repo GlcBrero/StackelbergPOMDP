@@ -3,6 +3,8 @@ import copy
 from itertools import product
 import random
 
+"""Base POMG interface and non-Atari domain environments."""
+
 import gym
 from gym.spaces import Box, Dict, Discrete, MultiDiscrete
 import numpy as np

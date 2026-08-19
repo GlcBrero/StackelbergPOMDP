@@ -21,7 +21,7 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.preprocessing import preprocess_obs
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
 
-from stackelberg_pomdp.policy_cache import FixedActionPolicyMixin
+from stackelberg_pomdp.policies.cache import FixedActionPolicyMixin
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTION_MASK,
@@ -49,6 +49,7 @@ ATARI_POLICY_PROVENANCE_ID = (
 ATARI_POLICY_PROVENANCE_ALIASES = frozenset({
     ATARI_POLICY_PROVENANCE_ID,
     "stackelberg_pomdp.atari.policies.composite.StackPOMDPAtariPolicy",
+    "stackelberg_pomdp.policies.atari.composite.StackPOMDPAtariPolicy",
 })
 
 

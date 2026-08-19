@@ -30,7 +30,7 @@ output/
 *.pkl
 
 # Atari ROMs are required locally but cannot be distributed with the code.
-stackelberg_pomdp/atari/roms/*.bin
+stackelberg_pomdp/envs/atari/roms/*.bin
 
 # Atari replication outputs are external, content-addressed artifacts.  Keep
 # code and small curated manifests in Git, never local checkpoints/run trees.

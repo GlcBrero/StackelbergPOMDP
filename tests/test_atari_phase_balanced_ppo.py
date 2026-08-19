@@ -29,7 +29,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
 
 
 def _actor_terms(*, advantages, log_ratio, credit, entropy=None, clip=0.2):

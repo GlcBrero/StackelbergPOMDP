@@ -10,7 +10,7 @@ from stackelberg_pomdp.atari.training import (
     PHASE_BALANCED_ACTOR_LOSS_MODE,
 )
 from stackelberg_pomdp.atari.protocol import ACTOR_STATE, actor_state
-from stackelberg_pomdp.atari.envs.bilateral import BUYER, SELLER
+from stackelberg_pomdp.envs.atari.bilateral import BUYER, SELLER
 
 
 def _episode(*, role=BUYER, seed=10, context=None, event_steps=None):

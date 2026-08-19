@@ -2,7 +2,7 @@ import gym
 import numpy as np
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from stackelberg_pomdp.baselines_utils import CustomA2C
+from stackelberg_pomdp.algorithms.on_policy import CustomA2C
 
 
 class HiddenPrefixEnv(gym.Env):

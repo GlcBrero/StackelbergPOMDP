@@ -9,7 +9,7 @@ from stackelberg_pomdp.experiments.matrix_ablations import (
     train_leader,
     validate_leader_args,
 )
-from stackelberg_pomdp.matrix_ablations.envs import (
+from stackelberg_pomdp.envs.matrix import (
     MatrixFixedCommitmentResponseEnv,
     get_matrix_game,
     make_meta_leader_env,

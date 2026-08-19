@@ -69,12 +69,24 @@ checkpoint requirements, and evaluation gates are documented separately in
 
 ## Repository layout
 
-- `stackelberg_pomdp/`: environments, response algorithms, policies, and
-  experiment entry points.
+- `stackelberg_pomdp/envs/`: all domain environments, including Atari.
+- `stackelberg_pomdp/wrappers/`: generic StackPOMDP/follower wrappers and
+  domain-specific Gym adapters.
+- `stackelberg_pomdp/policies/`: generic and Atari policy architectures.
+- `stackelberg_pomdp/algorithms/`: SB3 algorithm extensions.
+- `stackelberg_pomdp/atari/`: Atari protocol, sampling, and training support
+  that is neither an environment, wrapper, nor policy.
+- `stackelberg_pomdp/experiments/`: maintained experiment entry points.
 - `replication/`: final-paper manifests, diagnostics, launchers, and protocol
   documentation.
 - `tests/`: fast contract and regression tests; ROM-dependent integration is
   optional.
+
+`stackelberg_pomdp/baselines_utils.py` and
+`stackelberg_pomdp/atari/stackpomdp_policy.py` are compatibility imports for
+historical serialized policy paths; maintained code does not implement new
+functionality in either file.
+
 Generated checkpoints, logs, W&B run directories, and plot outputs are not
 versioned. Curated paper data and figure-generation scripts are distributed in
 the journal reproducibility artifact rather than mixed with training source.

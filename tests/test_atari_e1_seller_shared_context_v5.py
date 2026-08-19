@@ -24,7 +24,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.policies.composite import (
+from stackelberg_pomdp.policies.atari.composite import (
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,

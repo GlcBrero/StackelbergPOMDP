@@ -1,6 +1,7 @@
-from stackelberg_pomdp.gym_envs.envs.base_envs import BertrandCompetitionEnv
-from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper
-from stackelberg_pomdp.baselines_utils import CustomPolicy, CustomA2C, CustomPPO
+from stackelberg_pomdp.algorithms.on_policy import CustomA2C, CustomPPO
+from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+from stackelberg_pomdp.policies.generic import CustomPolicy
+from stackelberg_pomdp.wrappers.core import StackPOMDPWrapper
 from stackelberg_pomdp.utils import get_all_wrappers
 
 

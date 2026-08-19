@@ -10,5 +10,5 @@ For the adjacent reference checkout used by this replication:
 
 ```bash
 cp ../StackeRLberg/stackerlberg/envs/roms/space_invaders.bin \
-  stackelberg_pomdp/atari/roms/space_invaders.bin
+  stackelberg_pomdp/envs/atari/roms/space_invaders.bin
 ```

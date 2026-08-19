@@ -32,7 +32,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
-from stackelberg_pomdp.matrix_ablations.envs import (
+from stackelberg_pomdp.envs.matrix import (
     MatrixFixedCommitmentResponseEnv,
     RepeatedMatrixGame,
     get_matrix_game,
@@ -193,12 +193,13 @@ def _git_value(*args):
 def provenance():
     source_paths = [
         Path(__file__),
-        REPO_ROOT / "stackelberg_pomdp/matrix_ablations/envs.py",
+        REPO_ROOT / "stackelberg_pomdp/envs/matrix.py",
         REPO_ROOT / "stackelberg_pomdp/matrix_ablations/rllib_es.py",
         REPO_ROOT / "stackelberg_pomdp/matrix_ablations/profiles.py",
         REPO_ROOT / "stackelberg_pomdp/matrix_ablations/pg.py",
         REPO_ROOT / "stackelberg_pomdp/matrix_ablations/reinforce.py",
-        REPO_ROOT / "stackelberg_pomdp/baselines_utils.py",
+        REPO_ROOT / "stackelberg_pomdp/algorithms/on_policy.py",
+        REPO_ROOT / "stackelberg_pomdp/policies/generic.py",
         REPO_ROOT / "stackelberg_pomdp/callbacks.py",
         REPO_ROOT / "stackelberg_pomdp/rl_trainer_setup.py",
         REPO_ROOT / "environment.yml",

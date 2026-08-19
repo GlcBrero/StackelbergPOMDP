@@ -15,13 +15,13 @@ try:
 except ImportError:
     wandb = None
 
-from stackelberg_pomdp.baselines_utils import CustomPolicy
+from stackelberg_pomdp.policies.generic import CustomPolicy
 from stackelberg_pomdp.follower_responses import CertifiedMWResponse
-from stackelberg_pomdp.gym_envs.envs.wrappers import (
+from stackelberg_pomdp.wrappers.core import (
     MWFollowersWrapper,
     StackPOMDPWrapper,
 )
-from stackelberg_pomdp.leader_policies import BaselinePolicyWrapper
+from stackelberg_pomdp.policies.leader import BaselinePolicyWrapper
 from stackelberg_pomdp.utils import (
     compute_empirical_welfare,
 )

@@ -22,7 +22,7 @@ from stable_baselines3 import A2C
 from stable_baselines3.common.policies import MultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, Schedule
 
-from stackelberg_pomdp.baselines_utils import CustomOnPolicyAlgorithm
+from stackelberg_pomdp.algorithms.on_policy import CustomOnPolicyAlgorithm
 
 
 LEGACY_PG_COLLECTION_TARGET_ENV_STEPS = 100

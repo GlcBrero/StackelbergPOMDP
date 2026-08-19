@@ -6,7 +6,7 @@ from typing import Mapping, Optional, Sequence
 
 import numpy as np
 
-from stackelberg_pomdp.atari.envs.gameplay import AtariGameplaySide
+from stackelberg_pomdp.envs.atari.gameplay import AtariGameplaySide
 from stackelberg_pomdp.atari.protocol import (
     FOLLOWER_TRADE,
     GAMEPLAY,
@@ -19,7 +19,7 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
-from stackelberg_pomdp.gym_envs.envs.base_envs import BaseEnv
+from stackelberg_pomdp.envs.base import BaseEnv
 
 
 SELLER = "seller"

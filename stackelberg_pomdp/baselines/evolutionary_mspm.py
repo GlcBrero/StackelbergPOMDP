@@ -13,8 +13,11 @@ import json
 import numpy as np
 
 from stackelberg_pomdp.games import get_mspm_setting
-from stackelberg_pomdp.gym_envs.envs.base_envs import BaseMessageSPM
-from stackelberg_pomdp.gym_envs.envs.wrappers import MWFollowersWrapper, ReactiveLeaderWrapper
+from stackelberg_pomdp.envs.base import BaseMessageSPM
+from stackelberg_pomdp.wrappers.core import (
+    MWFollowersWrapper,
+    ReactiveLeaderWrapper,
+)
 from stackelberg_pomdp.utils import (
     check_empirical_bcce_gap,
     compute_empirical_welfare,

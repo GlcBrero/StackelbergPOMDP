@@ -28,8 +28,8 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.envs.bilateral import BUYER, SELLER
-from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.envs.atari.bilateral import BUYER, SELLER
+from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
 
 
 class _StableProtocolEnv(gym.Env):

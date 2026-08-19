@@ -2,10 +2,10 @@
 
 import numpy as np
 
-from stackelberg_pomdp.atari.envs.space_invaders import (
+from stackelberg_pomdp.envs.atari.space_invaders import (
     SinglePlayerSpaceInvadersEnv,
 )
-from stackelberg_pomdp.atari.wrappers.preprocessing import (
+from stackelberg_pomdp.wrappers.atari.preprocessing import (
     AmmoLedger,
     ClipGameRewardWrapper,
     EpisodicLifeWrapper,

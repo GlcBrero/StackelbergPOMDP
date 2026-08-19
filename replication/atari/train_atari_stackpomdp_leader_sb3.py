@@ -49,17 +49,17 @@ from stackelberg_pomdp.atari.training import (
     ppo_class_for_actor_loss_mode,
     write_json,
 )
-from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
+from stackelberg_pomdp.envs.atari.space_invaders import default_rom_path
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
-from stackelberg_pomdp.atari.wrappers.meta_follower import (
+from stackelberg_pomdp.wrappers.atari.meta_follower import (
     make_stackpomdp_atari_leader_env,
 )
-from stackelberg_pomdp.atari.envs.bilateral import (
+from stackelberg_pomdp.envs.atari.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.policies.composite import (
+from stackelberg_pomdp.policies.atari.composite import (
     ATARI_POLICY_PROVENANCE_ID,
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
@@ -102,19 +102,19 @@ FROZEN_E1_SELLER_ARCHITECTURES = {
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
     "stackelberg_pomdp/atari/training.py",
-    "stackelberg_pomdp/atari/envs/space_invaders.py",
-    "stackelberg_pomdp/atari/envs/gameplay.py",
-    "stackelberg_pomdp/atari/envs/bilateral.py",
-    "stackelberg_pomdp/atari/wrappers/preprocessing.py",
-    "stackelberg_pomdp/atari/wrappers/meta_follower.py",
-    "stackelberg_pomdp/atari/policies/composite.py",
-    "stackelberg_pomdp/atari/policies/loading.py",
+    "stackelberg_pomdp/envs/atari/space_invaders.py",
+    "stackelberg_pomdp/envs/atari/gameplay.py",
+    "stackelberg_pomdp/envs/atari/bilateral.py",
+    "stackelberg_pomdp/wrappers/atari/preprocessing.py",
+    "stackelberg_pomdp/wrappers/atari/meta_follower.py",
+    "stackelberg_pomdp/policies/atari/composite.py",
+    "stackelberg_pomdp/policies/atari/loading.py",
     "stackelberg_pomdp/atari/protocol.py",
     "stackelberg_pomdp/atari/query_trace.py",
     "stackelberg_pomdp/atari/sampling.py",
-    "stackelberg_pomdp/policy_cache.py",
-    "stackelberg_pomdp/gym_envs/envs/base_envs.py",
-    "stackelberg_pomdp/gym_envs/envs/wrappers.py",
+    "stackelberg_pomdp/policies/cache.py",
+    "stackelberg_pomdp/envs/base.py",
+    "stackelberg_pomdp/wrappers/core.py",
     "stackelberg_pomdp/callbacks.py",
 )
 E2_PACKAGE_DISTRIBUTIONS = (

@@ -23,7 +23,7 @@ from stackelberg_pomdp.atari.training import (
     write_csv,
     write_json,
 )
-from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
+from stackelberg_pomdp.envs.atari.space_invaders import default_rom_path
 from stackelberg_pomdp.atari.protocol import (
     ACTOR_STATE,
     ACTOR_STATE_DIM,
@@ -31,8 +31,8 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     TRADE_MODE_INDEX,
 )
-from stackelberg_pomdp.atari.envs.bilateral import BUYER, SELLER
-from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.envs.atari.bilateral import BUYER, SELLER
+from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
 
 
 SCREEN_EPISODES = 20

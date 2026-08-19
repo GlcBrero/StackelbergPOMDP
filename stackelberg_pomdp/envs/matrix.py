@@ -24,7 +24,10 @@ import gym
 from gym.spaces import Dict, Discrete
 import numpy as np
 
-from .profiles import get_profile, profile_for_spec
+from stackelberg_pomdp.matrix_ablations.profiles import (
+    get_profile,
+    profile_for_spec,
+)
 
 
 LEADER = "leader"
@@ -525,7 +528,7 @@ def load_response_model(checkpoint, algorithm, device="cpu"):
         from stable_baselines3 import DQN
         model_class = DQN
     elif algorithm == "REINFORCE":
-        from .reinforce import Reinforce
+        from stackelberg_pomdp.matrix_ablations.reinforce import Reinforce
         model_class = Reinforce
     else:
         raise ValueError("unsupported response algorithm: {!r}".format(algorithm))
