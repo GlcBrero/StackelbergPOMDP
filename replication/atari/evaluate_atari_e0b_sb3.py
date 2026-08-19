@@ -25,19 +25,19 @@ os.environ.setdefault(
     "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "stackpomdp-matplotlib")
 )
 
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ScaledLearningRatePPO,
     evaluate_model,
     write_csv,
     write_json,
 )
-from stackelberg_pomdp.atari.curriculum_env import (
+from stackelberg_pomdp.atari.envs.curriculum import (
     AtariCurriculumConfig,
     AtariCurriculumEnv,
 )
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
-from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

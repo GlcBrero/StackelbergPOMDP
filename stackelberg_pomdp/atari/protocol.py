@@ -1,6 +1,6 @@
 """Canonical observation, action, and policy-credit protocol for Atari.
 
-The clean Atari curriculum uses one actor interface from E0a through E2.  The
+The clean Atari curriculum uses one actor interface throughout training.  The
 only stage-specific inputs are critic-prefixed training fields; those fields
 never enter an actor network or an observation--action cache key.
 """

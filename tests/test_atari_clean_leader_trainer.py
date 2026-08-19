@@ -9,7 +9,7 @@ from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from replication.atari import train_atari_stackpomdp_leader_sb3 as trainer
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     PHASE_BALANCED_ACTOR_LOSS_MODE,
     STANDARD_ACTOR_LOSS_MODE,
     ScaledLearningRatePPO,
@@ -23,7 +23,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
 
 
@@ -70,7 +70,7 @@ def _checkpoint_metadata(
 ):
     policy = {
         "policy_class": (
-            "stackelberg_pomdp.atari.stackpomdp_policy."
+            "stackelberg_pomdp.atari.policies.composite."
             "StackPOMDPAtariPolicy"
         ),
         "economic_role": role,

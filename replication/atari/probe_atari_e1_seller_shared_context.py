@@ -20,8 +20,8 @@ import torch as th
 
 from replication.atari import probe_atari_e1_seller_conditioning as base_probe
 from replication.atari import train_atari_meta_response_sb3 as trainer
-from replication.atari.sb3_common import write_json
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.training import write_json
+from stackelberg_pomdp.atari.policies.composite import (
     SELLER_SHARED_CONTEXT_BETA_V5,
     seller_shared_context_architecture_provenance,
 )

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from replication.atari import sb3_common
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari import training as sb3_common
+from stackelberg_pomdp.atari.training import (
     ECONOMIC_INIT_ATTRIBUTE,
     EpisodeCheckpointCallback,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
@@ -29,7 +29,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 
 
 def _actor_terms(*, advantages, log_ratio, credit, entropy=None, clip=0.2):

@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ECONOMIC_INIT_ATTRIBUTE,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
 )
 from stackelberg_pomdp.atari.protocol import ACTOR_STATE, actor_state
-from stackelberg_pomdp.atari.stackpomdp_env import BUYER, SELLER
+from stackelberg_pomdp.atari.envs.bilateral import BUYER, SELLER
 
 
 def _episode(*, role=BUYER, seed=10, context=None, event_steps=None):

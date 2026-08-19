@@ -35,7 +35,7 @@ os.environ.setdefault(
     "MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "stackpomdp-matplotlib")
 )
 
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ACTOR_LOSS_MODES,
     STANDARD_ACTOR_LOSS_MODE,
     ScaledLearningRatePPO,
@@ -47,11 +47,14 @@ from replication.atari.sb3_common import (
 from replication.atari.train_atari_stackpomdp_leader_sb3 import (
     E2_PROVENANCE_ATTRIBUTE,
     e2_implementation_provenance,
+    e2_implementation_provenance_compatible,
     validate_e2_gameplay_actor_freeze,
     validate_e2_provenance_manifest,
 )
-from stackelberg_pomdp.atari.core import default_rom_path
-from stackelberg_pomdp.atari.meta_response import make_stackpomdp_atari_leader_env
+from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
+from stackelberg_pomdp.atari.wrappers.meta_follower import (
+    make_stackpomdp_atari_leader_env,
+)
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTION_MASK,
@@ -66,13 +69,17 @@ from stackelberg_pomdp.atari.protocol import (
     actor_observation,
     canonical_leader_state,
 )
-from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
-from stackelberg_pomdp.atari.stackpomdp_env import (
+from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
+from stackelberg_pomdp.atari.envs.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.policies.composite import (
+    ATARI_POLICY_PROVENANCE_ID,
+    StackPOMDPAtariPolicy,
+    canonical_atari_policy_provenance_id,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -310,7 +317,9 @@ def validate_candidate_provenance(model, *, response_hash, config):
         raise ValueError("E2 candidate provenance has the wrong leader role")
     if scientific.get("follower_role") != config["follower_role"]:
         raise ValueError("E2 candidate provenance has the wrong follower role")
-    if scientific.get("implementation") != e2_implementation_provenance():
+    if not e2_implementation_provenance_compatible(
+            scientific.get("implementation"), e2_implementation_provenance()
+    ):
         raise ValueError(
             "E2 candidate implementation provenance does not match the "
             "current evaluator runtime"
@@ -346,7 +355,11 @@ def validate_candidate_provenance(model, *, response_hash, config):
             "E2 candidate economic initialization does not match its provenance"
         )
     actual_leader_policy = {
-        "policy_class": f"{type(policy).__module__}.{type(policy).__qualname__}",
+        "policy_class": (
+            ATARI_POLICY_PROVENANCE_ID
+            if isinstance(policy, StackPOMDPAtariPolicy)
+            else f"{type(policy).__module__}.{type(policy).__qualname__}"
+        ),
         "economic_role": policy.economic_role,
         "economic_input_mode": policy.economic_input_mode,
         "visual_features": int(policy.visual_features),
@@ -362,6 +375,12 @@ def validate_candidate_provenance(model, *, response_hash, config):
         "economic_head_initialization": actual_economic_initialization,
     }
     recorded_leader_policy = dict(scientific.get("leader_policy", {}))
+    if "policy_class" in recorded_leader_policy:
+        recorded_leader_policy["policy_class"] = (
+            canonical_atari_policy_provenance_id(
+                recorded_leader_policy["policy_class"]
+            )
+        )
     recorded_leader_policy.setdefault("gameplay_actor_frozen", False)
     recorded_leader_policy.setdefault(
         "actor_loss_mode", recorded_actor_loss_mode

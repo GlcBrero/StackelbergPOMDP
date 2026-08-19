@@ -16,7 +16,7 @@ from stable_baselines3.common.utils import explained_variance
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from stackelberg_pomdp.atari.protocol import ACTION_CREDIT, NUM_TRADE_EVENTS
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.policies.composite import (
     SELLER_SHARED_CONTEXT_BETA_V5,
 )
 

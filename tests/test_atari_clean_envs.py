@@ -6,11 +6,11 @@ import numpy as np
 from replication.atari.evaluate_atari_stackpomdp_leader_sb3 import (
     apply_economic_commitment_override,
 )
-from stackelberg_pomdp.atari.curriculum_env import (
+from stackelberg_pomdp.atari.envs.curriculum import (
     AtariCurriculumConfig,
     AtariCurriculumEnv,
 )
-from stackelberg_pomdp.atari.e1_sampling import (
+from stackelberg_pomdp.atari.sampling import (
     ALL_EQUAL_E1_SAMPLER,
     CONTEXT_STRATA,
     SCHEDULE_STRATA,
@@ -29,17 +29,19 @@ from stackelberg_pomdp.atari.protocol import (
     actor_observation,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
-from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
-from stackelberg_pomdp.atari.meta_response import (
+from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
+from stackelberg_pomdp.atari.wrappers.meta_follower import (
     AtariMetaFollowerWrapper,
     make_stackpomdp_atari_leader_env,
 )
-from stackelberg_pomdp.atari.stackpomdp_env import (
-    AtariFixedCommitmentResponseWrapper,
+from stackelberg_pomdp.atari.envs.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
     BilateralAtariRewardEnv,
+)
+from stackelberg_pomdp.atari.wrappers.fixed_commitment import (
+    AtariFixedCommitmentResponseWrapper,
     make_atari_meta_response_env,
 )
 from stackelberg_pomdp.gym_envs.envs.wrappers import StackPOMDPWrapper

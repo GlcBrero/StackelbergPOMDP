@@ -30,7 +30,7 @@ os.environ.setdefault("WANDB_START_METHOD", "thread")
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
 
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
@@ -49,20 +49,22 @@ from replication.atari.sb3_common import (
     ppo_class_for_actor_loss_mode,
     write_json,
 )
-from stackelberg_pomdp.atari.core import default_rom_path
+from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
-from stackelberg_pomdp.atari.meta_response import (
+from stackelberg_pomdp.atari.wrappers.meta_follower import (
     make_stackpomdp_atari_leader_env,
 )
-from stackelberg_pomdp.atari.stackpomdp_env import (
+from stackelberg_pomdp.atari.envs.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.policies.composite import (
+    ATARI_POLICY_PROVENANCE_ID,
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
+    canonical_atari_policy_provenance_id,
 )
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
 
@@ -99,15 +101,18 @@ FROZEN_E1_SELLER_ARCHITECTURES = {
 }
 E2_IMPLEMENTATION_FILES = (
     "replication/atari/train_atari_stackpomdp_leader_sb3.py",
-    "replication/atari/sb3_common.py",
-    "stackelberg_pomdp/atari/core.py",
-    "stackelberg_pomdp/atari/gameplay.py",
-    "stackelberg_pomdp/atari/wrappers.py",
+    "stackelberg_pomdp/atari/training.py",
+    "stackelberg_pomdp/atari/envs/space_invaders.py",
+    "stackelberg_pomdp/atari/envs/gameplay.py",
+    "stackelberg_pomdp/atari/envs/bilateral.py",
+    "stackelberg_pomdp/atari/wrappers/preprocessing.py",
+    "stackelberg_pomdp/atari/wrappers/meta_follower.py",
+    "stackelberg_pomdp/atari/policies/composite.py",
+    "stackelberg_pomdp/atari/policies/loading.py",
     "stackelberg_pomdp/atari/protocol.py",
-    "stackelberg_pomdp/atari/schedule.py",
-    "stackelberg_pomdp/atari/stackpomdp_env.py",
-    "stackelberg_pomdp/atari/stackpomdp_policy.py",
-    "stackelberg_pomdp/atari/meta_response.py",
+    "stackelberg_pomdp/atari/query_trace.py",
+    "stackelberg_pomdp/atari/sampling.py",
+    "stackelberg_pomdp/policy_cache.py",
     "stackelberg_pomdp/gym_envs/envs/base_envs.py",
     "stackelberg_pomdp/gym_envs/envs/wrappers.py",
     "stackelberg_pomdp/callbacks.py",
@@ -120,6 +125,12 @@ E2_PACKAGE_DISTRIBUTIONS = (
     "multi-agent-ale-py",
     "opencv-python",
 )
+LEGACY_LAYOUT_E2_IMPLEMENTATION_SHA256 = frozenset({
+    # Public ``jair-2026-v1.0.0`` checkpoints.  The following release only
+    # reorganizes modules; accepting this exact fingerprint preserves
+    # evaluation/resume compatibility without weakening provenance checks.
+    "4c187999e6bf073d35c7caa71033d7e1790306d2dac45dce25e3e090862d037a",
+})
 
 
 def _actor_loss_mode(args):
@@ -239,6 +250,21 @@ def e2_implementation_provenance():
     })
 
 
+def e2_implementation_provenance_compatible(recorded, current=None):
+    """Accept current code or the exact pre-reorganization release layout."""
+
+    if not isinstance(recorded, dict):
+        return False
+    resolved_current = (
+        e2_implementation_provenance() if current is None else current
+    )
+    if recorded == resolved_current:
+        return True
+    return _canonical_sha256(recorded) in (
+        LEGACY_LAYOUT_E2_IMPLEMENTATION_SHA256
+    )
+
+
 def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
     """Read and validate the curriculum identity stored in one checkpoint."""
 
@@ -269,9 +295,7 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             ),
         )
         policy_metadata = {
-            "policy_class": (
-                f"{type(policy).__module__}.{type(policy).__qualname__}"
-            ),
+            "policy_class": ATARI_POLICY_PROVENANCE_ID,
             "economic_role": policy.economic_role,
             "economic_input_mode": policy.economic_input_mode,
             "visual_features": int(policy.visual_features),
@@ -431,6 +455,11 @@ def _artifact_manifest_entry(metadata, *, label):
         ) from error
     if not isinstance(policy, dict):
         raise ValueError(f"{label} metadata is missing policy metadata")
+    policy = dict(policy)
+    if "policy_class" in policy:
+        policy["policy_class"] = canonical_atari_policy_provenance_id(
+            policy["policy_class"]
+        )
     return _canonical_json_copy({
         "sha256": digest.lower(),
         "policy": policy,
@@ -516,10 +545,7 @@ def e2_scientific_config(args):
             "stats_window_size": 100,
         },
         "leader_policy": {
-            "policy_class": (
-                "stackelberg_pomdp.atari.stackpomdp_policy."
-                "StackPOMDPAtariPolicy"
-            ),
+            "policy_class": ATARI_POLICY_PROVENANCE_ID,
             "economic_role": args.leader_role,
             "economic_input_mode": "event_only",
             "visual_features": 512,
@@ -631,6 +657,11 @@ def require_compatible_e2_provenance(
     recorded_config = _scientific_config_with_legacy_defaults(
         manifest.get("scientific_config", {})
     )
+    if e2_implementation_provenance_compatible(
+            recorded_config.get("implementation"),
+            expected_config.get("implementation"),
+    ):
+        recorded_config["implementation"] = expected_config["implementation"]
     if recorded_config != expected_config:
         raise ValueError(
             "E2 resume/evaluation scientific config does not match the "
@@ -657,7 +688,13 @@ def require_compatible_e2_provenance(
         if policy.get("economic_input_mode") != "full":
             raise ValueError(f"E2 provenance has the wrong actor mode for {name}")
     if resumed_leader is not None:
-        actual_policy = resumed_leader.get("policy_metadata")
+        actual_policy = dict(resumed_leader.get("policy_metadata") or {})
+        if "policy_class" in actual_policy:
+            actual_policy["policy_class"] = (
+                canonical_atari_policy_provenance_id(
+                    actual_policy["policy_class"]
+                )
+            )
         expected_policy = expected_config["leader_policy"]
         if actual_policy != expected_policy:
             raise ValueError(

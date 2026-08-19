@@ -10,7 +10,7 @@ import torch
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from replication.atari import train_atari_curriculum_sb3 as trainer
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     EpisodeCheckpointCallback,
     ScaledLearningRatePPO,
     json_path,
@@ -25,7 +25,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 
 
 class _StableEnv(gym.Env):

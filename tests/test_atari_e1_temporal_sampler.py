@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import pytest
 
-from stackelberg_pomdp.atari.e1_sampling import (
+from stackelberg_pomdp.atari.sampling import (
     ALL_EQUAL_E1_SAMPLER,
     CONTEXT_STRATUM_WEIGHTS,
     EARLY_FIFTH_INTERVAL,

@@ -15,7 +15,7 @@ import tempfile
 import numpy as np
 
 from replication.atari import train_atari_meta_response_sb3 as trainer
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ACTOR_LOSS_MODES,
     ScaledLearningRatePPO,
     model_actor_loss_mode,
@@ -23,7 +23,7 @@ from replication.atari.sb3_common import (
     write_csv,
     write_json,
 )
-from stackelberg_pomdp.atari.core import default_rom_path
+from stackelberg_pomdp.atari.envs.space_invaders import default_rom_path
 from stackelberg_pomdp.atari.protocol import (
     ACTOR_STATE,
     ACTOR_STATE_DIM,
@@ -31,8 +31,8 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     TRADE_MODE_INDEX,
 )
-from stackelberg_pomdp.atari.stackpomdp_env import BUYER, SELLER
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.envs.bilateral import BUYER, SELLER
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 
 
 SCREEN_EPISODES = 20

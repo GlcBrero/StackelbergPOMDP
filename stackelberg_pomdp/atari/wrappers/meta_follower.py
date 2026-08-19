@@ -1,11 +1,11 @@
-"""Frozen neural PI response and generic StackPOMDP composition for Atari E2.
+"""Frozen neural PI response and generic StackPOMDP composition for Atari.
 
 The Atari stack deliberately separates three concerns:
 
-* :class:`~stackelberg_pomdp.atari.stackpomdp_env.BilateralAtariRewardEnv`
+* :class:`~stackelberg_pomdp.atari.envs.bilateral.BilateralAtariRewardEnv`
   owns Atari and bilateral-trade dynamics;
 * :class:`FrozenMetaPolicyResponse` retains the exact leader query trace and
-  conditions a frozen E1 follower policy on its declared economic statistic;
+  conditions a frozen follower policy on its declared economic statistic;
 * :class:`AtariMetaFollowerWrapper` adapts that response to the generic
   :class:`~stackelberg_pomdp.gym_envs.envs.wrappers.FollowerWrapper` contract.
 
@@ -34,15 +34,15 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
-from stackelberg_pomdp.atari.stackpomdp_env import (
+from stackelberg_pomdp.atari.envs.bilateral import (
     BUYER,
     ROLES,
     SELLER,
     BilateralAtariConfig,
     BilateralAtariRewardEnv,
     DualAtariTradeCore,
-    load_frozen_atari_model,
 )
+from stackelberg_pomdp.atari.policies.loading import load_frozen_atari_model
 from stackelberg_pomdp.gym_envs.envs.wrappers import (
     FollowerWrapper,
     StackPOMDPWrapper,
@@ -56,13 +56,13 @@ def _copy_observation(values):
 
 
 class FrozenMetaPolicyResponse:
-    """Exact five-query PI response implemented by a frozen E1 policy.
+    """Exact five-query PI response implemented by a frozen meta-policy.
 
-    E1 is the meta-learning stage.  E2 performs no follower learning: it
-    captures the exact ordered leader trace, exposes its five economic actions
-    as the declared context ``omega``, and evaluates one frozen response model.
+    Leader training performs no follower learning: this object captures the
+    exact ordered leader trace, exposes its five economic actions as the
+    declared context ``omega``, and evaluates one frozen response model.
     The exact trace is retained for correctness and diagnostics; the current
-    E1 actor is intentionally conditioned on ``omega``, not on a lossless
+    meta-follower is intentionally conditioned on ``omega``, not on a lossless
     encoding of every field in the trace.
     """
 
@@ -522,7 +522,7 @@ def make_stackpomdp_atari_leader_env(
         env_factory=None,
         device="cpu",
 ):
-    """Compose Atari E2 with the shared game-agnostic phase wrapper."""
+    """Compose Atari leader training with the shared StackPOMDP wrapper."""
 
     resolved = (config or BilateralAtariConfig()).resolved()
     reward_env = BilateralAtariRewardEnv(

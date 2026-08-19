@@ -15,7 +15,10 @@ from stable_baselines3.common.utils import obs_as_tensor
 from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 
-class CustomPolicy(MultiInputActorCriticPolicy):
+from stackelberg_pomdp.policy_cache import FixedActionPolicyMixin
+
+
+class CustomPolicy(FixedActionPolicyMixin, MultiInputActorCriticPolicy):
     """
     Modified MultiInputActorCriticPolicy to focus on deterministic policies.
 
@@ -34,8 +37,7 @@ class CustomPolicy(MultiInputActorCriticPolicy):
             net_arch=dict(pi=[64, 64], vf=[64, 64]),
         )
 
-        self.fix_actions = False
-        self.obs_action_map = {}
+        self._initialize_fixed_action_cache()
 
     def _cache_key(self, obs):
         values = []
@@ -65,13 +67,6 @@ class CustomPolicy(MultiInputActorCriticPolicy):
             device=self.device,
             cutoff_entry=self.cutoff_entry,
         )
-
-    def clear_obs_action_map(self):
-        self.obs_action_map = {}
-
-
-    def fix_policy_actions(self):
-        self.fix_actions = True
 
     def predict_values(self, obs: th.Tensor) -> th.Tensor:
         features = self.extract_features(obs)

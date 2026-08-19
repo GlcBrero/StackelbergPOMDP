@@ -9,7 +9,7 @@ import pytest
 
 from replication.atari import evaluate_atari_stackpomdp_leader_sb3 as evaluator
 from replication.atari import train_atari_stackpomdp_leader_sb3 as trainer
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     PHASE_BALANCED_ACTOR_LOSS_MODE,
     STANDARD_ACTOR_LOSS_MODE,
 )

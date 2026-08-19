@@ -11,7 +11,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from replication.atari import evaluate_atari_meta_response_sb3 as evaluator
 from replication.atari import train_atari_meta_response_sb3 as trainer
 from replication.atari import train_atari_stackpomdp_leader_sb3 as leader_trainer
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     PhaseBalancedPPO,
     SELLER_V5_OPTIMIZER_GROUPS,
 )
@@ -24,7 +24,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.policies.composite import (
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,

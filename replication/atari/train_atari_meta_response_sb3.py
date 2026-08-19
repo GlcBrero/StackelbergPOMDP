@@ -21,7 +21,7 @@ os.environ.setdefault("WANDB_START_METHOD", "thread")
 
 from stable_baselines3.common.callbacks import CallbackList
 
-from replication.atari.sb3_common import (
+from stackelberg_pomdp.atari.training import (
     ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
@@ -41,13 +41,15 @@ from replication.atari.sb3_common import (
     ppo_class_for_actor_loss_mode,
     write_csv,
 )
-from stackelberg_pomdp.atari.stackpomdp_env import (
+from stackelberg_pomdp.atari.envs.bilateral import (
     BUYER,
     SELLER,
     BilateralAtariConfig,
+)
+from stackelberg_pomdp.atari.wrappers.fixed_commitment import (
     make_atari_meta_response_env,
 )
-from stackelberg_pomdp.atari.e1_sampling import (
+from stackelberg_pomdp.atari.sampling import (
     ALL_EQUAL_E1_SAMPLER,
     E1_SAMPLER_MODES,
     TEMPORAL_MIX_E1_SAMPLER,
@@ -59,7 +61,7 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     OPPONENT_COMMITMENT_SLICE,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.policies.composite import (
     BETA_PARAMETER_EPSILON,
     SELLER_SHARED_CONTEXT_BETA_V5,
     SELLER_TWO_BRANCH_BETA_V4,

@@ -1,11 +1,11 @@
-"""Clean E0a/E0b Atari pretraining environments."""
+"""Atari gameplay-pretraining curriculum environments."""
 
 from dataclasses import dataclass
 
 import gym
 import numpy as np
 
-from stackelberg_pomdp.atari.gameplay import AtariGameplaySide
+from stackelberg_pomdp.atari.envs.gameplay import AtariGameplaySide
 from stackelberg_pomdp.atari.protocol import (
     AUTOMATIC_TRANSFER,
     CRITIC_STATE_DIM,
@@ -18,7 +18,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation_space,
     validate_action,
 )
-from stackelberg_pomdp.atari.schedule import ExactFiveEventSchedule
+from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
 
 
 E0_STAGES = {"e0a", "e0b"}

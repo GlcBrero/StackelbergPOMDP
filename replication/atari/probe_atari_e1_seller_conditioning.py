@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch as th
 
-from replication.atari.sb3_common import write_json
+from stackelberg_pomdp.atari.training import write_json
 from stackelberg_pomdp.atari.protocol import (
     ACTION_CREDIT,
     ACTION_MASK,
@@ -29,7 +29,7 @@ from stackelberg_pomdp.atari.protocol import (
     actor_state,
     observation,
 )
-from stackelberg_pomdp.atari.stackpomdp_policy import StackPOMDPAtariPolicy
+from stackelberg_pomdp.atari.policies.composite import StackPOMDPAtariPolicy
 
 
 PROBE_NAME = "clean_atari_e1_seller_conditioning_probe_v1"

@@ -29,11 +29,11 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQuery, QueryTraceError
-from stackelberg_pomdp.atari.stackpomdp_policy import (
+from stackelberg_pomdp.atari.policies.composite import (
     GatedCompositeAtariDistribution,
     StackPOMDPAtariPolicy,
 )
-from stackelberg_pomdp.atari.wrappers import (
+from stackelberg_pomdp.atari.wrappers.preprocessing import (
     AmmoLedger,
     MaxAndSkipWrapper,
     ScarceAmmoWrapper,
@@ -45,6 +45,14 @@ def _spaces():
         0, 255, shape=(84, 84, 4), dtype=np.uint8
     )
     return observation_space(image, 6), action_space(6)
+
+
+def test_published_checkpoint_policy_import_remains_compatible():
+    from stackelberg_pomdp.atari.stackpomdp_policy import (
+        StackPOMDPAtariPolicy as PublishedCheckpointPolicy,
+    )
+
+    assert PublishedCheckpointPolicy is StackPOMDPAtariPolicy
 
 
 def _policy(*, event_only=False):
