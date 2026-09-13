@@ -18,7 +18,6 @@ import time
 DEFAULT_ROOT = Path("replication/matrix_ablations/results")
 STATUSES = ("completed", "failed", "running", "missing")
 DELTA_ORDER = (
-    "hidden_queries",
     "phase_observability",
     "q_reset",
     "response_reward",
@@ -275,7 +274,7 @@ def _cell_summaries(rows):
             continue
         key = (
             row["experiment"], row["matrix"], row["algorithm"],
-            row["condition"],
+            row["condition"], row.get("learning_rate"),
         )
         by_seed = groups.setdefault(key, {})
         if row["seed"] in by_seed:
@@ -291,13 +290,14 @@ def _cell_summaries(rows):
             "matrix": key[1],
             "algorithm": key[2],
             "condition": key[3],
+            "learning_rate": key[4],
             "seeds": seeds,
             **sample_summary([by_seed[seed] for seed in seeds]),
         })
     return summaries
 
 
-def _completed_seed_map(rows, experiment, matrix, algorithm, condition):
+def _completed_seed_map(rows, experiment, matrix, algorithm, condition, learning_rate):
     result = {}
     for row in rows:
         if (
@@ -307,6 +307,7 @@ def _completed_seed_map(rows, experiment, matrix, algorithm, condition):
                 and row["matrix"] == matrix
                 and row["algorithm"] == algorithm
                 and row["condition"] == condition
+                and row.get("learning_rate") == learning_rate
         ):
             if row["seed"] in result:
                 raise ValueError("duplicate seed in condition comparison")
@@ -317,20 +318,22 @@ def _completed_seed_map(rows, experiment, matrix, algorithm, condition):
 def _comparison(
         rows, comparison_id, experiment, matrix, algorithm,
         positive_condition, negative_condition, kind="signed_delta",
+        learning_rate=None,
 ):
     positive = _completed_seed_map(
-        rows, experiment, matrix, algorithm, positive_condition
+        rows, experiment, matrix, algorithm, positive_condition, learning_rate
     )
     negative = _completed_seed_map(
-        rows, experiment, matrix, algorithm, negative_condition
+        rows, experiment, matrix, algorithm, negative_condition, learning_rate
     )
     seeds = sorted(set(positive).intersection(negative))
     deltas = [positive[seed] - negative[seed] for seed in seeds]
     result = {
-        "id": comparison_id,
+        "id": comparison_id if learning_rate is None else comparison_id + "_lr{:g}".format(learning_rate),
         "experiment": experiment,
         "matrix": matrix,
         "algorithm": algorithm,
+        "learning_rate": learning_rate,
         "kind": kind,
         "definition": "{} - {}".format(
             positive_condition, negative_condition
@@ -360,27 +363,13 @@ def _planned_axes(rows, experiment, algorithms=None):
             continue
         if algorithms is not None and row["algorithm"] not in algorithms:
             continue
-        axes.add((row["matrix"], row["algorithm"]))
+        axes.add((row["matrix"], row["algorithm"], row.get("learning_rate")))
     return sorted(axes)
 
 
 def condition_deltas(rows):
     result = {name: [] for name in DELTA_ORDER}
-    for matrix, algorithm in _planned_axes(
-            rows, "hidden_queries", {"PG", "A2C", "PPO", "ES"}
-    ):
-        kind = "gap" if algorithm == "ES" else "signed_delta"
-        result["hidden_queries"].append(_comparison(
-            rows,
-            "hidden_{}_observed_minus_hidden".format(algorithm.lower()),
-            "hidden_queries",
-            matrix,
-            algorithm,
-            "observed",
-            "hidden",
-            kind=kind,
-        ))
-    for matrix, algorithm in _planned_axes(rows, "phase_observability"):
+    for matrix, algorithm, learning_rate in _planned_axes(rows, "phase_observability"):
         result["phase_observability"].append(_comparison(
             rows,
             "phase_{}_visible_minus_hidden".format(algorithm.lower()),
@@ -389,8 +378,9 @@ def condition_deltas(rows):
             algorithm,
             "visible",
             "hidden",
+            learning_rate=learning_rate,
         ))
-    for matrix, algorithm in _planned_axes(rows, "q_reset"):
+    for matrix, algorithm, learning_rate in _planned_axes(rows, "q_reset"):
         result["q_reset"].append(_comparison(
             rows,
             "q_reset_{}_reset_minus_ongoing".format(algorithm.lower()),
@@ -399,8 +389,9 @@ def condition_deltas(rows):
             algorithm,
             "reset",
             "ongoing",
+            learning_rate=learning_rate,
         ))
-    for matrix, algorithm in _planned_axes(rows, "response_reward"):
+    for matrix, algorithm, learning_rate in _planned_axes(rows, "response_reward"):
         result["response_reward"].append(_comparison(
             rows,
             "response_reward_{}_{}_excluded_minus_included".format(
@@ -411,6 +402,7 @@ def condition_deltas(rows):
             algorithm,
             "excluded",
             "included",
+            learning_rate=learning_rate,
         ))
     return result
 
@@ -441,6 +433,7 @@ def build_summary(plan_path):
                 "matrix": match["matrix"],
                 "algorithm": match["algorithm"],
                 "condition": match["condition"],
+                "learning_rate": match.get("learning_rate"),
                 "per_stage_mean": (
                     None if selected is None else selected["per_stage_mean"]
                 ),

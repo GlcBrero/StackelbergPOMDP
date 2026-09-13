@@ -8,10 +8,8 @@
       "num_messages": 1,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "stackelberg",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -20,14 +18,24 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
-    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 100}
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 33,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_simple_allocation_stackpomdp_mappo_m2": {
     "status": "owned_here",
@@ -38,10 +46,8 @@
       "num_messages": 2,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "stackelberg",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -50,14 +56,24 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
-    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 50}
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 66,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_simple_allocation_stackpomdp_mappo": {
     "status": "owned_here",
@@ -68,10 +84,8 @@
       "num_messages": 3,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "stackelberg",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -80,21 +94,24 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
     "cohort": {
       "seeds": "1-25",
       "plot_max_steps": 1000000,
-      "executed_response_games": 100,
+      "executed_response_games": 99,
       "complete_mw_updates": 33,
-      "incomplete_final_cycle_queries": 1,
-      "note": "The retained protocol executed all 100 queries. Query 100 starts an incomplete three-action MW cycle and therefore does not update the response weights."
-    }
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_simple_allocation_hidden_queries_mappo": {
     "status": "owned_here",
@@ -105,10 +122,8 @@
       "num_messages": 3,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "full",
       "pomdp_mode": "hidden_queries",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -117,14 +132,24 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
-    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 99,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_simple_allocation_stackpomdp_ppo": {
     "status": "owned_here",
@@ -135,10 +160,8 @@
       "num_messages": 3,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "none",
       "pomdp_mode": "stackelberg",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -147,14 +170,24 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
-    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 99,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_simple_allocation_hidden_queries_ppo": {
     "status": "owned_here",
@@ -165,10 +198,8 @@
       "num_messages": 3,
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
       "critic_obs": "none",
       "pomdp_mode": "hidden_queries",
-      "tot_num_response_episodes": 100,
       "tot_num_reward_episodes": 30,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -177,19 +208,29 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
-    "cohort": {"seeds": "1-25", "plot_max_steps": 1000000, "executed_response_games": 100, "complete_mw_updates": 33, "incomplete_final_cycle_queries": 1}
+    "cohort": {
+      "seeds": "1-25",
+      "plot_max_steps": 1000000,
+      "executed_response_games": 99,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_pi_mspm_2types_2messages": {
     "status": "owned_here",
     "description": "Two-type, two-message MSPM curve with certified MW response.",
-    "figure_or_table": "pi_spm_vs_mspm_exact_eval_selected; pi_spm_vs_mspm_exact_eval_allseeds",
+    "figure_or_table": "pi_spm_vs_mspm_exact_eval_allseeds",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
       "setting": "PI",
@@ -204,11 +245,8 @@
       "response_bcce_check_freq": 1,
       "response_bcce_max_extra_updates": 10000,
       "critic_obs": "full",
-      "learning_rate": 0.0003,
       "ent_coef": 0,
       "ppo_episodes_per_batch": 1,
-      "ppo_batch_size": 64,
-      "ppo_n_epochs": 10,
       "eval_freq": 10000,
       "eval_episodes": 1,
       "eval_reward_episodes": 4,
@@ -216,15 +254,21 @@
     },
     "cohort": {
       "seeds": "1-25",
-      "selected_seeds": 12,
-      "selection": "Top 12 by mean unsmoothed evaluation reward over steps 950000-1000000; ties broken by seed.",
+      "selection": "All seeds; no selection across seeds.",
       "plot_smoothing": "Trailing 100000 training steps."
-    }
+    },
+    "parameter_exceptions": {
+      "ppo_episodes_per_batch": {
+        "value": 1,
+        "reason": "One maximum-length outer episode per update is the retained SPM/MSPM benchmark protocol."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "fig_pi_spm_2types": {
     "status": "owned_here",
     "description": "Two-type standard-SPM comparator with deterministic exact evaluation.",
-    "figure_or_table": "pi_spm_vs_mspm_exact_eval_selected; pi_spm_vs_mspm_exact_eval_allseeds",
+    "figure_or_table": "pi_spm_vs_mspm_exact_eval_allseeds",
     "module": "stackelberg_pomdp.experiments.spm_baseline",
     "args": {
       "setting": "PI",
@@ -233,16 +277,21 @@
       "discrete_prices": false,
       "spm_exact_eval_freq": 10000,
       "spm_eval_deterministic": true,
-      "learning_rate": 0.0003,
       "ent_coef": 0.01,
       "seed": "{seed}"
     },
     "cohort": {
       "seeds": "1-10",
-      "selected_seeds": 5,
-      "selection": "Top 5 by mean unsmoothed evaluation reward over steps 950000-1000000; ties broken by seed.",
+      "selection": "All seeds; no selection across seeds.",
       "plot_smoothing": "Trailing 100000 training steps."
-    }
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Retain exploration in the standard-SPM learning benchmark; see PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "table_mspm_3types_2messages": {
     "status": "owned_here",
@@ -250,17 +299,38 @@
     "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace", "num_types": 3, "num_messages": 2,
-      "max_steps": 1000000, "tot_num_response_episodes": 300,
-      "tot_num_reward_episodes": 9, "mw_fixed_seed": 0,
-      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
-      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
-      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
-      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
-      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 9,
+      "setting": "MSGSpace",
+      "num_types": 3,
+      "num_messages": 2,
+      "max_steps": 1000000,
+      "tot_num_response_episodes": 300,
+      "tot_num_reward_episodes": 9,
+      "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05,
+      "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1,
+      "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full",
+      "ent_coef": 0,
+      "ppo_episodes_per_batch": 1,
+      "eval_freq": 10000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 9,
       "seed": "{seed}"
     },
-    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 75}
+    "cohort": {
+      "seeds": "1-25",
+      "selection": "All seeds; no selection across seeds.",
+      "complete_mw_updates": 75,
+      "statistic": "Mean and sample standard error of each seed's best certified exact evaluation."
+    },
+    "parameter_exceptions": {
+      "ppo_episodes_per_batch": {
+        "value": 1,
+        "reason": "One maximum-length outer episode per update is the retained SPM/MSPM benchmark protocol."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "table_mspm_4types_2messages": {
     "status": "owned_here",
@@ -268,17 +338,38 @@
     "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace", "num_types": 4, "num_messages": 2,
-      "max_steps": 1000000, "tot_num_response_episodes": 532,
-      "tot_num_reward_episodes": 16, "mw_fixed_seed": 0,
-      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
-      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
-      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
-      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
-      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 16,
+      "setting": "MSGSpace",
+      "num_types": 4,
+      "num_messages": 2,
+      "max_steps": 1000000,
+      "tot_num_response_episodes": 532,
+      "tot_num_reward_episodes": 16,
+      "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05,
+      "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1,
+      "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full",
+      "ent_coef": 0,
+      "ppo_episodes_per_batch": 1,
+      "eval_freq": 10000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 16,
       "seed": "{seed}"
     },
-    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 133}
+    "cohort": {
+      "seeds": "1-25",
+      "selection": "All seeds; no selection across seeds.",
+      "complete_mw_updates": 133,
+      "statistic": "Mean and sample standard error of each seed's best certified exact evaluation."
+    },
+    "parameter_exceptions": {
+      "ppo_episodes_per_batch": {
+        "value": 1,
+        "reason": "One maximum-length outer episode per update is the retained SPM/MSPM benchmark protocol."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "table_mspm_5types_2messages": {
     "status": "owned_here",
@@ -286,17 +377,38 @@
     "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace", "num_types": 5, "num_messages": 2,
-      "max_steps": 1000000, "tot_num_response_episodes": 832,
-      "tot_num_reward_episodes": 25, "mw_fixed_seed": 0,
-      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
-      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
-      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
-      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
-      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 25,
+      "setting": "MSGSpace",
+      "num_types": 5,
+      "num_messages": 2,
+      "max_steps": 1000000,
+      "tot_num_response_episodes": 832,
+      "tot_num_reward_episodes": 25,
+      "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05,
+      "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1,
+      "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full",
+      "ent_coef": 0,
+      "ppo_episodes_per_batch": 1,
+      "eval_freq": 10000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 25,
       "seed": "{seed}"
     },
-    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 208}
+    "cohort": {
+      "seeds": "1-25",
+      "selection": "All seeds; no selection across seeds.",
+      "complete_mw_updates": 208,
+      "statistic": "Mean and sample standard error of each seed's best certified exact evaluation."
+    },
+    "parameter_exceptions": {
+      "ppo_episodes_per_batch": {
+        "value": 1,
+        "reason": "One maximum-length outer episode per update is the retained SPM/MSPM benchmark protocol."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "table_mspm_6types_2messages": {
     "status": "owned_here",
@@ -304,23 +416,49 @@
     "figure_or_table": "tab:mspmScalingComparison",
     "module": "stackelberg_pomdp.experiments.mspm",
     "args": {
-      "setting": "MSGSpace", "num_types": 6, "num_messages": 2,
-      "max_steps": 1000000, "tot_num_response_episodes": 1200,
-      "tot_num_reward_episodes": 36, "mw_fixed_seed": 0,
-      "response_bcce_threshold": 0.05, "response_bcce_min_records": 1,
-      "response_bcce_check_freq": 1, "response_bcce_max_extra_updates": 10000,
-      "critic_obs": "full", "learning_rate": 0.0003, "ent_coef": 0,
-      "ppo_episodes_per_batch": 1, "ppo_batch_size": 64, "ppo_n_epochs": 10,
-      "eval_freq": 10000, "eval_episodes": 1, "eval_reward_episodes": 36,
+      "setting": "MSGSpace",
+      "num_types": 6,
+      "num_messages": 2,
+      "max_steps": 1000000,
+      "tot_num_response_episodes": 1200,
+      "tot_num_reward_episodes": 36,
+      "mw_fixed_seed": 0,
+      "response_bcce_threshold": 0.05,
+      "response_bcce_min_records": 1,
+      "response_bcce_check_freq": 1,
+      "response_bcce_max_extra_updates": 10000,
+      "critic_obs": "full",
+      "ent_coef": 0,
+      "ppo_episodes_per_batch": 1,
+      "eval_freq": 10000,
+      "eval_episodes": 1,
+      "eval_reward_episodes": 36,
       "seed": "{seed}"
     },
-    "cohort": {"seeds": "1-25", "selected_seeds": 12, "selection": "Top 12 by each seed's best deterministic exact-evaluation reward during training.", "complete_mw_updates": 300}
+    "cohort": {
+      "seeds": "1-25",
+      "selection": "All seeds; no selection across seeds.",
+      "complete_mw_updates": 300,
+      "statistic": "Mean and sample standard error of each seed's best certified exact evaluation."
+    },
+    "parameter_exceptions": {
+      "ppo_episodes_per_batch": {
+        "value": 1,
+        "reason": "One maximum-length outer episode per update is the retained SPM/MSPM benchmark protocol."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md."
   },
   "table_spm_exact_optima": {
     "status": "analytic",
     "description": "The standard-SPM scaling column is computed analytically, not from training runs.",
     "figure_or_table": "tab:mspmScalingComparison",
-    "values": {"3": "-1/18", "4": "-1/24", "5": "-1/20", "6": "-2/45"}
+    "values": {
+      "3": "-1/18",
+      "4": "-1/24",
+      "5": "-1/20",
+      "6": "-2/45"
+    }
   },
   "fig_matrix_design_ablation": {
     "status": "owned_here",
@@ -330,8 +468,6 @@
     "args": {
       "max_steps": 5000000,
       "algorithm": "PPO",
-      "learning_rate": 0.0007,
-      "tot_num_response_episodes": 30,
       "tot_num_reward_episodes": 1,
       "eval_freq": 5000,
       "eval_episodes": 1,
@@ -340,26 +476,53 @@
       "followers_algorithm": "MW",
       "mw_epsilon": 0.1,
       "mw_reset_weights_each_episode": true,
-      "align_mw_response_phase": false,
       "ent_coef": 0.01,
-      "ppo_rollout_geometry": "historical_ratio_scaled",
-      "ppo_episodes_per_batch": 16,
-      "ppo_n_epochs": 4,
-      "seed": "{seed}"
+      "seed": "{seed}",
+      "mw_response_cycles": 33
     },
     "variants": [
-      {"name": "stackpomdp_mappo", "args": {"critic_obs": "full", "pomdp_mode": "stackelberg"}},
-      {"name": "stackpomdp_ppo", "args": {"critic_obs": "none", "pomdp_mode": "stackelberg"}},
-      {"name": "basic_mappo", "args": {"critic_obs": "full", "pomdp_mode": "hidden_queries"}},
-      {"name": "basic_ppo", "args": {"critic_obs": "none", "pomdp_mode": "hidden_queries"}}
+      {
+        "name": "stackpomdp_mappo",
+        "args": {
+          "critic_obs": "full",
+          "pomdp_mode": "stackelberg"
+        }
+      },
+      {
+        "name": "stackpomdp_ppo",
+        "args": {
+          "critic_obs": "none",
+          "pomdp_mode": "stackelberg"
+        }
+      },
+      {
+        "name": "basic_mappo",
+        "args": {
+          "critic_obs": "full",
+          "pomdp_mode": "hidden_queries"
+        }
+      },
+      {
+        "name": "basic_ppo",
+        "args": {
+          "critic_obs": "none",
+          "pomdp_mode": "hidden_queries"
+        }
+      }
     ],
     "cohort": {
       "seeds": "1-25",
-      "executed_response_games": 30,
-      "complete_mw_updates": 7,
-      "incomplete_final_cycle_queries": 2,
-      "note": "The retained protocol executed all 30 queries; the final two queries form an incomplete four-action MW cycle and do not update the response weights."
-    }
+      "executed_response_games": 132,
+      "complete_mw_updates": 33,
+      "note": "Prospective shared 33-update protocol; retained curves used different response budgets. See replication/README.md."
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "calibration_price_collusion_m4_grid": {
     "status": "owned_prerequisite",
@@ -375,23 +538,132 @@
       "max_steps": 10000000
     },
     "variants": [
-      {"name": "alpha0p05_beta4em5", "args": {"alpha": 0.05, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em5"}},
-      {"name": "alpha0p05_beta1em4", "args": {"alpha": 0.05, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em4"}},
-      {"name": "alpha0p05_beta4em4", "args": {"alpha": 0.05, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em4"}},
-      {"name": "alpha0p05_beta1em3", "args": {"alpha": 0.05, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em3"}},
-      {"name": "alpha0p05_beta4em3", "args": {"alpha": 0.05, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em3"}},
-      {"name": "alpha0p15_beta4em5", "args": {"alpha": 0.15, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em5"}},
-      {"name": "alpha0p15_beta1em4", "args": {"alpha": 0.15, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em4"}},
-      {"name": "alpha0p15_beta4em4", "args": {"alpha": 0.15, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em4"}},
-      {"name": "alpha0p15_beta1em3", "args": {"alpha": 0.15, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em3"}},
-      {"name": "alpha0p15_beta4em3", "args": {"alpha": 0.15, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em3"}},
-      {"name": "alpha0p25_beta4em5", "args": {"alpha": 0.25, "beta": "4e-5", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em5"}},
-      {"name": "alpha0p25_beta1em4", "args": {"alpha": 0.25, "beta": "1e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em4"}},
-      {"name": "alpha0p25_beta4em4", "args": {"alpha": 0.25, "beta": "4e-4", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em4"}},
-      {"name": "alpha0p25_beta1em3", "args": {"alpha": 0.25, "beta": "1e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em3"}},
-      {"name": "alpha0p25_beta4em3", "args": {"alpha": 0.25, "beta": "4e-3", "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em3"}}
+      {
+        "name": "alpha0p05_beta4em5",
+        "args": {
+          "alpha": 0.05,
+          "beta": "4e-5",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em5"
+        }
+      },
+      {
+        "name": "alpha0p05_beta1em4",
+        "args": {
+          "alpha": 0.05,
+          "beta": "1e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em4"
+        }
+      },
+      {
+        "name": "alpha0p05_beta4em4",
+        "args": {
+          "alpha": 0.05,
+          "beta": "4e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em4"
+        }
+      },
+      {
+        "name": "alpha0p05_beta1em3",
+        "args": {
+          "alpha": 0.05,
+          "beta": "1e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta1em3"
+        }
+      },
+      {
+        "name": "alpha0p05_beta4em3",
+        "args": {
+          "alpha": 0.05,
+          "beta": "4e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p05_beta4em3"
+        }
+      },
+      {
+        "name": "alpha0p15_beta4em5",
+        "args": {
+          "alpha": 0.15,
+          "beta": "4e-5",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em5"
+        }
+      },
+      {
+        "name": "alpha0p15_beta1em4",
+        "args": {
+          "alpha": 0.15,
+          "beta": "1e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em4"
+        }
+      },
+      {
+        "name": "alpha0p15_beta4em4",
+        "args": {
+          "alpha": 0.15,
+          "beta": "4e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em4"
+        }
+      },
+      {
+        "name": "alpha0p15_beta1em3",
+        "args": {
+          "alpha": 0.15,
+          "beta": "1e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta1em3"
+        }
+      },
+      {
+        "name": "alpha0p15_beta4em3",
+        "args": {
+          "alpha": 0.15,
+          "beta": "4e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p15_beta4em3"
+        }
+      },
+      {
+        "name": "alpha0p25_beta4em5",
+        "args": {
+          "alpha": 0.25,
+          "beta": "4e-5",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em5"
+        }
+      },
+      {
+        "name": "alpha0p25_beta1em4",
+        "args": {
+          "alpha": 0.25,
+          "beta": "1e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em4"
+        }
+      },
+      {
+        "name": "alpha0p25_beta4em4",
+        "args": {
+          "alpha": 0.25,
+          "beta": "4e-4",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em4"
+        }
+      },
+      {
+        "name": "alpha0p25_beta1em3",
+        "args": {
+          "alpha": 0.25,
+          "beta": "1e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta1em3"
+        }
+      },
+      {
+        "name": "alpha0p25_beta4em3",
+        "args": {
+          "alpha": 0.25,
+          "beta": "4e-3",
+          "output_dir": "results/price_collusion_m4_calibration/alpha0p25_beta4em3"
+        }
+      }
     ],
-    "cohort": {"seeds": "1-5 per cell", "cells": 15, "source_protocol": "historical run_calibrate_m4_new.sh"}
+    "cohort": {
+      "seeds": "1-5 per cell",
+      "cells": 15,
+      "source_protocol": "historical run_calibrate_m4_new.sh"
+    }
   },
   "fig_price_collusion_m4_calibration": {
     "status": "owned_here",
@@ -437,13 +709,21 @@
       "follower_beta": "1e-4",
       "algorithm": "A2C",
       "max_steps": 50000000,
-      "learning_rate": 0.0007,
       "critic_obs": "full",
       "fix_episode_actions": true,
       "ent_coef": 0.01,
       "seed": "{seed}"
     },
-    "cohort": {"seeds": "1-25"}
+    "cohort": {
+      "seeds": "1-25"
+    },
+    "parameter_exceptions": {
+      "ent_coef": {
+        "value": 0.01,
+        "reason": "Maintain exploration of episode commitments; standard SPM retains the referenced learning benchmark. See PARAMETERS.md."
+      }
+    },
+    "parameter_policy": "SB3 optimizer defaults with exceptions documented in replication/PARAMETERS.md; completed September runs retain their frozen settings."
   },
   "fig_collusion_fixed_policy_training": {
     "status": "owned_prerequisite",
@@ -460,39 +740,241 @@
       "seed_offset": 0
     },
     "variants": [
-      {"name": "no_intervention", "args": {"platform_intervention": "no_intervene", "output_dir": "results/collusion_fixed/no_intervention"}},
-      {"name": "pdp", "args": {"platform_intervention": "pdp", "output_dir": "results/collusion_fixed/pdp"}},
-      {"name": "dpdp", "args": {"platform_intervention": "dpdp", "output_dir": "results/collusion_fixed/dpdp"}}
+      {
+        "name": "no_intervention",
+        "args": {
+          "platform_intervention": "no_intervene",
+          "output_dir": "results/collusion_fixed/no_intervention"
+        }
+      },
+      {
+        "name": "pdp",
+        "args": {
+          "platform_intervention": "pdp",
+          "output_dir": "results/collusion_fixed/pdp"
+        }
+      },
+      {
+        "name": "dpdp",
+        "args": {
+          "platform_intervention": "dpdp",
+          "output_dir": "results/collusion_fixed/dpdp"
+        }
+      }
     ]
   },
-  "fig_hidden_queries_ablation": {
-    "status": "archived_data_only",
-    "description": "The plotted PG/ES cohort is retained in the journal data bundle; current maintained matrix code intentionally uses a different audited response profile.",
-    "figure_or_table": "fig_hidden",
-    "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_hidden",
-    "protocol": {"rounds": 5, "seeds_per_condition": 25, "algorithms": ["PG", "RLlib 2.0.1 ES"], "conditions": ["observed", "hidden"]},
-    "todo": "Do not label the maintained paper_joint_v1 rerun as an exact regeneration of this archived legacy cohort."
-  },
   "fig_memory_phase_ablation": {
-    "status": "archived_data_only",
-    "description": "The plotted phase-visible/hidden PG cohort is retained in the journal data bundle.",
+    "status": "owned_here",
+    "description": "Train the maintained fig_memory_pg diagnostic; archived curves remain historical data.",
     "figure_or_table": "fig_memory_pg",
     "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_memory_pg",
-    "protocol": {"algorithm": "PG", "runs_per_curve": 10, "conditions": ["visible", "hidden"]}
+    "protocol": {
+      "algorithm": "PG",
+      "runs_per_curve": 10,
+      "conditions": [
+        "visible",
+        "hidden"
+      ],
+      "implementation": "maintained_pg_simpleq_v1",
+      "historical_replay": false,
+      "dependency": "Train a REINFORCE meta-follower first; supply --response-checkpoint and its matching response contract."
+    },
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "command": [
+      "leader"
+    ],
+    "args": {
+      "figure": "fig_memory_pg",
+      "seed": "{seed}"
+    },
+    "variants": [
+      {
+        "name": "visible_prisoners_dilemma_lr0p004",
+        "args": {
+          "condition": "visible",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.004
+        }
+      },
+      {
+        "name": "visible_prisoners_dilemma_lr0p008",
+        "args": {
+          "condition": "visible",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.008
+        }
+      },
+      {
+        "name": "visible_prisoners_dilemma_lr0p015",
+        "args": {
+          "condition": "visible",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.015
+        }
+      },
+      {
+        "name": "visible_prisoners_dilemma_lr0p03",
+        "args": {
+          "condition": "visible",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.03
+        }
+      },
+      {
+        "name": "hidden_prisoners_dilemma_lr0p008",
+        "args": {
+          "condition": "hidden",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.008
+        }
+      },
+      {
+        "name": "hidden_prisoners_dilemma_lr0p015",
+        "args": {
+          "condition": "hidden",
+          "matrix": "prisoners_dilemma",
+          "learning-rate": 0.015
+        }
+      }
+    ]
   },
   "fig_continuous_follower_learning_ablation": {
-    "status": "archived_data_only",
-    "description": "The plotted fresh/carried-Q cohort predates the terminal-Q correction and is retained as data rather than rerunnable evidence.",
+    "status": "owned_here",
+    "description": "Train the maintained fig_reset diagnostic; archived curves remain historical data.",
     "figure_or_table": "fig_reset",
     "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_reset",
-    "protocol": {"leader_algorithm": "PG", "follower_algorithm": "tabular Q", "runs_per_learning_rate": 3, "conditions": ["reset", "ongoing"]}
+    "protocol": {
+      "leader_algorithm": "PG",
+      "follower_algorithm": "tabular Q",
+      "runs_per_learning_rate": 3,
+      "conditions": [
+        "reset",
+        "ongoing"
+      ],
+      "implementation": "maintained_pg_simpleq_v1",
+      "historical_replay": false
+    },
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "command": [
+      "leader"
+    ],
+    "args": {
+      "figure": "fig_reset",
+      "seed": "{seed}"
+    },
+    "variants": [
+      {
+        "name": "reset_battle_of_the_sexes_lr0p008",
+        "args": {
+          "condition": "reset",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.008
+        }
+      },
+      {
+        "name": "reset_battle_of_the_sexes_lr0p015",
+        "args": {
+          "condition": "reset",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.015
+        }
+      },
+      {
+        "name": "reset_battle_of_the_sexes_lr0p03",
+        "args": {
+          "condition": "reset",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.03
+        }
+      },
+      {
+        "name": "ongoing_battle_of_the_sexes_lr0p008",
+        "args": {
+          "condition": "ongoing",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.008
+        }
+      },
+      {
+        "name": "ongoing_battle_of_the_sexes_lr0p015",
+        "args": {
+          "condition": "ongoing",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.015
+        }
+      },
+      {
+        "name": "ongoing_battle_of_the_sexes_lr0p03",
+        "args": {
+          "condition": "ongoing",
+          "matrix": "battle_of_the_sexes",
+          "learning-rate": 0.03
+        }
+      }
+    ]
   },
   "fig_reward_during_learning_ablation": {
-    "status": "archived_data_only",
-    "description": "The plotted response-reward SimpleQ/tabular-Q cohort is retained in the journal data bundle.",
+    "status": "owned_here",
+    "description": "Train the maintained fig_bots_leaderreward diagnostic; archived curves remain historical data.",
     "figure_or_table": "fig_bots_leaderreward",
     "owner": "Stackelberg-Journal-Version/reproducibility/data/diagnostics/fig_bots_leaderreward",
-    "protocol": {"leader_algorithm": "SimpleQ", "follower_algorithm": "tabular Q", "runs_per_condition": 10, "conditions": ["excluded", "included"], "leader_miscoordination_payoffs": [0, -5]}
+    "protocol": {
+      "leader_algorithm": "SimpleQ",
+      "follower_algorithm": "tabular Q",
+      "runs_per_condition": 10,
+      "conditions": [
+        "excluded",
+        "included"
+      ],
+      "leader_miscoordination_payoffs": [
+        0,
+        -5
+      ],
+      "implementation": "maintained_pg_simpleq_v1",
+      "historical_replay": false
+    },
+    "module": "stackelberg_pomdp.experiments.matrix_ablations",
+    "command": [
+      "leader"
+    ],
+    "args": {
+      "figure": "fig_bots_leaderreward",
+      "seed": "{seed}"
+    },
+    "variants": [
+      {
+        "name": "excluded_coordination_zero_miscoordination_lr0p1",
+        "args": {
+          "condition": "excluded",
+          "matrix": "coordination_zero_miscoordination",
+          "learning-rate": 0.1
+        }
+      },
+      {
+        "name": "included_coordination_zero_miscoordination_lr0p1",
+        "args": {
+          "condition": "included",
+          "matrix": "coordination_zero_miscoordination",
+          "learning-rate": 0.1
+        }
+      },
+      {
+        "name": "excluded_coordination_penalized_miscoordination_lr0p1",
+        "args": {
+          "condition": "excluded",
+          "matrix": "coordination_penalized_miscoordination",
+          "learning-rate": 0.1
+        }
+      },
+      {
+        "name": "included_coordination_penalized_miscoordination_lr0p1",
+        "args": {
+          "condition": "included",
+          "matrix": "coordination_penalized_miscoordination",
+          "learning-rate": 0.1
+        }
+      }
+    ]
   },
   "fig_atari_response_diagnostics": {
     "status": "specialized_workflow",
@@ -506,7 +988,10 @@
     ],
     "protocol": {
       "framework": "Stable-Baselines3 PPO",
-      "roles": ["buyer", "seller"],
+      "roles": [
+        "buyer",
+        "seller"
+      ],
       "gameplay_horizon": 200,
       "trade_events": 5,
       "discount_factor": 1.0,
@@ -528,17 +1013,35 @@
     ],
     "protocol": {
       "framework": "Stable-Baselines3 PPO",
-      "leader_roles": ["buyer", "seller"],
+      "leader_roles": [
+        "buyer",
+        "seller"
+      ],
       "independent_seeds_per_role": 10,
       "training_transitions": 2000040,
-      "scheduled_checkpoint_transitions": [400680, 800520, 1200360, 1600200],
+      "scheduled_checkpoint_transitions": [
+        400680,
+        800520,
+        1200360,
+        1600200
+      ],
       "held_out_screen_episodes_per_checkpoint": 20,
       "fresh_confirmation_episodes": 100,
       "gameplay_horizon": 200,
       "query_events": 5,
       "reward_game_trade_events": 5,
-      "discount_factor": 1.0
+      "discount_factor": 1.0,
+      "plotted_checkpoint_transitions": [
+        0,
+        400680,
+        800520,
+        1200360,
+        1600200,
+        2000040
+      ]
     },
-    "published_data": "Stackelberg-Journal-Version/reproducibility/data/atari/atari_leader_training_curves.csv"
+    "published_data": "Stackelberg-Journal-Version/reproducibility/data/atari/atari_leader_training_curves.csv",
+    "initialization_data": "Stackelberg-Journal-Version/reproducibility/data/atari/atari_e2_initialization_policy_means.csv",
+    "initialization_entrypoint": "Stackelberg-Journal-Version/reproducibility/scripts/evaluate_atari_e2_initialization.py"
   }
 }

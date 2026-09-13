@@ -21,11 +21,8 @@ def build_parser():
         # the trainer), but otherwise use SB3's PPO defaults. One rollout uses
         # the maximum possible StackPOMDP episode length, guaranteeing at least
         # one completed reward phase without padding the economic mechanism.
-        learning_rate=3e-4,
         ent_coef=0.0,
         ppo_episodes_per_batch=1,
-        ppo_batch_size=64,
-        ppo_n_epochs=10,
         mw_fixed_seed=0,
         response_bcce_threshold=0.05,
     )

@@ -18,14 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SBATCH = ROOT / "replication/atari/automation/unity_atari_e2_multiseed.sbatch"
 
 
-def test_array_supports_canonical_and_frozen_gameplay_cohorts():
+def test_array_covers_both_paper_roles_and_ten_seeds():
     text = SBATCH.read_text(encoding="utf-8")
     assert "#SBATCH --array=0-19%8" in text
     assert "SEED=$((TASK_ID / 2 + 1))" in text
     assert "TASK_ID % 2 == 0" in text
-    assert "frozen-buyer" in text
-    assert "SEED=$((TASK_ID + 1))" in text
-    assert "--freeze-gameplay-actor" in text
     assert "--timesteps 2000040" in text
     assert "--screen-seed-start 4000001" in text
     assert "--confirmation-seed-start 5000001" in text
@@ -49,7 +46,7 @@ def test_policy_level_sem_uses_ten_means_not_pooled_episodes():
     )
 
 
-def test_aggregator_accepts_single_role_frozen_ablation():
+def test_aggregator_accepts_one_completed_role():
     args = parse_args([
         "--input-dir", "inputs",
         "--output", "aggregate.json",

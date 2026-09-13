@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import io
 import sys
 import unittest
@@ -18,7 +19,7 @@ class ReplicationManifestTests(unittest.TestCase):
 
     def test_every_runnable_manifest_expansion_parser_validates(self):
         labels = run.validate_targets(self.targets, seed=7)
-        self.assertEqual(len(labels), 37)
+        self.assertEqual(len(labels), 53)
         self.assertIn("fig_matrix_design_ablation:basic_ppo", labels)
         self.assertIn("fig_collusion_fixed_policy_training:dpdp", labels)
         self.assertIn(
@@ -49,26 +50,22 @@ class ReplicationManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(run.ManifestError, "named manifest variant"):
             run.build_commands(target, seed=1)
 
-    def test_manifest_matches_retained_simple_allocation_sampling_protocol(self):
+    def test_manifest_preserves_simple_allocation_reward_sampling_and_plot_horizon(self):
         target = self.targets["fig_simple_allocation_stackpomdp_mappo"]
         self.assertEqual(target["args"]["max_steps"], 5_000_000)
         self.assertEqual(target["args"]["tot_num_reward_episodes"], 30)
         self.assertEqual(target["args"]["eval_reward_episodes"], 30)
         self.assertEqual(target["args"]["eval_freq"], 5_000)
-        self.assertFalse(target["args"]["align_mw_response_phase"])
-        self.assertEqual(
-            target["args"]["ppo_rollout_geometry"],
-            "historical_ratio_scaled",
-        )
+        self.assertEqual(target["args"]["mw_response_cycles"], 33)
+        self.assertNotIn("ppo_rollout_geometry", target["args"])
         self.assertEqual(target["cohort"]["plot_max_steps"], 1_000_000)
 
-    def test_historical_unaligned_prefix_and_clean_alignment_are_distinguished(self):
+    def test_raw_mw_budgets_round_down_and_targets_share_complete_cycle_count(self):
         def effective(experiment_type, requested):
             return _effective_tot_num_response_episodes({
                 "experiment_type": experiment_type,
                 "tot_num_response_episodes": requested,
                 "followers_algorithm": "MW",
-                "align_mw_response_phase": True,
             })
 
         self.assertEqual(effective("simple_allocation:1", 100), 100)
@@ -76,20 +73,45 @@ class ReplicationManifestTests(unittest.TestCase):
         self.assertEqual(effective("simple_allocation:3", 100), 99)
         self.assertEqual(effective("matrix_design", 30), 28)
 
-        simple = self.targets["fig_simple_allocation_stackpomdp_mappo"]
-        matrix = self.targets["fig_matrix_design_ablation"]
-        self.assertFalse(simple["args"]["align_mw_response_phase"])
-        self.assertEqual(simple["cohort"]["executed_response_games"], 100)
-        self.assertEqual(simple["cohort"]["complete_mw_updates"], 33)
-        self.assertEqual(simple["cohort"]["incomplete_final_cycle_queries"], 1)
-        self.assertFalse(matrix["args"]["align_mw_response_phase"])
-        self.assertEqual(
-            matrix["args"]["ppo_rollout_geometry"],
-            "historical_ratio_scaled",
-        )
-        self.assertEqual(matrix["cohort"]["executed_response_games"], 30)
-        self.assertEqual(matrix["cohort"]["complete_mw_updates"], 7)
-        self.assertEqual(matrix["cohort"]["incomplete_final_cycle_queries"], 2)
+        for target in self.targets.values():
+            if target.get("module") not in {
+                "stackelberg_pomdp.experiments.simple_allocation",
+                "stackelberg_pomdp.experiments.matrix_design",
+            }:
+                continue
+            args = target["args"]
+            self.assertNotIn("align_mw_response_phase", args)
+            self.assertNotIn("tot_num_response_episodes", args)
+            self.assertEqual(args["mw_response_cycles"], 33)
+            self.assertEqual(target["cohort"]["complete_mw_updates"], 33)
+            self.assertEqual(target["cohort"]["executed_response_games"],
+                             33 * args.get("num_messages", 4))
+            self.assertNotIn("incomplete_final_cycle_queries", target["cohort"])
+
+    def test_undocumented_optimizer_override_cannot_enter_a_replication_command(self):
+        target = copy.deepcopy(self.targets["fig_simple_allocation_stackpomdp_mappo"])
+        target["args"]["ppo_batch_size"] = 8192
+        with self.assertRaisesRegex(run.ManifestError, "parameter_exceptions"):
+            run.build_commands(target, seed=1)
+        target["parameter_exceptions"]["ppo_batch_size"] = {
+            "value": 8192, "reason": "Explicit September batching diagnostic.",
+        }
+        self.assertEqual(len(run.build_commands(target, seed=1)), 1)
+        target["args"]["ppo_batch_size"] = 4096
+        with self.assertRaisesRegex(run.ManifestError, "parameter_exceptions"):
+            run.build_commands(target, seed=1)
+
+    def test_response_budget_override_can_change_units(self):
+        target = self.targets["fig_simple_allocation_stackpomdp_mappo"]
+        command = run.build_commands(target, seed=1,
+                                     extra_args=["--tot_num_response_episodes", "100"])[0][1]
+        self.assertNotIn("--mw_response_cycles", command)
+        run.validate_command(command)
+        target = self.targets["fig_pi_mspm_2types_2messages"]
+        command = run.build_commands(target, seed=1,
+                                     extra_args=["--mw_response_cycles=25"])[0][1]
+        self.assertNotIn("--tot_num_response_episodes", command)
+        run.validate_command(command)
 
     def test_obsolete_nonpaper_targets_are_not_exposed(self):
         obsolete = {

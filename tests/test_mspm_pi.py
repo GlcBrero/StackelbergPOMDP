@@ -22,13 +22,13 @@ from stackelberg_pomdp.follower_responses import (
     MultiplicativeWeightsResponse,
 )
 from stackelberg_pomdp.games import PISetting
-from stackelberg_pomdp.envs.base import BaseMessageSPM
+from stackelberg_pomdp.envs.spm import BaseMessageSPM
 from stackelberg_pomdp.wrappers.core import (
     ExpectedResponseRewardWrapper,
     MWFollowersWrapper,
     StackPOMDPWrapper,
 )
-from stackelberg_pomdp.policies.leader import BaselinePolicyWrapper
+from stackelberg_pomdp.evaluation import BaselinePolicyWrapper
 from stackelberg_pomdp.rl_trainer_setup import (
     get_custom_training_algorithm,
     get_observation_split,
@@ -505,7 +505,7 @@ class MSPMPIRegressionTests(unittest.TestCase):
             "num_types": 2,
             "num_messages": 2,
             "followers_algorithm": "MW",
-            "tot_num_response_episodes": 4,
+            "tot_num_response_episodes": 7,
             "tot_num_reward_episodes": 4,
             "critic_obs": "full",
             "pomdp_mode": "stackelberg",
@@ -517,6 +517,7 @@ class MSPMPIRegressionTests(unittest.TestCase):
         env = get_mspm_env(config)
         env.set_response_leader_policy(object())
         response_flags = []
+        action_phase_flags = []
         reward_weights = []
         response_boundary = None
         episode_return = 0.0
@@ -528,10 +529,11 @@ class MSPMPIRegressionTests(unittest.TestCase):
             "stackelberg_pomdp.follower_responses.check_empirical_bcce_gap",
             side_effect=gaps,
         ):
-            env.reset()
+            observation = env.reset()
             done = False
             while not done:
-                _, reward, done, info = env.step(action)
+                action_phase_flags.append(observation["critic:is_reward_step"])
+                observation, reward, done, info = env.step(action)
                 episode_return += float(reward)
                 if not info.get("is_reward_phase", False):
                     response_flags.append(info["exclude_from_buffer"])
@@ -541,7 +543,11 @@ class MSPMPIRegressionTests(unittest.TestCase):
                     response_boundary = dict(info)
 
         self.assertEqual(response_flags, [False] * 4 + [True] * 4)
+        self.assertEqual(action_phase_flags[:8], [0] * 8)
+        self.assertEqual(set(action_phase_flags[8:]), {1})
         self.assertEqual(response_boundary["response_updates"], 2)
+        self.assertEqual(response_boundary["requested_response_games"], 7)
+        self.assertEqual(response_boundary["response_prefix_games"], 4)
         self.assertEqual(response_boundary["response_extra_updates"], 1)
         self.assertEqual(response_boundary["response_candidate"], "last_mixed")
         self.assertTrue(response_boundary["response_bcce_certified"])

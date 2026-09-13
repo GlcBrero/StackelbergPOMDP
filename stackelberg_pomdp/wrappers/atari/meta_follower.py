@@ -35,14 +35,12 @@ from stackelberg_pomdp.atari.protocol import (
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQueryTrace
 from stackelberg_pomdp.envs.atari.bilateral import (
-    BUYER,
     ROLES,
-    SELLER,
     BilateralAtariConfig,
     BilateralAtariRewardEnv,
     DualAtariTradeCore,
 )
-from stackelberg_pomdp.policies.atari.loading import load_frozen_atari_model
+from stackelberg_pomdp.checkpoints import load_frozen_atari_model
 from stackelberg_pomdp.wrappers.core import (
     FollowerWrapper,
     StackPOMDPWrapper,

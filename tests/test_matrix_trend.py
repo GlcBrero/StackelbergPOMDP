@@ -107,10 +107,10 @@ def test_summary_collapses_attempts_and_uses_paired_sample_sem(tmp_path):
     trend = load_trend()
     records = []
     hidden = {}
-    for condition in ("observed", "hidden"):
+    for condition in ("visible", "hidden"):
         for seed in (1, 2):
             record = leader_record(
-                "hidden_queries", "modified_pd", "A2C", condition, seed
+                "phase_observability", "prisoners_dilemma", "PPO", condition, seed
             )
             records.append(record)
             hidden[condition, seed] = record
@@ -129,9 +129,9 @@ def test_summary_collapses_attempts_and_uses_paired_sample_sem(tmp_path):
     records.extend((phase_visible, phase_hidden, reset, ongoing))
     plan_path = write_plan(tmp_path / "test-sweep", records)
 
-    write_attempt(trend, plan_path, hidden["observed", 1], 0, "failed")
-    write_attempt(trend, plan_path, hidden["observed", 1], 1, "completed", 1.0)
-    write_attempt(trend, plan_path, hidden["observed", 2], 0, "completed", 3.0)
+    write_attempt(trend, plan_path, hidden["visible", 1], 0, "failed")
+    write_attempt(trend, plan_path, hidden["visible", 1], 1, "completed", 1.0)
+    write_attempt(trend, plan_path, hidden["visible", 2], 0, "completed", 3.0)
     write_attempt(trend, plan_path, hidden["hidden", 1], 0, "completed", 0.0)
     write_attempt(trend, plan_path, hidden["hidden", 2], 0, "completed", 0.0)
     write_attempt(trend, plan_path, phase_visible, 0, "running")
@@ -148,21 +148,21 @@ def test_summary_collapses_attempts_and_uses_paired_sample_sem(tmp_path):
     }
     selected = next(
         row for row in summary["records"]
-        if row["record_key"] == hidden["observed", 1]["key"]
+        if row["record_key"] == hidden["visible", 1]["key"]
     )
     assert selected["attempts"] == 2
     assert selected["selected_attempt"] == 1
 
     observed = next(
         row for row in summary["final_per_stage"]
-        if row["experiment"] == "hidden_queries"
-        and row["condition"] == "observed"
+        if row["experiment"] == "phase_observability"
+        and row["condition"] == "visible" and row["algorithm"] == "PPO"
     )
     assert observed["mean"] == 2.0
     assert observed["std"] == 2.0 ** 0.5
     assert observed["sem"] == 1.0
-    delta = summary["condition_deltas"]["hidden_queries"][0]
-    assert delta["definition"] == "observed - hidden"
+    delta = next(row for row in summary["condition_deltas"]["phase_observability"] if row["algorithm"] == "PPO")
+    assert delta["definition"] == "visible - hidden"
     assert delta["paired_seeds"] == [1, 2]
     assert delta["mean"] == 2.0
     assert delta["sem"] == 1.0
@@ -184,9 +184,6 @@ def test_condition_deltas_cover_all_paper_comparisons():
             "per_stage_mean": value,
         })
 
-    for algorithm in ("A2C", "PPO", "ES"):
-        add("hidden_queries", "modified_pd", algorithm, "observed", 1, 2.0)
-        add("hidden_queries", "modified_pd", algorithm, "hidden", 1, 1.0)
     add("phase_observability", "prisoners_dilemma", "A2C", "visible", 1, 0.0)
     add("phase_observability", "prisoners_dilemma", "A2C", "hidden", 1, -1.0)
     add("q_reset", "battle_of_the_sexes", "A2C", "reset", 1, 2.0)
@@ -196,12 +193,6 @@ def test_condition_deltas_cover_all_paper_comparisons():
         add("response_reward", matrix, "A2C", "included", 1, 1.0)
 
     result = trend.condition_deltas(rows)
-    hidden = {row["algorithm"]: row for row in result["hidden_queries"]}
-    assert set(hidden) == {"A2C", "PPO", "ES"}
-    assert hidden["A2C"]["definition"] == "observed - hidden"
-    assert hidden["PPO"]["mean"] == 1.0
-    assert hidden["ES"]["kind"] == "gap"
-    assert hidden["ES"]["absolute_mean_gap"] == 1.0
     assert result["phase_observability"][0]["definition"] == "visible - hidden"
     assert result["q_reset"][0]["definition"] == "reset - ongoing"
     response = result["response_reward"]

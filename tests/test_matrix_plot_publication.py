@@ -31,7 +31,6 @@ def summary_rows(experiment, matrices, algorithms, conditions):
                         "algorithm": algorithm,
                         "condition": condition,
                         "learning_rate": 0.008,
-                        "es_stepsize": np.nan,
                         "evaluation_target_step": step,
                         "mean": mean,
                         "std": np.sqrt(2.0),
@@ -52,7 +51,6 @@ def test_sample_sem_is_across_unique_seed_values_and_not_zero_for_one_seed():
         "algorithm": "A2C",
         "condition": "reset",
         "learning_rate": 0.008,
-        "es_stepsize": np.nan,
         "evaluation_target_step": 100,
     }
     single = plot.summarize(pd.DataFrame([{**base, "seed": 1,
@@ -97,11 +95,6 @@ def test_all_plot_types_use_normal_weight_semantic_titles_and_figure_legends():
     plot = load_plotter()
     plot.configure_style()
     figures = [
-        plot.plot_hidden(summary_rows(
-            "hidden_queries", ["modified_pd"],
-            ["ES", "PPO", "A2C", "PG"],
-            ["observed", "hidden"],
-        )),
         plot.plot_phase(summary_rows(
             "phase_observability", ["prisoners_dilemma"], ["A2C"],
             ["visible", "hidden"],
@@ -135,11 +128,6 @@ def test_all_plot_types_use_normal_weight_semantic_titles_and_figure_legends():
         assert response_titles == [
             "No coordination penalty", "Coordination penalty (−5)",
         ]
-        assert [ax.title.get_text() for ax in figures[0].axes] == [
-            "Policy gradient", "A2C", "PPO", "Evolution strategies",
-        ]
-        for ax in figures[0].axes:
-            assert [line.get_linestyle() for line in ax.lines] == ["-", "--"]
     finally:
         for figure in figures:
             plt.close(figure)
@@ -166,7 +154,6 @@ def test_render_keeps_vector_pdf_and_figure_grouped_paper_logs(tmp_path):
                 "algorithm": "A2C",
                 "seed": seed,
                 "learning_rate": 0.008,
-                "es_stepsize": np.nan,
             }
             runs.append(base)
             configs.append({**base, "config_json": "{}"})

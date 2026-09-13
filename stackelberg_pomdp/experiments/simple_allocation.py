@@ -1,6 +1,7 @@
 import argparse
 
 from stackelberg_pomdp.experiments.common import (
+    DEFAULT_MECHANISM_MW_CYCLES,
     add_common_training_args,
     add_response_phase_args,
     finalized_config,
@@ -11,7 +12,8 @@ from stackelberg_pomdp.experiments.common import (
 def build_parser():
     parser = argparse.ArgumentParser(description="Simple allocation StackPOMDP experiment.")
     parser.add_argument("--num_messages", type=int, default=3)
-    add_response_phase_args(parser, default_response_episodes=100, default_reward_episodes=30)
+    add_response_phase_args(parser, default_response_episodes=100, default_reward_episodes=30,
+                            default_response_cycles=DEFAULT_MECHANISM_MW_CYCLES)
     add_common_training_args(parser, default_algorithm="PPO", default_max_steps=100000)
     return parser
 

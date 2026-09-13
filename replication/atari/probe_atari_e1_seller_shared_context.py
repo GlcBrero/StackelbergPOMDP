@@ -21,7 +21,7 @@ import torch as th
 from replication.atari import probe_atari_e1_seller_conditioning as base_probe
 from replication.atari import train_atari_meta_response_sb3 as trainer
 from stackelberg_pomdp.atari.training import write_json
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import (
     SELLER_SHARED_CONTEXT_BETA_V5,
     seller_shared_context_architecture_provenance,
 )
@@ -74,7 +74,7 @@ def validate_loaded_seller(model, metadata, e0b_metadata):
         model, trainer.SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None
     )
     revision = getattr(
-        model, trainer.E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
+        model, trainer.TRAINING_CODE_REVISION_ATTRIBUTE, None
     )
     source = metadata.get("e0b_source_provenance", {})
     group_names = [
@@ -88,12 +88,6 @@ def validate_loaded_seller(model, metadata, e0b_metadata):
             getattr(policy, "economic_architecture", None)
             == PARAMETERIZATION
         ),
-        "legacy_threshold_residual_disabled": not bool(getattr(
-            policy, "economic_threshold_residual", False
-        )),
-        "legacy_direct_threshold_input_disabled": not bool(getattr(
-            policy, "economic_threshold_residual_direct_input", False
-        )),
         "policy_architecture_provenance_exact": (
             policy.economic_architecture_provenance() == architecture
         ),
@@ -112,16 +106,10 @@ def validate_loaded_seller(model, metadata, e0b_metadata):
         "metadata_initialization_provenance_exact": (
             metadata.get("shared_context_initialization") == initialization
         ),
-        "training_config_enables_only_v5": (
+        "training_config_selects_retained_seller": (
             metadata.get("training_config", {}).get(
                 "economic_architecture"
             ) == PARAMETERIZATION
-            and "economic_threshold_residual" not in metadata.get(
-                "training_config", {}
-            )
-            and "economic_threshold_residual_direct_input" not in metadata.get(
-                "training_config", {}
-            )
         ),
         "live_branch_shapes_exact": (
             policy.economic_live_encoder[0].in_features == 9

@@ -1,0 +1,12 @@
+The numerical data under `reproducibility/data/`, the provenance records under
+`reproducibility/audit/provenance/`, and the trained checkpoint archives listed
+in `reproducibility/artifacts/atari/checkpoints/manifest.csv` are licensed
+under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+
+License text and terms: https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution: The Stackelberg POMDP authors (2026), "Stackelberg POMDP:
+Learning to Lead via Reinforcement Learning," JAIR reproducibility artifact.
+
+This license does not cover the Atari Space Invaders ROM, which is not
+distributed in this repository, or third-party software named in the paper.

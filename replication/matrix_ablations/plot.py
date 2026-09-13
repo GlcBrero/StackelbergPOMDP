@@ -16,19 +16,16 @@ import pandas as pd
 
 
 FIGURES = (
-    "fig_hidden",
     "fig_phase_observability",
     "fig_q_reset",
     "fig_response_reward",
 )
 EXPERIMENT_FOR_FIGURE = {
-    "fig_hidden": "hidden_queries",
     "fig_phase_observability": "phase_observability",
     "fig_q_reset": "q_reset",
     "fig_response_reward": "response_reward",
 }
 PAPER_BASENAME = {
-    "fig_hidden": "fig_hidden",
     "fig_phase_observability": "fig_memory_pg",
     "fig_q_reset": "fig_reset",
     "fig_response_reward": "fig_bots_leaderreward",
@@ -69,28 +66,34 @@ LABELS = {
     "excluded": "Response reward excluded",
     "included": "Response reward included",
 }
-NATIVE_RLLIB_ES_IMPLEMENTATION = "ray_rllib_es_2_0_1"
-ES_IMPLEMENTATION_NOT_APPLICABLE = "not_applicable"
 PLOT_UNIT_ENVIRONMENT_TRANSITIONS = "environment_transitions"
-PLOT_UNIT_ES_ITERATIONS = "es_iterations"
-ALGORITHM_TITLES = {
-    "PG": "Policy gradient",
-    "A2C": "A2C",
-    "PPO": "PPO",
-    "ES": "Evolution strategies",
-}
 PAPER_REQUIRED_CELLS = {
-    "fig_hidden": {
-        ("hidden_queries", "modified_pd", "PG", "observed"),
-        ("hidden_queries", "modified_pd", "PG", "hidden"),
-        ("hidden_queries", "modified_pd", "ES", "observed"),
-        ("hidden_queries", "modified_pd", "ES", "hidden"),
+    "fig_phase_observability": {
+        ("phase_observability", "prisoners_dilemma", "PG", condition)
+        for condition in ("visible", "hidden")
+    },
+    "fig_q_reset": {
+        ("q_reset", "battle_of_the_sexes", "PG", condition)
+        for condition in ("reset", "ongoing")
+    },
+    "fig_response_reward": {
+        ("response_reward", matrix, "SIMPLEQ", condition)
+        for matrix in ("coordination_zero_miscoordination", "coordination_penalized_miscoordination")
+        for condition in ("excluded", "included")
     },
 }
-PAPER_REQUIRED_PROFILES = {
-    "fig_hidden": "paper_joint_v1",
-}
+PAPER_REQUIRED_PROFILES = {"fig_phase_observability": "paper_joint_v1"}
 PAPER_CELL_COLUMNS = ("experiment", "matrix", "algorithm", "condition")
+CURVE_COLUMNS = (*PAPER_CELL_COLUMNS, "learning_rate")
+
+
+def curve_seeds(expected, row):
+    if isinstance(expected, dict):
+        key = tuple(row[column] for column in CURVE_COLUMNS)
+        if key not in expected:
+            raise ValueError("curve is absent from the sweep plan: {}".format(key))
+        return expected[key]
+    return expected
 
 
 def read_json(path):
@@ -122,46 +125,15 @@ def config_sha256(config):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def effective_step_sizes(config, config_path):
-    """Return the algorithm-specific step sizes recorded for plotting.
-
-    Corrected ES runs intentionally leave ``learning_rate`` null and expose
-    their effective Adam update size as ``es_stepsize``.  Other leader
-    algorithms use ``learning_rate``; the always-present ES CLI default is
-    irrelevant for those runs and must not define their cohort.
-    """
-    algorithm = config.get("algorithm")
-    if algorithm == "ES":
-        if config.get("learning_rate") is not None:
-            raise ValueError(
-                "corrected ES config must record learning_rate as null: {}".format(
-                    config_path
-                )
-            )
-        name = "es_protocol.stepsize"
-        value = (config.get("es_protocol") or {}).get("stepsize")
-        learning_rate = None
-    else:
-        name = "learning_rate"
-        value = config.get(name)
-        learning_rate = value
+def effective_learning_rate(config, config_path):
+    """Require a positive numeric step size before combining training curves."""
     try:
-        value = float(value)
+        value = float(config.get("learning_rate"))
     except (TypeError, ValueError):
-        raise ValueError(
-            "{} config has no numeric effective {}: {}".format(
-                algorithm, name, config_path
-            )
-        )
+        raise ValueError(f"Missing numeric learning_rate: {config_path}")
     if not np.isfinite(value) or value <= 0.0:
-        raise ValueError(
-            "{} config has invalid effective {}: {}".format(
-                algorithm, name, config_path
-            )
-        )
-    if algorithm == "ES":
-        return None, value
-    return float(learning_rate), None
+        raise ValueError(f"Invalid learning_rate: {config_path}")
+    return value
 
 
 def collect_runs(root):
@@ -195,17 +167,9 @@ def collect_runs(root):
             if progress_artifact["sha256"] != sha256(progress_path):
                 raise ValueError("progress hash mismatch in {}".format(progress_path))
         algorithm = config["algorithm"]
-        es_implementation = ES_IMPLEMENTATION_NOT_APPLICABLE
-        if algorithm == "ES":
-            es_implementation = (config.get("es_protocol") or {}).get(
-                "implementation"
-            )
-            # Historical custom ES artifacts remain immutable provenance, but
-            # they are not an active paper treatment.  Non-ES runs in the same
-            # result root remain eligible for aggregation.
-            if es_implementation != NATIVE_RLLIB_ES_IMPLEMENTATION:
-                continue
-        learning_rate, es_stepsize = effective_step_sizes(config, config_path)
+        if config["experiment"] not in EXPERIMENT_FOR_FIGURE.values():
+            continue
+        learning_rate = effective_learning_rate(config, config_path)
         run_id = manifest.get("config_sha256", manifest_path.parent.name)
         base = {
             "run_id": run_id,
@@ -216,10 +180,8 @@ def collect_runs(root):
             "condition": config["condition"],
             "matrix": config["matrix"],
             "algorithm": algorithm,
-            "es_implementation": es_implementation,
             "seed": int(config["seed"]),
             "learning_rate": learning_rate,
-            "es_stepsize": es_stepsize,
         }
         runs.append(base)
         configs.append({
@@ -227,76 +189,25 @@ def collect_runs(root):
             "config_json": json.dumps(config, sort_keys=True, separators=(",", ":")),
         })
         for row_number, row in enumerate(read_jsonl(progress_path), start=1):
-            if algorithm == "ES":
-                evaluation_keys = {
-                    "iteration", "measured_timesteps_total",
-                    "native_episode_reward_mean",
-                    "native_leader_reward_per_stage",
-                }
-                present = evaluation_keys.intersection(row)
-                if not present:
-                    continue
-                if present != evaluation_keys:
-                    raise ValueError(
-                        "partial native RLlib ES row {} in {}".format(
-                            row_number, progress_path
-                        )
-                    )
-                native_return = float(row["native_episode_reward_mean"])
-                reward = float(row["native_leader_reward_per_stage"])
-                expected_reward = native_return / float(config["episode_length"])
-                if not np.isclose(reward, expected_reward, rtol=0.0, atol=1e-12):
-                    raise ValueError(
-                        "native RLlib return/per-stage mismatch at row {} in {}"
-                        .format(row_number, progress_path)
-                    )
-                plot_step = int(row["iteration"])
-                plot_step_unit = PLOT_UNIT_ES_ITERATIONS
-                evaluation_metric = "native_episode_reward_mean_per_stage"
-                evaluation_target_step = plot_step
-                measured_timesteps = int(row["measured_timesteps_total"])
-                if measured_timesteps < 1:
-                    raise ValueError(
-                        "native RLlib ES row has invalid measured timesteps at "
-                        "row {} in {}".format(
-                            row_number, progress_path
-                        )
-                    )
-                report_length = int(
-                    (config.get("es_protocol") or {}).get(
-                        "report_length", 0
+            evaluation_keys = {
+                "evaluation_target_step", "evaluation_mean"
+            }
+            present = evaluation_keys.intersection(row)
+            if not present:
+                continue
+            if present != evaluation_keys:
+                raise ValueError(
+                    "partial evaluation row {} in {}".format(
+                        row_number, progress_path
                     )
                 )
-                if report_length < 1:
-                    raise ValueError(
-                        "native RLlib ES config has invalid report_length: {}"
-                        .format(config_path)
-                    )
-                # Ray 2.0.1 ES appends one mean evaluation return per
-                # optimizer iteration, then reports the mean of the most
-                # recent ``report_length`` entries (es.py:481, 496).
-                evaluation_window_size = min(plot_step, report_length)
-                evaluation_window_capacity = report_length
-            else:
-                evaluation_keys = {
-                    "evaluation_target_step", "evaluation_mean"
-                }
-                present = evaluation_keys.intersection(row)
-                if not present:
-                    continue
-                if present != evaluation_keys:
-                    raise ValueError(
-                        "partial evaluation row {} in {}".format(
-                            row_number, progress_path
-                        )
-                    )
-                reward = float(row["evaluation_mean"])
-                evaluation_target_step = int(row["evaluation_target_step"])
-                plot_step = evaluation_target_step
-                plot_step_unit = PLOT_UNIT_ENVIRONMENT_TRANSITIONS
-                evaluation_metric = "evaluation_mean"
-                evaluation_window_size = 1
-                evaluation_window_capacity = 1
+            reward = float(row["evaluation_mean"])
+            evaluation_target_step = int(row["evaluation_target_step"])
+            plot_step = evaluation_target_step
+            plot_step_unit = PLOT_UNIT_ENVIRONMENT_TRANSITIONS
+            evaluation_metric = "evaluation_mean"
+            evaluation_window_size = 1
+            evaluation_window_capacity = 1
             within_run_sem = float(row.get("evaluation_sem", 0.0))
             if not np.isfinite(reward) or not np.isfinite(within_run_sem):
                 raise ValueError(
@@ -366,37 +277,9 @@ def validate_runs(runs, expected_seeds, allow_incomplete):
                 mixed.to_dict()
             )
         )
-    for group_key, group in completed.groupby(
-        ["experiment", "matrix", "algorithm"], dropna=False
-    ):
-        step_sizes = group[["learning_rate", "es_stepsize"]].drop_duplicates()
-        if len(step_sizes) > 1:
-            raise ValueError(
-                "mixed effective step sizes are forbidden for {}: {}".format(
-                    group_key, step_sizes.to_dict("records")
-                )
-            )
     if len(completed) != len(runs) and not allow_incomplete:
         raise ValueError("incomplete or failed runs are present")
-    if "es_implementation" in completed:
-        es_completed = completed[completed["algorithm"] == "ES"].copy()
-        if not es_completed.empty:
-            es_completed["_implementation"] = es_completed[
-                "es_implementation"
-            ].fillna(
-                "<missing>"
-            )
-            implementation_groups = es_completed.groupby(
-                ["experiment", "matrix"], dropna=False
-            )["_implementation"].nunique()
-            mixed = implementation_groups[implementation_groups > 1]
-            if len(mixed):
-                raise ValueError(
-                    "mixed ES implementations are forbidden: {}".format(
-                        mixed.to_dict()
-                    )
-                )
-    key = ["experiment", "matrix", "algorithm", "condition", "seed"]
+    key = [*CURVE_COLUMNS, "seed"]
     duplicates = completed.duplicated(key, keep=False)
     if duplicates.any():
         raise ValueError(
@@ -406,10 +289,11 @@ def validate_runs(runs, expected_seeds, allow_incomplete):
         )
     for group_key, group in completed.groupby(key[:-1]):
         found = set(int(value) for value in group["seed"])
-        if found != expected_seeds and not allow_incomplete:
+        required = curve_seeds(expected_seeds, group.iloc[0])
+        if found != required and not allow_incomplete:
             raise ValueError(
                 "seed mismatch for {}: expected {}, found {}".format(
-                    group_key, sorted(expected_seeds), sorted(found)
+                    group_key, sorted(required), sorted(found)
                 )
             )
 
@@ -418,6 +302,10 @@ def validate_required_seed_count(expected_seeds, required_seed_count,
                                  allow_incomplete):
     """Make a paper-grade seed-count requirement explicit and non-bypassable."""
     if required_seed_count is None:
+        return
+    if isinstance(expected_seeds, dict):
+        for seeds in expected_seeds.values():
+            validate_required_seed_count(seeds, required_seed_count, allow_incomplete)
         return
     if required_seed_count < 2:
         raise ValueError("required seed count must be at least two")
@@ -444,6 +332,11 @@ def validate_required_figure_cells(frame, figure, required_seed_count,
             continue
         experiments = {cell[0] for cell in expected}
         scoped = frame[frame["experiment"].isin(experiments)]
+        algorithms = set(scoped["algorithm"].unique())
+        # Explicit A2C/PPO sensitivity runs remain supported, separately.
+        if len(algorithms) == 1 and algorithms <= {"A2C", "PPO"}:
+            algorithm = next(iter(algorithms))
+            expected = {(e, m, algorithm, c) for e, m, _, c in expected}
         found = {
             tuple(row[column] for column in PAPER_CELL_COLUMNS)
             for _, row in scoped.iterrows()
@@ -471,7 +364,7 @@ def validate_required_figure_cells(frame, figure, required_seed_count,
 def validate_plan_cells(runs, plan, allow_incomplete):
     if allow_incomplete:
         return
-    keys = ("experiment", "matrix", "algorithm", "condition", "seed")
+    keys = (*CURVE_COLUMNS, "seed")
     expected = {
         tuple(record["match"][key] for key in keys)
         for record in plan["records"] if record["stage"] == "leader"
@@ -494,10 +387,10 @@ def validate_plan_cells(runs, plan, allow_incomplete):
 def validate_history(history, expected_seeds, allow_incomplete):
     keys = [
         "experiment", "matrix", "algorithm", "condition",
-        "learning_rate", "es_stepsize", "evaluation_target_step",
+        "learning_rate", "evaluation_target_step",
     ]
     for column in (
-            "es_implementation", "plot_step_unit", "plot_step",
+            "plot_step_unit", "plot_step",
             "evaluation_metric", "evaluation_window_capacity",
             "evaluation_window_size",
     ):
@@ -522,10 +415,11 @@ def validate_history(history, expected_seeds, allow_incomplete):
         return
     for group_key, group in history.groupby(keys, dropna=False):
         found = set(int(value) for value in group["seed"])
-        if found != expected_seeds:
+        required = curve_seeds(expected_seeds, group.iloc[0])
+        if found != required:
             raise ValueError(
                 "history seed mismatch for {}: expected {}, found {}".format(
-                    group_key, sorted(expected_seeds), sorted(found)
+                    group_key, sorted(required), sorted(found)
                 )
             )
 
@@ -550,10 +444,10 @@ def sample_sem(values):
 def summarize(history):
     keys = [
         "experiment", "matrix", "algorithm", "condition",
-        "learning_rate", "es_stepsize", "evaluation_target_step",
+        "learning_rate", "evaluation_target_step",
     ]
     for column in (
-            "es_implementation", "plot_step_unit", "plot_step",
+            "plot_step_unit", "plot_step",
             "evaluation_metric", "evaluation_window_capacity",
             "evaluation_window_size",
     ):
@@ -652,22 +546,22 @@ def format_training_step(value, _position=None):
 
 def draw_curve(ax, data, condition, label=None):
     step_column = "plot_step" if "plot_step" in data else "evaluation_target_step"
-    line = data[data["condition"] == condition].sort_values(step_column)
-    if line.empty:
-        return
-    x = line[step_column].to_numpy()
-    mean = line["mean"].to_numpy()
-    sem = line["sem"].to_numpy()
-    color = COLORS[condition]
-    ax.plot(
-        x, mean, color=color, linestyle=LINESTYLES[condition],
-        linewidth=LINE_WIDTH,
-        label=label or LABELS[condition],
-    )
-    ax.fill_between(
-        x, mean - sem, mean + sem, color=color,
-        where=np.isfinite(sem), alpha=STANDARD_ERROR_ALPHA, linewidth=0,
-    )
+    selected = data[data["condition"] == condition]
+    rates = sorted(data["learning_rate"].unique())
+    styles = ("-", "--", ":", "-.")
+    for (algorithm, rate), line in selected.groupby(["algorithm", "learning_rate"]):
+        line = line.sort_values(step_column)
+        x, mean, sem = (line[column].to_numpy() for column in (step_column, "mean", "sem"))
+        legend = label or LABELS[condition]
+        if len(rates) > 1:
+            legend += " (LR {:g})".format(rate)
+        if data["algorithm"].nunique() > 1:
+            legend += " · " + algorithm
+        style = styles[rates.index(rate) % len(styles)] if len(rates) > 1 else LINESTYLES[condition]
+        ax.plot(x, mean, color=COLORS[condition], linestyle=style,
+                linewidth=LINE_WIDTH, label=legend)
+        ax.fill_between(x, mean - sem, mean + sem, color=COLORS[condition],
+                        where=np.isfinite(sem), alpha=STANDARD_ERROR_ALPHA, linewidth=0)
 
 
 def finish_axis(ax, ylabel=True, xlabel="Training steps",
@@ -696,58 +590,12 @@ def add_uniform_legend(figure, axes, right):
     labels = list(handles_by_label)
     figure.legend(
         [handles_by_label[label] for label in labels], labels,
-        loc="center right", bbox_to_anchor=(0.995, 0.5),
+        loc="center left", bbox_to_anchor=(right + 0.025, 0.5),
         borderaxespad=0.0,
     )
     figure.subplots_adjust(right=right)
 
 
-def plot_hidden(summary):
-    preferred_order = ("PG", "A2C", "PPO", "ES")
-    present = set(summary["algorithm"].unique())
-    algorithms = tuple(
-        algorithm for algorithm in preferred_order if algorithm in present
-    )
-    if not algorithms:
-        raise ValueError("hidden-query summary contains no supported algorithm")
-    legend_width = 1.85
-    figure_width = 3.0 * len(algorithms) + legend_width
-    figure, axes = plt.subplots(
-        1, len(algorithms), figsize=(figure_width, 3.2), sharey=True,
-    )
-    axes = np.atleast_1d(axes)
-    for index, algorithm in enumerate(algorithms):
-        panel = summary[summary["algorithm"] == algorithm]
-        draw_curve(axes[index], panel, "observed")
-        draw_curve(axes[index], panel, "hidden")
-        axes[index].set_title(ALGORITHM_TITLES.get(algorithm, algorithm))
-        if "plot_step_unit" in panel:
-            units = set(panel["plot_step_unit"].dropna().unique())
-            if len(units) != 1:
-                raise ValueError(
-                    "hidden-query panel {} has mixed x-axis units: {}".format(
-                        algorithm, sorted(units)
-                    )
-                )
-            unit = next(iter(units))
-            xlabels = {
-                PLOT_UNIT_ENVIRONMENT_TRANSITIONS: "Environment steps",
-                PLOT_UNIT_ES_ITERATIONS: "ES iterations",
-            }
-            if unit not in xlabels:
-                raise ValueError("unknown hidden-query x-axis unit: {}".format(unit))
-            xlabel = xlabels[unit]
-        else:
-            xlabel = "Training steps"
-        finish_axis(
-            axes[index], ylabel=index == 0, xlabel=xlabel,
-            ylabel_text="Leader reward per stage",
-        )
-    add_uniform_legend(
-        figure, axes, right=1.0 - legend_width / figure_width,
-    )
-    figure.subplots_adjust(wspace=0.22)
-    return figure
 
 
 def plot_phase(summary):
@@ -786,7 +634,6 @@ def plot_response_reward(summary):
 
 
 PLOTTERS = {
-    "fig_hidden": plot_hidden,
     "fig_phase_observability": plot_phase,
     "fig_q_reset": plot_q_reset,
     "fig_response_reward": plot_response_reward,
@@ -902,7 +749,7 @@ def build_parser():
         "--paper-logs-root", type=Path,
         help="Separate figure-grouped paper-log destination.",
     )
-    parser.add_argument("--figure", choices=("all", *FIGURES), default="all")
+    parser.add_argument("--figure", choices=("all", *FIGURES, *PAPER_BASENAME.values()), default="all")
     parser.add_argument("--seeds")
     parser.add_argument(
         "--require-seeds-per-cell", type=int,
@@ -928,6 +775,8 @@ def parse_seed_set(value):
 
 def main():
     args = build_parser().parse_args()
+    aliases = {paper: name for name, paper in PAPER_BASENAME.items()}
+    args.figure = aliases.get(args.figure, args.figure)
     output = args.output or args.input
     paper_logs_root = args.paper_logs_root or output / "paper_logs"
     input_roots = [args.input, *args.additional_input]
@@ -955,7 +804,11 @@ def main():
     if args.seeds is not None:
         expected_seeds = parse_seed_set(args.seeds)
     elif plan is not None:
-        expected_seeds = set(int(seed) for seed in plan["seeds"])
+        expected_seeds = {}
+        for record in plan["records"]:
+            if record["stage"] == "leader":
+                key = tuple(record["match"][column] for column in CURVE_COLUMNS)
+                expected_seeds.setdefault(key, set()).add(int(record["seed"]))
     else:
         expected_seeds = parse_seed_set("1-10")
     validate_required_seed_count(

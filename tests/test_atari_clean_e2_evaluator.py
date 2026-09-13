@@ -9,6 +9,18 @@ import pytest
 
 from replication.atari import evaluate_atari_stackpomdp_leader_sb3 as evaluator
 from replication.atari import train_atari_stackpomdp_leader_sb3 as trainer
+from stackelberg_pomdp.atari import protocol as atari_protocol
+from stackelberg_pomdp.checkpoints import atari_evaluation as e2_checkpoints
+from stackelberg_pomdp.checkpoints import files as checkpoint_files
+from stackelberg_pomdp.evaluation.atari import (
+    contracts,
+    interventions,
+    protocol_audit,
+    reporting,
+    rollouts,
+    selection,
+    workflow,
+)
 from stackelberg_pomdp.atari.training import (
     PHASE_BALANCED_ACTOR_LOSS_MODE,
     STANDARD_ACTOR_LOSS_MODE,
@@ -118,7 +130,7 @@ def _transition(
 ):
     canonical_event = query_index if substep == LEADER_QUERY else event_index
     actor_state = (
-        evaluator.canonical_leader_state(canonical_event).tolist()
+        atari_protocol.canonical_leader_state(canonical_event).tolist()
         if substep in (LEADER_QUERY, CACHED_TRADE_REPLAY)
         else [0.0] * 14
     )
@@ -145,7 +157,7 @@ def _transition(
         }[substep],
         "actor_state": actor_state,
         "action_mask": (
-            list(evaluator.CANONICAL_EVENT_ACTION_MASK)
+            list(contracts.CANONICAL_EVENT_ACTION_MASK)
             if substep in (LEADER_QUERY, CACHED_TRADE_REPLAY)
             else [1.0] * 6
         ),
@@ -350,7 +362,7 @@ def _gate_result(intervention_id, payoffs, *, value=None, shots=4.0):
 
 def test_exact_210_analogue_protocol_audits_query_cache_trade_and_payoffs():
     evaluation = _valid_evaluation(episodes=2)
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=2,
         leader_role="seller",
@@ -375,7 +387,7 @@ def test_protocol_rejects_cache_mismatch_and_payoff_accounting_error():
     _refresh_decision_rows(evaluation)
     evaluation["episode_rows"][0]["seller_reward"] = 1.1
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role="seller",
@@ -393,7 +405,7 @@ def test_protocol_rejects_decision_row_not_copied_from_transition_subset():
     evaluation = _valid_evaluation()
     evaluation["decision_rows"][0]["requested_action"] = [0.0, 0.7]
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role="seller",
@@ -411,7 +423,7 @@ def test_protocol_rejects_decision_row_not_copied_from_transition_subset():
 def test_protocol_binds_buyer_threshold_and_seller_response_price():
     evaluation = _buyer_evaluation()
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role="buyer",
@@ -444,7 +456,7 @@ def test_protocol_rejects_delayed_instead_of_immediate_trade_payment(
     gameplay[-1]["reward"] += displaced
     _refresh_decision_rows(evaluation)
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role=leader_role,
@@ -468,7 +480,7 @@ def test_protocol_rejects_unreported_factual_economic_override():
                 row["leader_executed_action"] = [0.0, 0.7]
     _refresh_decision_rows(evaluation)
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role="seller",
@@ -494,7 +506,7 @@ def test_protocol_rejects_noncanonical_event_mask_across_episodes():
             row["action_mask"] = [1.0, 0.0, 1.0, 1.0, 1.0, 0.0]
     _refresh_decision_rows(evaluation)
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=2,
         leader_role="seller",
@@ -504,7 +516,7 @@ def test_protocol_rejects_noncanonical_event_mask_across_episodes():
 
     assert not protocol["passed"]
     assert protocol["canonical_event_action_mask"] == list(
-        evaluator.CANONICAL_EVENT_ACTION_MASK
+        contracts.CANONICAL_EVENT_ACTION_MASK
     )
     assert any(
         "canonical event-only action mask" in row["field"]
@@ -519,7 +531,7 @@ def test_protocol_rejects_multiple_deterministic_commitments_or_traces():
     evaluation["episode_rows"][1]["query_actions"][4][1] = 0.3
     evaluation["episode_rows"][1]["query_trace_sha256"] = "e" * 64
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=2,
         leader_role="seller",
@@ -536,26 +548,26 @@ def test_protocol_rejects_multiple_deterministic_commitments_or_traces():
 def test_commitment_override_changes_only_economics_at_query_and_replay():
     commitment = [0.1, 0.2, 0.3, 0.4, 0.5]
     query = {
-        evaluator.ACTOR_STATE: evaluator.canonical_leader_state(2),
-        evaluator.ACTION_CREDIT: np.asarray([0.0, 1.0], dtype=np.float32),
+        atari_protocol.ACTOR_STATE: atari_protocol.canonical_leader_state(2),
+        atari_protocol.ACTION_CREDIT: np.asarray([0.0, 1.0], dtype=np.float32),
     }
     replay = {
-        evaluator.ACTOR_STATE: evaluator.canonical_leader_state(2),
-        evaluator.ACTION_CREDIT: np.asarray([0.0, 0.0], dtype=np.float32),
+        atari_protocol.ACTOR_STATE: atari_protocol.canonical_leader_state(2),
+        atari_protocol.ACTION_CREDIT: np.asarray([0.0, 0.0], dtype=np.float32),
     }
     gameplay = {
-        evaluator.ACTOR_STATE: np.zeros(14, dtype=np.float32),
-        evaluator.ACTION_CREDIT: np.asarray([1.0, 0.0], dtype=np.float32),
+        atari_protocol.ACTOR_STATE: np.zeros(14, dtype=np.float32),
+        atari_protocol.ACTION_CREDIT: np.asarray([1.0, 0.0], dtype=np.float32),
     }
 
-    query_action, query_tag = evaluator.apply_economic_commitment_override(
+    query_action, query_tag = interventions.apply_economic_commitment_override(
         query, [4.0, 0.9], commitment
     )
-    replay_action, replay_tag = evaluator.apply_economic_commitment_override(
+    replay_action, replay_tag = interventions.apply_economic_commitment_override(
         replay, [4.0, 0.9], commitment
     )
     gameplay_action, gameplay_tag = (
-        evaluator.apply_economic_commitment_override(
+        interventions.apply_economic_commitment_override(
             gameplay, [3.0, 0.9], commitment
         )
     )
@@ -565,7 +577,7 @@ def test_commitment_override_changes_only_economics_at_query_and_replay():
     assert replay_tag == (CACHED_TRADE_REPLAY, 2)
     assert gameplay_action == [3.0, 0.9]
     assert gameplay_tag is None
-    manifest = evaluator.economic_intervention_manifest(
+    manifest = interventions.economic_intervention_manifest(
         intervention_id="all_zero",
         commitment=[0.0] * 5,
         checkpoint_hash="a" * 64,
@@ -622,7 +634,7 @@ def test_protocol_audits_effective_override_and_preintervention_cache():
                 row["reward"] = 0.0
     _refresh_decision_rows(evaluation)
 
-    protocol = evaluator.audit_e2_protocol(
+    protocol = protocol_audit.audit_e2_protocol(
         evaluation,
         required_episodes=1,
         leader_role="seller",
@@ -640,7 +652,7 @@ def test_paired_economic_gate_requires_endpoint_dominance_and_four_shots():
         _gate_result("all_one", [0.5] * 5, value=1.0),
     ]
 
-    passed = evaluator.paired_economic_gate(
+    passed = selection.paired_economic_gate(
         factual, controls, required_episodes=5
     )
     assert passed["passed"]
@@ -650,7 +662,7 @@ def test_paired_economic_gate_requires_endpoint_dominance_and_four_shots():
     weak = deepcopy(controls)
     for row in weak[1]["episode_rows"]:
         row["leader_reward"] = 0.8
-    failed_advantage = evaluator.paired_economic_gate(
+    failed_advantage = selection.paired_economic_gate(
         factual, weak, required_episodes=5
     )
     assert not failed_advantage["passed"]
@@ -664,7 +676,7 @@ def test_paired_economic_gate_requires_endpoint_dominance_and_four_shots():
     sparse_payoffs = [-0.25, 1.0, 1.0, 1.0, 1.0]
     for row, payoff in zip(sparse[1]["episode_rows"], sparse_payoffs):
         row["leader_reward"] = payoff
-    failed_win_rate = evaluator.paired_economic_gate(
+    failed_win_rate = selection.paired_economic_gate(
         factual, sparse, required_episodes=5
     )
     assert not failed_win_rate["passed"]
@@ -675,7 +687,7 @@ def test_paired_economic_gate_requires_endpoint_dominance_and_four_shots():
     )
 
     low_shots = _gate_result("factual", [1.0] * 5, shots=3.9)
-    failed_shots = evaluator.paired_economic_gate(
+    failed_shots = selection.paired_economic_gate(
         low_shots, controls, required_episodes=5
     )
     assert not failed_shots["passed"]
@@ -695,7 +707,7 @@ def test_paired_economic_gate_rejects_unmatched_schedule_or_provenance():
     controls[0]["episode_rows"][0]["event_steps"][-1] = 81
     controls[1]["response_checkpoint_sha256"] = "e" * 64
 
-    gate = evaluator.paired_economic_gate(
+    gate = selection.paired_economic_gate(
         factual, controls, required_episodes=5
     )
 
@@ -707,7 +719,7 @@ def test_paired_economic_gate_rejects_unmatched_schedule_or_provenance():
 
 def test_outcome_summary_reports_shots_ammo_and_safe_accepted_price():
     row = _episode_row()
-    summary = evaluator.leader_outcome_summary([row])
+    summary = rollouts.leader_outcome_summary([row])
     assert summary["mean_seller_shots_fired"] == 0.0
     assert summary["mean_buyer_shots_fired"] == 5.0
     assert summary["mean_total_shots_fired"] == 5.0
@@ -721,7 +733,7 @@ def test_outcome_summary_reports_shots_ammo_and_safe_accepted_price():
     row["purchases"] = 0
     row["payments"] = 0.0
     row["seller_shots_fired"] = 4
-    no_trade = evaluator.leader_outcome_summary([row])
+    no_trade = rollouts.leader_outcome_summary([row])
     assert no_trade["mean_accepted_price"] == 0.0
     assert no_trade["buyer_purchased_bullet_utilization"] == 0.0
     assert no_trade["seller_retained_bullet_utilization"] == pytest.approx(0.8)
@@ -746,7 +758,7 @@ def test_selection_excludes_invalid_then_applies_documented_tiebreaks():
         timesteps=100, digest="c" * 64,
     )
 
-    ranked = evaluator.rank_candidates([
+    ranked = selection.rank_candidates([
         invalid_high, economic_failure, unstable, robust_late, robust_early
     ])
 
@@ -754,7 +766,7 @@ def test_selection_excludes_invalid_then_applies_documented_tiebreaks():
     assert ranked["eligible_checkpoints"] == 3
     assert ranked["ranking_rows"][0]["checkpoint_id"] == "robust_early"
     assert sum(not row["eligible"] for row in ranked["ranking_rows"]) == 2
-    assert ranked["selection_rule"] == list(evaluator.SELECTION_RULE)
+    assert ranked["selection_rule"] == list(contracts.SELECTION_RULE)
 
 
 def test_common_screen_requires_identical_seed_schedule_pairs():
@@ -770,23 +782,23 @@ def test_common_screen_requires_identical_seed_schedule_pairs():
         ]
     }
     right = deepcopy(left)
-    assert evaluator.validate_common_screen([left, right])["passed"]
+    assert selection.validate_common_screen([left, right])["passed"]
 
     right["episode_rows"][1]["event_steps"][-1] = 5
     with pytest.raises(RuntimeError, match="different event schedules"):
-        evaluator.validate_common_screen([left, right])
+        selection.validate_common_screen([left, right])
 
     duplicate = deepcopy(left)
     duplicate["episode_rows"][1]["evaluation_seed"] = (
         duplicate["episode_rows"][0]["evaluation_seed"]
     )
     with pytest.raises(RuntimeError, match="duplicate evaluation seeds"):
-        evaluator.validate_common_screen([duplicate])
+        selection.validate_common_screen([duplicate])
 
     other_provenance = deepcopy(left)
     other_provenance["e2_provenance_fingerprint"] = "f" * 64
     with pytest.raises(RuntimeError, match="different E2 scientific provenance"):
-        evaluator.validate_common_screen([left, other_provenance])
+        selection.validate_common_screen([left, other_provenance])
 
 
 def test_selected_alias_is_exact_and_never_overwrites(tmp_path):
@@ -794,13 +806,13 @@ def test_selected_alias_is_exact_and_never_overwrites(tmp_path):
     source.write_bytes(b"checkpoint bytes")
     target = tmp_path / "selected.zip"
 
-    copied = evaluator.atomic_copy_no_overwrite(source, target)
+    copied = checkpoint_files.atomic_copy_no_overwrite(source, target)
 
     assert target.read_bytes() == source.read_bytes()
     assert copied["copy_verified"]
-    assert copied["checkpoint_sha256"] == evaluator.checkpoint_sha256(source)
+    assert copied["checkpoint_sha256"] == checkpoint_files.checkpoint_sha256(source)
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        evaluator.atomic_copy_no_overwrite(source, target)
+        checkpoint_files.atomic_copy_no_overwrite(source, target)
 
 
 def test_selected_alias_verification_failure_removes_only_its_new_copy(
@@ -808,7 +820,7 @@ def test_selected_alias_verification_failure_removes_only_its_new_copy(
     source = tmp_path / "step200.zip"
     source.write_bytes(b"checkpoint bytes")
     target = tmp_path / "selected.zip"
-    real_sha256 = evaluator.checkpoint_sha256
+    real_sha256 = checkpoint_files.checkpoint_sha256
     target_hash_calls = 0
 
     def one_false_target_hash(path):
@@ -820,10 +832,10 @@ def test_selected_alias_verification_failure_removes_only_its_new_copy(
         return real_sha256(path)
 
     monkeypatch.setattr(
-        evaluator, "checkpoint_sha256", one_false_target_hash
+        checkpoint_files, "checkpoint_sha256", one_false_target_hash
     )
     with pytest.raises(RuntimeError, match="failed its SHA-256 check"):
-        evaluator.atomic_copy_no_overwrite(source, target)
+        checkpoint_files.atomic_copy_no_overwrite(source, target)
     assert target_hash_calls >= 2
     assert not target.exists()
 
@@ -846,7 +858,7 @@ def test_artifact_failure_rolls_back_only_unchanged_new_alias(
     monkeypatch.setattr(evaluator, "parse_args", lambda argv=None: args)
 
     def fake_selection(values):
-        alias = evaluator.atomic_copy_no_overwrite(
+        alias = checkpoint_files.atomic_copy_no_overwrite(
             source, values.selected_checkpoint
         )
         return {"selected_alias": alias, "passed": True}
@@ -864,9 +876,9 @@ def test_artifact_failure_rolls_back_only_unchanged_new_alias(
         evaluator.main([])
     assert not target.exists()
 
-    alias = evaluator.atomic_copy_no_overwrite(source, target)
+    alias = checkpoint_files.atomic_copy_no_overwrite(source, target)
     target.write_bytes(b"externally replaced bytes")
-    assert not evaluator.rollback_new_selected_alias(
+    assert not checkpoint_files.rollback_new_selected_alias(
         {"selected_alias": alias}, expected_path=target
     )
     assert target.read_bytes() == b"externally replaced bytes"
@@ -882,16 +894,16 @@ def test_model_loader_rejects_checkpoint_mutation_during_load(
         checkpoint.write_bytes(b"changed during load")
         return object()
 
-    monkeypatch.setattr(evaluator.ScaledLearningRatePPO, "load", mutate)
+    monkeypatch.setattr(e2_checkpoints.ScaledLearningRatePPO, "load", mutate)
     with pytest.raises(RuntimeError, match="changed while"):
-        evaluator._load_model(checkpoint, device="cpu")
+        e2_checkpoints._load_model(checkpoint, device="cpu")
 
 
 def test_checkpoint_evaluation_is_bound_to_loaded_bytes_and_rechecks_afterward(
         tmp_path, monkeypatch):
     checkpoint = (tmp_path / "candidate.zip").resolve()
     checkpoint.write_bytes(b"evaluated bytes")
-    digest = evaluator.checkpoint_sha256(checkpoint)
+    digest = checkpoint_files.checkpoint_sha256(checkpoint)
     model = SimpleNamespace(
         policy=SimpleNamespace(
             economic_role="seller", economic_input_mode="event_only"
@@ -910,20 +922,20 @@ def test_checkpoint_evaluation_is_bound_to_loaded_bytes_and_rechecks_afterward(
         "buyer_game_reward_scale": 1.0,
     }
     monkeypatch.setattr(
-        evaluator,
+        rollouts,
         "validate_candidate_provenance",
         lambda *args, **kwargs: {"fingerprint_sha256": "f" * 64},
     )
     monkeypatch.setattr(
-        evaluator, "model_actor_loss_mode", lambda model: "standard"
+        rollouts, "model_actor_loss_mode", lambda model: "standard"
     )
     monkeypatch.setattr(
-        evaluator,
+        rollouts,
         "model_economic_initialization",
         lambda *args, **kwargs: {"mean": 0.5, "concentration": 2.0},
     )
     monkeypatch.setattr(
-        evaluator,
+        rollouts,
         "audit_e2_protocol",
         lambda *args, **kwargs: {"passed": True, "violations": []},
     )
@@ -931,7 +943,7 @@ def test_checkpoint_evaluation_is_bound_to_loaded_bytes_and_rechecks_afterward(
     wrong_model = deepcopy(model)
     wrong_model.e2_evaluation_loaded_checkpoint["sha256"] = "0" * 64
     with pytest.raises(RuntimeError, match="in-memory model is not bound"):
-        evaluator.evaluate_checkpoint(
+        rollouts.evaluate_checkpoint(
             wrong_model,
             checkpoint,
             args=args,
@@ -949,9 +961,9 @@ def test_checkpoint_evaluation_is_bound_to_loaded_bytes_and_rechecks_afterward(
         checkpoint.write_bytes(b"changed after load")
         return {"episode_rows": [], "transition_rows": [], "decision_rows": []}
 
-    monkeypatch.setattr(evaluator, "evaluate_e2_model", mutate_after_rollout)
+    monkeypatch.setattr(rollouts, "evaluate_e2_model", mutate_after_rollout)
     with pytest.raises(RuntimeError, match="changed during evaluation"):
-        evaluator.evaluate_checkpoint(
+        rollouts.evaluate_checkpoint(
             model,
             checkpoint,
             args=args,
@@ -983,10 +995,10 @@ def test_confirmation_requires_same_hash_trace_and_commitment():
         },
     }
     confirmation = deepcopy(screen)
-    assert evaluator.confirmation_matches_screen(screen, confirmation)["passed"]
+    assert selection.confirmation_matches_screen(screen, confirmation)["passed"]
 
     confirmation["protocol"]["leader_commitment"][0] = 0.3
-    check = evaluator.confirmation_matches_screen(screen, confirmation)
+    check = selection.confirmation_matches_screen(screen, confirmation)
     assert not check["passed"]
     assert not check["leader_commitment_matches_screen"]
 
@@ -1006,7 +1018,7 @@ def _artifact_report_with_controls():
         "phase": "screen",
         "seed_start": 100,
         "seed_end": 100,
-        "summary": evaluator.leader_outcome_summary(evaluation["episode_rows"]),
+        "summary": rollouts.leader_outcome_summary(evaluation["episode_rows"]),
         "protocol": {"passed": True, "violations": []},
         "economic_intervention": {
             "intervention_id": "factual",
@@ -1060,7 +1072,7 @@ def _artifact_report_with_controls():
             "factual_minus_all_one": 0.5,
         }],
     }
-    ranking = evaluator.rank_candidates([result])
+    ranking = selection.rank_candidates([result])
     report = {
         "environment_config": {"leader_role": "seller"},
         "screen": {
@@ -1079,7 +1091,7 @@ def _artifact_report_with_controls():
 def test_artifacts_retain_all_rows_and_refuse_collisions(tmp_path):
     report = _artifact_report_with_controls()
 
-    written = evaluator.write_selection_artifacts(
+    written = reporting.write_selection_artifacts(
         report, output_dir=tmp_path, run_name="audit"
     )
 
@@ -1153,7 +1165,7 @@ def test_artifacts_retain_all_rows_and_refuse_collisions(tmp_path):
     assert paired_rows[0]["environment_config_sha256"] == "d" * 64
     assert paired_rows[0]["e2_provenance_fingerprint"] == "e" * 64
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        evaluator.write_selection_artifacts(
+        reporting.write_selection_artifacts(
             report, output_dir=tmp_path, run_name="audit"
         )
 
@@ -1164,7 +1176,7 @@ def test_artifacts_omit_absent_counterfactual_files_and_paths(tmp_path):
     result.pop("counterfactual_controls")
     result.pop("economic_gate")
 
-    written = evaluator.write_selection_artifacts(
+    written = reporting.write_selection_artifacts(
         report, output_dir=tmp_path, run_name="no_controls"
     )
 
@@ -1180,7 +1192,7 @@ def test_artifacts_omit_absent_counterfactual_files_and_paths(tmp_path):
 def test_artifact_mid_stage_failure_leaves_no_final_or_staging_paths(
         tmp_path, monkeypatch):
     report = _artifact_report_with_controls()
-    real_write_csv = evaluator.write_csv
+    real_write_csv = reporting.write_csv
     calls = 0
 
     def fail_third_csv(path, rows):
@@ -1190,9 +1202,9 @@ def test_artifact_mid_stage_failure_leaves_no_final_or_staging_paths(
             raise RuntimeError("injected staged CSV failure")
         return real_write_csv(path, rows)
 
-    monkeypatch.setattr(evaluator, "write_csv", fail_third_csv)
+    monkeypatch.setattr(reporting, "write_csv", fail_third_csv)
     with pytest.raises(RuntimeError, match="injected staged CSV failure"):
-        evaluator.write_selection_artifacts(
+        reporting.write_selection_artifacts(
             report, output_dir=tmp_path, run_name="midwrite"
         )
 
@@ -1203,7 +1215,7 @@ def test_artifact_mid_stage_failure_leaves_no_final_or_staging_paths(
 def test_artifact_publication_race_never_overwrites_and_rolls_back(
         tmp_path, monkeypatch):
     report = _artifact_report_with_controls()
-    real_link = evaluator.os.link
+    real_link = reporting.os.link
     calls = 0
     raced_path = None
 
@@ -1215,9 +1227,9 @@ def test_artifact_publication_race_never_overwrites_and_rolls_back(
             raced_path.write_text("concurrent writer", encoding="utf-8")
         return real_link(source, destination, **kwargs)
 
-    monkeypatch.setattr(evaluator.os, "link", inject_racing_writer)
+    monkeypatch.setattr(reporting.os, "link", inject_racing_writer)
     with pytest.raises(FileExistsError):
-        evaluator.write_selection_artifacts(
+        reporting.write_selection_artifacts(
             report, output_dir=tmp_path, run_name="race"
         )
 
@@ -1234,7 +1246,7 @@ def test_artifact_publication_lock_rejects_concurrent_writer(tmp_path):
     lock.mkdir()
 
     with pytest.raises(FileExistsError, match="already in progress"):
-        evaluator.write_selection_artifacts(
+        reporting.write_selection_artifacts(
             report, output_dir=tmp_path, run_name="locked"
         )
 
@@ -1252,7 +1264,7 @@ def test_parser_defaults_to_common_20_screen_and_disjoint_100_confirmation(
     ])
     assert args.screen_episodes == 20
     assert args.confirmation_episodes == 100
-    assert not evaluator._ranges_overlap(
+    assert not contracts._ranges_overlap(
         args.screen_seed_start,
         args.screen_episodes,
         args.confirmation_seed_start,
@@ -1290,19 +1302,19 @@ def test_run_selection_rechecks_canonical_counts_and_disjoint_seeds():
         gameplay_horizon=200,
     )
     with pytest.raises(ValueError, match="exactly 20"):
-        evaluator.run_selection(SimpleNamespace(**{
+        workflow.run_selection(SimpleNamespace(**{
             **vars(base), "screen_episodes": 19,
         }))
     with pytest.raises(ValueError, match="exactly 100"):
-        evaluator.run_selection(SimpleNamespace(**{
+        workflow.run_selection(SimpleNamespace(**{
             **vars(base), "confirmation_episodes": 99,
         }))
     with pytest.raises(ValueError, match="must be disjoint"):
-        evaluator.run_selection(SimpleNamespace(**{
+        workflow.run_selection(SimpleNamespace(**{
             **vars(base), "confirmation_seed_start": 110,
         }))
     with pytest.raises(ValueError, match="canonical 200-step"):
-        evaluator.run_selection(SimpleNamespace(**{
+        workflow.run_selection(SimpleNamespace(**{
             **vars(base), "gameplay_horizon": 199,
         }))
 
@@ -1317,8 +1329,8 @@ def test_environment_hash_binds_role_response_contract_and_schedule(tmp_path):
         max_frames=100_000,
         rom_path=None,
     )
-    config = evaluator.environment_config(args)
-    digest = evaluator.environment_config_sha256(config)
+    config = contracts.environment_config(args)
+    digest = contracts.environment_config_sha256(config)
     changed = dict(config)
     changed["noop_max"] = 0
 
@@ -1327,7 +1339,7 @@ def test_environment_hash_binds_role_response_contract_and_schedule(tmp_path):
     assert Path(config["rom_path"]).is_file()
     assert len(config["rom_sha256"]) == 64
     assert len(digest) == 64
-    assert digest != evaluator.environment_config_sha256(changed)
+    assert digest != contracts.environment_config_sha256(changed)
 
 
 def test_candidate_provenance_requires_exact_response_and_evaluation_config():
@@ -1433,14 +1445,14 @@ def test_candidate_provenance_requires_exact_response_and_evaluation_config():
     }
     model = SimpleNamespace(e2_provenance_manifest=manifest, policy=policy)
 
-    validated = evaluator.validate_candidate_provenance(
+    validated = e2_checkpoints.validate_candidate_provenance(
         model, response_hash=response_hash, config=config
     )
     assert validated["fingerprint_sha256"] == manifest["fingerprint_sha256"]
 
     model.atari_actor_loss_mode = PHASE_BALANCED_ACTOR_LOSS_MODE
     with pytest.raises(ValueError, match="actor loss mode"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=config
         )
     del model.atari_actor_loss_mode
@@ -1450,38 +1462,38 @@ def test_candidate_provenance_requires_exact_response_and_evaluation_config():
         "concentration": 2.0,
     }
     with pytest.raises(ValueError, match="economic initialization"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=config
         )
     del model.atari_economic_head_initialization
 
     model.atari_actor_loss_mode = "unknown"
     with pytest.raises(ValueError, match="unknown actor loss mode"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=config
         )
     del model.atari_actor_loss_mode
 
     model.target_kl = 0.01
     with pytest.raises(ValueError, match="target KL does not match"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=config
         )
     del model.target_kl
 
     with pytest.raises(ValueError, match="different frozen E1 response"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash="b" * 64, config=config
         )
     changed = {**config, "noop_max": 0}
     with pytest.raises(ValueError, match="environment provenance"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=changed
         )
 
     policy.critic_hidden = 128
     with pytest.raises(ValueError, match="policy architecture"):
-        evaluator.validate_candidate_provenance(
+        e2_checkpoints.validate_candidate_provenance(
             model, response_hash=response_hash, config=config
         )
 
@@ -1523,7 +1535,7 @@ def test_run_selection_confirms_only_screen_winner_and_never_falls_back(
         policy=_Policy(), num_timesteps=500
     )
     monkeypatch.setattr(
-        evaluator, "load_e1_response", lambda *a, **k: response_model
+        workflow, "load_e1_response", lambda *a, **k: response_model
     )
 
     def fake_load(path, *, leader_role, device, expected_sha256=None):
@@ -1535,7 +1547,7 @@ def test_run_selection_confirms_only_screen_winner_and_never_falls_back(
             num_timesteps=100 if "100" in str(path) else 200,
         )
 
-    monkeypatch.setattr(evaluator, "load_e2_checkpoint", fake_load)
+    monkeypatch.setattr(workflow, "load_e2_checkpoint", fake_load)
     calls = []
 
     def fake_evaluate(
@@ -1556,7 +1568,7 @@ def test_run_selection_confirms_only_screen_winner_and_never_falls_back(
     ):
         del args, response_model, config, expected_checkpoint_sha256
         path = Path(checkpoint)
-        digest = evaluator.checkpoint_sha256(path)
+        digest = checkpoint_files.checkpoint_sha256(path)
         calls.append((
             phase, path.name, episodes, seed_start, selected.exists(),
             intervention_id,
@@ -1653,8 +1665,9 @@ def test_run_selection_confirms_only_screen_winner_and_never_falls_back(
             "decision_rows": [],
         }
 
-    monkeypatch.setattr(evaluator, "evaluate_checkpoint", fake_evaluate)
-    report = evaluator.run_selection(args)
+    monkeypatch.setattr(workflow, "evaluate_checkpoint", fake_evaluate)
+    monkeypatch.setattr(rollouts, "evaluate_checkpoint", fake_evaluate)
+    report = workflow.run_selection(args)
 
     assert [(call[0], call[1], call[5]) for call in calls] == [
         ("screen", "step100.zip", "factual"),
@@ -1674,6 +1687,6 @@ def test_run_selection_confirms_only_screen_winner_and_never_falls_back(
     assert report["confirmation"]["disjoint_from_screen"]
     assert len(report["confirmation_attempts"]) == 1
     assert report["selection"]["screen_selected_checkpoint_sha256"] == (
-        evaluator.checkpoint_sha256(second)
+        checkpoint_files.checkpoint_sha256(second)
     )
     assert report["selection"]["selected_checkpoint_sha256"] is None

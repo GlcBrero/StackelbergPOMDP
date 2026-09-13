@@ -9,8 +9,6 @@ below are repository-relative paths inside that read-only checkout.
 
 | Paper output | Historical run definition | Historical plotted cohort | Maintained interpretation |
 |---|---|---|---|
-| `fig_hidden` (PG) | `smipd_hiddenqueries_pg_pg_new`, closest source commit `c603134` | 10 seeds per observed/hidden condition | Policy-gradient leader with rolled-out versus deleted query transitions |
-| `fig_hidden` (ES) | `smipd_es_pg_new`, source commit `bd971a8` | LR `.004`; only seeds 1 and 2 completed per condition | ES leader with the same frozen response interface |
 | `fig_memory_pg` | historical `smipd_tellleader_pg_pg`; phase-aware commit `8421178`, phase-unaware commit `b437644` | intended 10 seeds per LR/condition, with two missing phase-unaware LR `.03` runs | Phase bit visible versus unavailable; “memory” never meant action-history memory |
 | `fig_reset` | `bots_pg_tabularq`; reset group `test_2_longer` at `32dc86f`, ongoing group `test_4_noreset` at `6551100` | notebook filters to seeds 1--3 and LRs `.008`, `.015`, `.03` | Fresh versus carried response state, using a correct terminal Q target |
 | `fig_bots_leaderreward` | `bots_dqn_tabularq_out_of_eq`, group `test_11_rllib_bugfix`; zero-penalty prefix `a1699` near `8db223b`, penalty prefix `ead38` near `a538714` | 10 seeds per matrix/reward-inclusion cell | Reward-game performance with response-phase leader reward excluded versus included |
@@ -51,41 +49,44 @@ RLlib 2.0.1 implements these details in `PGTorchPolicy.loss`,
 `TorchPolicyV2.optimizer`.  The legacy follower used LR `.02`, 100-transition
 batches, and 500 pretraining updates.
 
-## Ported leader policy gradient
+## Maintained leader recipes
 
-The maintained `PG` leader is a separate treatment from both the response
-REINFORCE model and the A2C/PPO redesign.  It ports the behaviorally relevant
-settings from `smipd_hiddenqueries_pg_pg_new`:
+Both commitment consistency and follower reset now have linear PG leader
+training. They reuse `matrix_ablations/reinforce.py`: Adam, undiscounted
+reward-to-go, no baseline, no entropy bonus, and complete episodes collected
+to at least 100 transitions per update. The leader accepts categorical Dict
+observations and caches actions by the complete actor-visible observation.
+The phase key therefore distinguishes response from reward play only in the
+visible treatment. Follower REINFORCE remains uncached during its training.
 
-- RLlib PG with LR `.008`, complete episodes, and a minimum of 100 executed
-  environment transitions per update;
-- a bias-free linear categorical policy with row-wise normc initialization at
-  scale `.01` and Adam epsilon `1e-8`;
-- `gamma=1`, undiscounted reward-to-go, and exact loss
-  `-mean(log pi(a|s) * return_to_go)`;
-- no trained value function, baseline, entropy term, advantage normalization,
-  gradient clipping, or minibatch epochs; and
-- 2,000 historical outer-loop leader updates.
+Reward timing uses `matrix_ablations/simple_q.py`, an SB3-based implementation
+of the historical SimpleQ mechanics: bias-free linear Q values, uniform
+50,000-transition replay, batch size 1024, Adam at LR 0.1, Huber loss,
+undiscounted one-step terminal-masked targets, learning after 100 transitions,
+and target copies every 500 transitions. Gaussian parameter noise starts at
+standard deviation 1 and adapts by a factor of 1.01 against target KL zero;
+one noisy commitment is used for a complete outer episode. Clean network
+weights are used for learning and deterministic evaluation.
 
-The hidden-query callback deleted query transitions from the leader batch only
-after they executed.  Complete-episode collection consequently gives the
-paper five-query game 10 episodes and 100 executed transitions per update,
-with 100 observed-query samples versus 50 hidden-query samples.  The final
-legacy three-query configuration gives 13 episodes and 104 executed
-transitions, with 104 versus 65 stored samples.
+The `bots_pg_tabularq` and `bots_dqn_tabularq_out_of_eq` configurations enable
+follower parameter noise; `make_matrix_tabularq_env` fixes its scale at 0.1.
+Both maintained presets now specify this, with Q learning rates 0.1 for reset
+and 0.2 for reward timing. The latter starts from a zero Q-table and uses the
+follower payoff 0.001 at the leader-preferred coordination outcome.
 
-Crucially, historical matrix leader training did not cache a sampled action
-table between query and reward calls.  Each visit sampled independently from
-the same stationary policy distribution.  The `deterministic_leader` flag in
-the alternating trainer applied while the follower was being trained, not
-during the leader's own PG update.  The maintained PG port preserves this:
-training visits are independent, while deterministic evaluation uses the same
-argmax policy in both phases.  Atari's deliberate exact-action replay is a
-different protocol and must not be imported into this matrix treatment.
+These are corrected training recipes, **not exact historical training
+replays**. In addition to the state/reward differences below, the maintained
+PG leader fixes sampled actions within an episode, while historical PG
+training sampled at repeated visits. SimpleQ's SB3 collector and replay RNG
+differ from RLlib's scheduling and RNG. Carried-state evaluation now copies
+the actual training Q-table into each held-out episode; it does not warm a
+new follower against only the current policy. Learning curves for both
+algorithms are evaluated after optimizer updates. Each run records these
+choices in `leader_protocol` and `evaluation_response_state`.
 
 ## Deliberate paper-spec differences
 
-The final historical hidden-query runs set `small_memory=True`: three states
+The historical three-state profile uses `small_memory=True`: three states
 (`Start` plus the opponent's previous action), three leader queries, and eight
 deterministic leader tables.  The current paper instead specifies five states
 (`Start`, `CC`, `CD`, `DC`, `DD`), five queries, and 32 tables.  The maintained
@@ -100,48 +101,3 @@ yielding the paper's effective `-4` display scale.  The maintained paper
 profile uses the paper-centered rewards directly.  The constant shift leaves
 exact best responses unchanged but can change finite-sample PG variance, so it
 is recorded in every run config.
-
-## Historical ES forensic correction
-
-The ES curves in the archived `fig_hidden` cohort cannot support the current
-Modified-Prisoner's-Dilemma caption.  All four plotted ES run configurations
-record `matrix_name=prisoners_dilemma`; they were launched on 2022-11-08 from
-the ordinary-PD configuration.  The ES configuration was changed to modified
-PD only on 2022-11-12, after those runs, and the plotting notebook did not
-filter by matrix.  The historical PG curves did use modified PD.
-
-Two additional configuration details make the old labels misleading.  The
-legacy sweep set `leader_config["lr"]` to `.004` or `.015`, but Ray RLlib 2.0.1
-ES reads `stepsize`, not `lr`; the effective Adam stepsize was therefore its
-unchanged default `.01`.  The trainer also removed the complete `multiagent`
-configuration before constructing ES.  Consequently the declared no-bias
-linear model was not installed and Ray's default two-layer, 256-unit tanh
-network was effective.
-
-The maintained ES treatment is explicitly a new qualitative validation.  It
-uses modified PD, joint five-state memory, and the certified finite follower
-response, while restoring native RLlib 2.0.1 ES: the default two-layer
-256-unit tanh stochastic policy, `MeanStdFilter`, sigma `.02`, centered ranks,
-Adam stepsize `.01`, and L2 coefficient `.005`.  Every run records Ray's native
-`episode_reward_mean`, explicit stochastic evaluation, measured batch
-overshoot, and a hashed terminal RLlib checkpoint containing both weights and
-the synchronized filter.  Historical ES artifacts remain forensic evidence
-only.
-
-## Known legacy issues retained only as forensic evidence
-
-- All four legacy notebook panels set Seaborn `ci="sd"`; their bands are
-  standard deviations even though the revised captions say standard error.
-  Maintained plots compute sample SEM across independent seeds explicitly.
-- The September 2022 reset/ongoing runs predate commit `f6189ac`, which fixed
-  terminal Q updates.  Those runs bootstrapped from a terminal next-state Q
-  value with `gamma=1`, creating sticky carried values.  The maintained code
-  uses the correct terminal target and must not recreate that bug as evidence.
-- The response-reward runs postdate the terminal fix and used parameter noise,
-  ten Q-response episodes, `alpha=.2`, zero Q initialization, and a fresh
-  response table per leader episode.  Evaluation excluded response-phase
-  leader reward even when training included it.
-
-These differences are scientific metadata, not compatibility quirks.  Every
-maintained artifact records the profile, state order, reward offset, response
-protocol, seed, source hash, and uncertainty definition.

@@ -25,7 +25,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
 
 
 class _StableEnv(gym.Env):

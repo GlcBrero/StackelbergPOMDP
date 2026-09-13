@@ -24,9 +24,8 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import (
     SELLER_SHARED_CONTEXT_BETA_V5,
-    SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
     seller_shared_context_architecture_provenance,
 )
@@ -123,9 +122,37 @@ def _model(*, architecture=SELLER_SHARED_CONTEXT_BETA_V5):
     )
 
 
+def test_released_false_legacy_flags_are_inert_but_removed_heads_are_rejected():
+    observations, actions = _spaces()
+    policy = StackPOMDPAtariPolicy(
+        observations,
+        actions,
+        lambda _: 5.0e-4,
+        economic_role="seller",
+        economic_input_mode="full",
+        economic_architecture=SELLER_SHARED_CONTEXT_BETA_V5,
+        economic_threshold_residual=False,
+        economic_threshold_residual_direct_input=False,
+    )
+    assert policy.economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5
+
+    with pytest.raises(ValueError, match="not part of the release"):
+        StackPOMDPAtariPolicy(
+            observations,
+            actions,
+            lambda _: 5.0e-4,
+            economic_role="seller",
+            economic_input_mode="full",
+            economic_architecture=SELLER_SHARED_CONTEXT_BETA_V5,
+            economic_threshold_residual=True,
+        )
+
+
 def test_v5_is_enum_only_full_input_seller_and_neutral_at_init():
     observations, actions = _spaces()
-    with pytest.raises(ValueError, match="reserved for full-input E1 seller"):
+    with pytest.raises(
+            ValueError, match="reserved for full-input meta-seller"
+    ):
         StackPOMDPAtariPolicy(
             observations,
             actions,
@@ -320,9 +347,9 @@ def test_v5_optimizer_partition_rates_and_independent_clipping_telemetry():
             assert key in optimizer_metrics
             assert np.isfinite(optimizer_metrics[key])
 
-    # The old architecture still takes the unchanged global-clipping path.
-    v4_model = _model(architecture=SELLER_TWO_BRANCH_BETA_V4)
-    assert v4_model._clip_policy_gradients() == {}
+    # The generic head still takes the unchanged global-clipping path.
+    generic_model = _model(architecture=None)
+    assert generic_model._clip_policy_gradients() == {}
 
 
 def test_v5_optimizer_step_cannot_change_frozen_gameplay_hash():
@@ -348,9 +375,6 @@ def test_v5_provenance_is_exact_and_cross_version_resume_is_rejected(
     policy = model.policy
     architecture = seller_shared_context_architecture_provenance()
     assert policy.economic_architecture_provenance() == architecture
-    assert evaluator.economic_architecture_training_flags(
-        policy, architecture
-    ) == {"economic_architecture": SELLER_SHARED_CONTEXT_BETA_V5}
     assert trainer.shared_context_initialization_provenance(policy) == (
         trainer.shared_context_initialization_contract()
     )
@@ -364,9 +388,9 @@ def test_v5_provenance_is_exact_and_cross_version_resume_is_rejected(
         model, architecture
     ) == trainer.shared_context_initialization_contract()
 
-    v4_model = _model(architecture=SELLER_TWO_BRANCH_BETA_V4)
-    checkpoint = tmp_path / "seller_v4.zip"
-    v4_model.save(checkpoint)
+    generic_model = _model(architecture=None)
+    checkpoint = tmp_path / "seller_generic.zip"
+    generic_model.save(checkpoint)
     args = SimpleNamespace(
         actor_loss_mode="balanced",
         resume=str(checkpoint),
@@ -380,12 +404,10 @@ def test_v5_provenance_is_exact_and_cross_version_resume_is_rejected(
         value_coefficient=0.5,
         max_grad_norm=0.5,
         role="seller",
-        economic_threshold_residual=False,
-        economic_threshold_residual_direct_input=False,
         economic_architecture=SELLER_SHARED_CONTEXT_BETA_V5,
     )
     with pytest.raises(ValueError, match="economic-architecture must match"):
-        trainer._resumed_model(args, v4_model.env)
+        trainer._resumed_model(args, generic_model.env)
 
 
 def test_v5_cli_contract_requires_uniform_balanced_rates_and_clip(tmp_path):
@@ -525,7 +547,9 @@ def test_e2_metadata_validates_v5_initialization_and_frozen_gameplay(
     delattr(model, trainer.SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE)
     missing = tmp_path / "seller_v5_missing_initialization.zip"
     model.save(missing)
-    with pytest.raises(ValueError, match="seller-v5.*initialization provenance"):
+    with pytest.raises(
+            ValueError, match="meta-seller.*initialization provenance"
+    ):
         leader_trainer.checkpoint_policy_metadata(missing)
 
     setattr(
@@ -576,8 +600,6 @@ def test_v5_seller_e1_can_initialize_seller_leader_e2(monkeypatch, tmp_path):
                 "sha256": "4" * 64,
                 "source_economic_role": "seller",
                 "source_economic_input_mode": "full",
-                "source_economic_threshold_residual": False,
-                "source_economic_threshold_residual_direct_input": False,
                 "source_economic_architecture": (
                     SELLER_SHARED_CONTEXT_BETA_V5
                 ),

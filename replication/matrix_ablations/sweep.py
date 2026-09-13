@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, explicitly execute, or inspect the matrix qualitative sweep."""
+"""Plan, explicitly execute, or inspect the three appendix diagnostics."""
 
 import argparse
 import hashlib
@@ -8,6 +8,10 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from stackelberg_pomdp.matrix_ablations.presets import (
+    APPENDIX_CURVES, FIGURE_EXPERIMENTS, LEADER_DEFAULTS,
+)
 
 DEFAULT_ROOT = Path("replication/matrix_ablations/results")
 
@@ -80,8 +84,14 @@ def make_plan(args):
     path = root / "plan.json"
     if path.exists():
         raise FileExistsError("refusing to overwrite existing plan: {}".format(path))
+    figure = getattr(args, "figure", "all")
+    experiments = list(APPENDIX_CURVES) if figure == "all" else [FIGURE_EXPERIMENTS[figure]]
+    seeds_by_experiment = {
+        experiment: args.seeds or list(range(1, LEADER_DEFAULTS[experiment]["seeds"] + 1))
+        for experiment in experiments
+    }
     records = []
-    for seed in args.seeds:
+    for seed in seeds_by_experiment.get("phase_observability", []):
         key = "e1.seed{}".format(seed)
         records.append({
             "key": key,
@@ -92,41 +102,42 @@ def make_plan(args):
                 "record_key": key,
                 "stage": "meta_follower",
                 "profile_id": "paper_joint_v1",
-                "matrix": "modified_pd",
+                "matrix": "prisoners_dilemma",
                 "memory_mode": "joint",
-                "algorithm": "PPO",
+                "algorithm": "REINFORCE",
                 "seed": seed,
                 "timesteps": args.e1_timesteps,
-                "learning_rate": 0.002,
+                "learning_rate": 0.02,
             },
             "argv": [
                 "-m",
                 "stackelberg_pomdp.experiments.matrix_ablations",
-                "meta-follower", "--matrix", "modified_pd",
-                "--memory-mode", "joint", "--algorithm", "PPO",
+                "meta-follower", "--matrix", "prisoners_dilemma",
+                "--memory-mode", "joint", "--algorithm", "REINFORCE",
                 "--seed", str(seed), "--timesteps", str(args.e1_timesteps),
             ],
         })
 
-    def leader_record(seed, experiment, condition, algorithm, matrix):
-        key = ".".join((experiment, matrix, algorithm.lower(), condition, "seed{}".format(seed)))
-        learning_rate = 0.008
+    def leader_record(seed, experiment, condition, matrix, learning_rate):
+        defaults = LEADER_DEFAULTS[experiment]
+        algorithm = defaults["algorithm"]
+        timesteps = args.leader_timesteps if args.leader_timesteps is not None else defaults["timesteps"]
+        key = ".".join((experiment, matrix, algorithm.lower(), condition,
+                        "lr" + str(learning_rate).replace(".", "p"), "seed{}".format(seed)))
         argv = [
             "-m",
             "stackelberg_pomdp.experiments.matrix_ablations",
             "leader", "--experiment", experiment,
             "--condition", condition, "--algorithm", algorithm,
             "--matrix", matrix, "--seed", str(seed),
-            "--timesteps", str(args.leader_timesteps),
+            "--timesteps", str(timesteps),
             "--eval-freq", str(args.eval_freq),
         ]
         argv.extend(["--learning-rate", str(learning_rate)])
-        if experiment in ("hidden_queries", "phase_observability"):
-            argv.extend(["--response-algorithm", "PPO"])
+        if experiment == "phase_observability":
+            argv.extend(["--response-algorithm", "REINFORCE"])
         profile_id = (
-            "paper_joint_v1" if experiment in (
-                "hidden_queries", "phase_observability"
-            ) else "one_shot_{}_v1".format(matrix)
+            "paper_joint_v1" if experiment == "phase_observability" else "one_shot_{}_v1".format(matrix)
         )
         match = {
             "sweep_id": args.sweep_id, "record_key": key,
@@ -135,11 +146,9 @@ def make_plan(args):
             "experiment": experiment, "condition": condition,
             "algorithm": algorithm, "matrix": matrix,
             "memory_mode": (
-                "joint" if experiment in (
-                    "hidden_queries", "phase_observability"
-                ) else "none"
+                "joint" if experiment == "phase_observability" else "none"
             ),
-            "timesteps": args.leader_timesteps,
+            "timesteps": timesteps,
             "learning_rate": learning_rate,
             "eval_freq": args.eval_freq,
         }
@@ -147,7 +156,7 @@ def make_plan(args):
             match["q_protocol"] = {
                 "alpha": 0.1,
                 "epsilon": 0.1,
-                "exploration": "epsilon_greedy",
+                "exploration": "parameter_noise",
                 "initialization": "small_normal",
                 "initialization_std": 0.01,
             }
@@ -164,44 +173,25 @@ def make_plan(args):
             "stage": "leader",
             "seed": seed,
             "response_seed": (
-                seed if experiment in ("hidden_queries", "phase_observability")
+                seed if experiment == "phase_observability"
                 else None
             ),
             "match": match,
             "argv": argv,
         }
 
-    for seed in args.seeds:
-        # Native RLlib ES has a dedicated pinned environment and array script;
-        # this base-environment sweep deliberately remains Ray-free.
-        for algorithm in ("A2C", "PPO"):
-            for condition in ("observed", "hidden"):
+    for experiment in experiments:
+        for seed in seeds_by_experiment[experiment]:
+            for condition, matrix, learning_rate in APPENDIX_CURVES[experiment]:
                 records.append(leader_record(
-                    seed, "hidden_queries", condition, algorithm,
-                    "modified_pd",
-                ))
-        for condition in ("visible", "hidden"):
-            records.append(leader_record(
-                seed, "phase_observability", condition, "A2C",
-                "prisoners_dilemma",
-            ))
-        for condition in ("reset", "ongoing"):
-            records.append(leader_record(
-                seed, "q_reset", condition, "A2C", "battle_of_the_sexes",
-            ))
-        for matrix in (
-            "coordination_zero_miscoordination",
-            "coordination_penalized_miscoordination",
-        ):
-            for condition in ("excluded", "included"):
-                records.append(leader_record(
-                    seed, "response_reward", condition, "A2C", matrix,
+                    seed, experiment, condition, matrix, learning_rate,
                 ))
 
     payload = {
         "schema_version": 1,
         "sweep_id": args.sweep_id,
-        "seeds": args.seeds,
+        "seeds": sorted({seed for seeds in seeds_by_experiment.values() for seed in seeds}),
+        "seeds_by_experiment": seeds_by_experiment,
         "memory_mode": "joint",
         "profile_id": "paper_joint_v1",
         "planner_python": sys.executable,
@@ -408,9 +398,11 @@ def build_parser():
     plan = subparsers.add_parser("plan", help="Write commands; execute nothing.")
     plan.add_argument("--sweep-id", required=True)
     plan.add_argument("--results-root", default=str(DEFAULT_ROOT))
-    plan.add_argument("--seeds", type=parse_seeds, default=parse_seeds("1-10"))
-    plan.add_argument("--e1-timesteps", type=int, default=200_000)
-    plan.add_argument("--leader-timesteps", type=int, default=200_000)
+    plan.add_argument("--figure", choices=("all", *FIGURE_EXPERIMENTS), default="all")
+    plan.add_argument("--seeds", type=parse_seeds,
+                      help="Override paper counts: phase/reward 10, reset 3.")
+    plan.add_argument("--e1-timesteps", type=int, default=25_000)
+    plan.add_argument("--leader-timesteps", type=int)
     plan.add_argument("--eval-freq", type=int, default=2_000)
 
     run = subparsers.add_parser("run", help="Explicitly execute one stage.")

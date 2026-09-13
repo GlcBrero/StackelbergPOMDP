@@ -24,5 +24,5 @@ cd "$PROJECT_DIR"
 mkdir -p replication/matrix_ablations/slurm_logs
 
 python replication/matrix_ablations/gate_e1.py \
-  --sweep-root replication/matrix_ablations/results/qualitative-v1 \
+  --sweep-root replication/matrix_ablations/results/appendix-v1 \
   --max-regret 0.25

@@ -32,9 +32,21 @@ output/
 # Atari ROMs are required locally but cannot be distributed with the code.
 stackelberg_pomdp/envs/atari/roms/*.bin
 
-# Atari replication outputs are external, content-addressed artifacts.  Keep
-# code and small curated manifests in Git, never local checkpoints/run trees.
+# Keep generated Atari checkpoints and run outputs out of Git.
 replication/atari/checkpoints/**
 replication/atari/results/**
 replication/atari/runs/**
 replication/atari/wandb/**
+
+# Frozen paper release: only these six archives and their documentation.
+!replication/atari/checkpoints/paper/
+!replication/atari/checkpoints/paper/LICENSE-DATA
+!replication/atari/checkpoints/paper/README.md
+!replication/atari/checkpoints/paper/manifest.csv
+!replication/atari/checkpoints/paper/SHA256SUMS
+!replication/atari/checkpoints/paper/gameplay_fixed_ammunition.zip
+!replication/atari/checkpoints/paper/gameplay_delayed_ammunition.zip
+!replication/atari/checkpoints/paper/meta_buyer.zip
+!replication/atari/checkpoints/paper/meta_seller.zip
+!replication/atari/checkpoints/paper/buyer_leader_seed1.zip
+!replication/atari/checkpoints/paper/seller_leader_seed1.zip

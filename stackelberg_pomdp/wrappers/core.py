@@ -9,9 +9,8 @@ from stackelberg_pomdp.follower_responses import (
     CertifiedMWResponse,
     MultiplicativeWeightsResponse,
     QLearningResponse,
-    RoundRobinResponse,
+    round_down_mw_response_games,
 )
-from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
 from stackelberg_pomdp.utils import (
     get_all_wrappers,
 )
@@ -38,6 +37,10 @@ class FollowerWrapper(gym.Wrapper):
 
     def reward_phase_length(self, default_length):
         return self.env.unwrapped.reward_phase_length(default_length)
+
+    def response_phase_length(self, requested_length):
+        """Resolve the fixed response prefix in follower subepisodes."""
+        return requested_length
 
     def max_subepisode_transitions(self):
         return self.env.unwrapped.max_subepisode_transitions()
@@ -151,6 +154,11 @@ class MWFollowersWrapper(FollowerWrapper):
 
     def response_ready(self):
         return self.response.response_ready()
+
+    def response_phase_length(self, requested_length):
+        return round_down_mw_response_games(
+            requested_length, self.response.response_games_per_update,
+        )
 
     def response_phase_info(self):
         return OrderedDict(self.response.phase_info())
@@ -493,110 +501,6 @@ class QLearningFollowersWrapper(FollowerWrapper):
             "critic:exploration_rates": np.full(len(self.env.followers_list), exp_rate),
         })
 
-"""Round-robin (monopolist) follower wrapper.
-
-Tries each price in sequence during the response phase, picks the most profitable
-for the reward phase. All followers play the same price at each step.
-
-Response phase = m steps (one per price). Reward phase = as configured.
-Game-agnostic interface: step(leader_action) → (obs, reward, done, info).
-"""
-class RoundRobinFollowersWrapper(FollowerWrapper):
-    follower_state_kind = "roundrobin"
-
-    def __init__(self, env):
-        super().__init__(env)
-        self.num_followers = len(env.followers_list)
-        self.n_actions = env.followers_action_space[env.followers_list[0]].n
-        self.response = RoundRobinResponse(env.followers_list, self.n_actions)
-
-        # Leader obs = null (no_observation by default; use ReactiveLeaderWrapper for price_profile)
-        self.observation_space = Dict({'base_environment': MultiDiscrete([1])})
-        if hasattr(env, 'platform_intervention') and env.platform_intervention == 'learn_binary_threshold':
-            self.action_space = Discrete(2)
-        else:
-            self.action_space = Discrete(self.n_actions)
-
-    @property
-    def price_idx(self):
-        return self.response.action_idx
-
-    @property
-    def profits(self):
-        return self.response.profits
-
-    @property
-    def best_profit(self):
-        return self.response.best_profit
-
-    @property
-    def best_price(self):
-        return self.response.best_action
-
-    def _to_leader_obs(self):
-        return np.array([0])
-
-    def current_leader_observation(self):
-        return OrderedDict({
-            "base_environment": self.env.leader_observation(getattr(self, "current_actions", None))
-        })
-
-    def current_follower_actions(self):
-        return dict(getattr(self, "current_actions", {}))
-
-    def on_step_mode_changed(self, mode):
-        if mode == "reward":
-            self.current_actions = self.response.reward_actions()
-
-    def reset(self):
-        self.env.reset()
-        self.response.reset_episode()
-        self.current_actions = self.response.response_actions()
-        return OrderedDict({"base_environment": self._to_leader_obs()})
-
-    def critic_observation_spaces(self):
-        return OrderedDict({
-            "critic:strategy_idx": Discrete(self.n_actions + 1),
-            "critic:best_profit": Box(low=-10.0, high=10.0, shape=(1,)),
-        })
-
-    def critic_observation(self):
-        return OrderedDict({
-            "critic:strategy_idx": min(self.price_idx, self.n_actions),
-            "critic:best_profit": np.array([self.best_profit], dtype=np.float32),
-        })
-
-    def step(self, action):
-        in_response = (
-            self.this_step_mode in ('response', 'standard')
-            and not self.response.response_complete()
-        )
-        follower_actions = (
-            self.response.response_actions()
-            if in_response
-            else self.response.reward_actions()
-        )
-        all_actions = dict(follower_actions)
-        all_actions[self.env.leader] = action
-        obs, rewards, done, info = self.env.step(all_actions)
-
-        if not isinstance(rewards, dict):
-            rewards = info.get('utilities', {})
-
-        if in_response:
-            self.response.observe_response_result(rewards)
-            self.current_actions = self.response.next_actions()
-        else:
-            self.current_actions = self.response.reward_actions()
-
-        reward = info.get('surplus', 0)
-        info["reward_generated"] = info.get("reward_generated", True)
-        info["utilities"] = {self.env.leader: reward, **{a: rewards.get(a, 0) for a in self.env.followers_list}}
-        info["followers_actions"] = dict(follower_actions)
-
-        return OrderedDict({"base_environment": self._to_leader_obs()}), reward, False, info
-
-
 class ReactiveLeaderWrapper(gym.Wrapper):
     """Expose reactive leader observations.
 
@@ -640,9 +544,8 @@ class ReactiveLeaderWrapper(gym.Wrapper):
         return self._leader_observation(), reward, done, info
 
 
-# StackPOMDP phase wrapper: response phase, then reward phase.
-"""Wrapper for Stackelberg POMDP"""
 class StackPOMDPWrapper(gym.Wrapper):
+    """Execute a follower response phase, followed by reward evaluation."""
 
     def __init__(
             self,
@@ -653,10 +556,21 @@ class StackPOMDPWrapper(gym.Wrapper):
             response_variant="stackelberg",
     ):
 
+        if response_variant not in ("stackelberg", "hidden_queries"):
+            raise ValueError(f"Unsupported response_variant: {response_variant}")
         super(StackPOMDPWrapper, self).__init__(env)
 
-        # This sets the total number of response and reward steps in StackPOMDP.
-        self.tot_num_response_episodes = tot_num_response_episodes
+        self.follower_wrapper = self._find_follower_wrapper()
+        self.requested_response_episodes = tot_num_response_episodes
+        self.tot_num_response_episodes = self.follower_wrapper.response_phase_length(
+            tot_num_response_episodes,
+        )
+        if self.tot_num_response_episodes != tot_num_response_episodes:
+            print(
+                f"[config] rounding response prefix down: {tot_num_response_episodes} "
+                f"-> {self.tot_num_response_episodes} follower games",
+                flush=True,
+            )
         self.tot_num_reward_episodes = tot_num_reward_episodes
         self.critic_obs = critic_obs
         self.response_variant = response_variant
@@ -667,7 +581,6 @@ class StackPOMDPWrapper(gym.Wrapper):
         self.last_response_type_profile_counts = None
 
         self.tot_num_steps = 0
-        self.follower_wrapper = self._find_follower_wrapper()
 
         self.observation_space = Dict(self._observation_spaces())
 
@@ -732,17 +645,16 @@ class StackPOMDPWrapper(gym.Wrapper):
     def _hide_response_transition_from_buffer(self, response_extension=False):
         return self.response_variant == "hidden_queries" or response_extension
 
-    def _response_reward(self, response_reward):
-        if self.response_variant == "reward_during_response":
-            return response_reward
-        return 0
-
     def _leader_observation(self, obs):
         full_observation = OrderedDict(
             (key, obs[key])
             for key in self.env.observation_space.spaces.keys()
         )
-        self.augment_observation(full_observation)
+        # This observation is for the next action, which may already be in
+        # reward mode even though the completed transition was a response.
+        self.augment_observation(
+            full_observation, is_reward_step=int(self.reward_phase_started)
+        )
         return full_observation
 
     def _response_phase_done(self):
@@ -766,7 +678,7 @@ class StackPOMDPWrapper(gym.Wrapper):
         response_extension = (
             self.phase_episode_counter >= self._response_phase_threshold()
         )
-        obs, response_reward, done, info = self.env.step(action)
+        obs, _, done, info = self.env.step(action)
 
         self._count_generated_reward(info)
         response_phase_done = self._response_phase_done()
@@ -788,8 +700,10 @@ class StackPOMDPWrapper(gym.Wrapper):
             info.update(self.follower_wrapper.response_phase_info())
             obs = self._current_leader_observation()
             info["response_updates"] = self.last_response_updates
+            info["requested_response_games"] = self.requested_response_episodes
+            info["response_prefix_games"] = self.tot_num_response_episodes
 
-        reward = self._response_reward(response_reward)
+        reward = 0
         info["exclude_from_buffer"] = self._hide_response_transition_from_buffer(
             response_extension=response_extension
         )

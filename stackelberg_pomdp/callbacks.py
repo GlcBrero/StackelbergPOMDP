@@ -3,12 +3,10 @@ import os
 import threading
 import time
 from itertools import product
-from typing import Union
 
 import gym
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
-from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
 
 try:
     import wandb
@@ -21,7 +19,7 @@ from stackelberg_pomdp.wrappers.core import (
     MWFollowersWrapper,
     StackPOMDPWrapper,
 )
-from stackelberg_pomdp.policies.leader import BaselinePolicyWrapper
+from stackelberg_pomdp.evaluation import BaselinePolicyWrapper
 from stackelberg_pomdp.utils import (
     compute_empirical_welfare,
 )

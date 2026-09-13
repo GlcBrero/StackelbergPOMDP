@@ -9,12 +9,8 @@ its economic actor and stage-private critic are initialized from scratch.
 
 import argparse
 import copy
-import hashlib
-from importlib import metadata as importlib_metadata
-import json
 import math
 import os
-import platform
 from pathlib import Path
 import re
 import tempfile
@@ -31,6 +27,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
 
 from stackelberg_pomdp.atari.training import (
+    ATARI_PAPER_PPO,
     ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
@@ -59,24 +56,34 @@ from stackelberg_pomdp.envs.atari.bilateral import (
     SELLER,
     BilateralAtariConfig,
 )
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import (
     ATARI_POLICY_PROVENANCE_ID,
     SELLER_SHARED_CONTEXT_BETA_V5,
-    SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
     canonical_atari_policy_provenance_id,
 )
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
-
-
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-E2_PROVENANCE_SCHEMA = "stackelberg_pomdp.atari.e2_provenance"
-E2_PROVENANCE_VERSION = 1
-E2_PROVENANCE_ATTRIBUTE = "e2_provenance_manifest"
-E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE = (
-    "e2_frozen_gameplay_actor_sha256"
+# These names also preserve imports from historical trainer/checkpoint code.
+from stackelberg_pomdp.checkpoints.atari_provenance import (
+    E2_IMPLEMENTATION_FILES,
+    E2_PACKAGE_DISTRIBUTIONS,
+    E2_PROTOCOL_IMPLEMENTATION,
+    E2_PROVENANCE_ATTRIBUTE,
+    E2_PROVENANCE_SCHEMA,
+    E2_PROVENANCE_VERSION,
+    LEGACY_LAYOUT_E2_IMPLEMENTATION_SHA256,
+    REPOSITORY_ROOT,
+    _canonical_json_copy,
+    _canonical_sha256,
+    _sha256_file,
+    e2_implementation_provenance,
+    e2_implementation_provenance_compatible,
+    validate_e2_gameplay_actor,
+    validate_e2_provenance_manifest,
 )
-E2_PROTOCOL_IMPLEMENTATION = "clean_atari_stackpomdp_e2_v1"
+from stackelberg_pomdp.checkpoints.atari import gameplay_actor_sha256
+
+
 E2_ACTOR_TRANSFER_MODULES = ("features_extractor", "game_action_net")
 E2_ECONOMIC_INIT_MEAN = 0.5
 E2_ECONOMIC_INIT_CONCENTRATION = 2.0
@@ -86,51 +93,10 @@ E1_ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
 E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
     "atari_e1_threshold_residual_training_code_revision"
 )
-E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
-    "atari_e1_direct_threshold_initialization_provenance"
-)
-E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
-    "atari_e1_two_branch_initialization_provenance"
-)
 E1_SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_shared_context_initialization_provenance"
 )
-FROZEN_E1_SELLER_ARCHITECTURES = {
-    SELLER_TWO_BRANCH_BETA_V4,
-    SELLER_SHARED_CONTEXT_BETA_V5,
-}
-E2_IMPLEMENTATION_FILES = (
-    "replication/atari/train_atari_stackpomdp_leader_sb3.py",
-    "stackelberg_pomdp/atari/training.py",
-    "stackelberg_pomdp/envs/atari/space_invaders.py",
-    "stackelberg_pomdp/envs/atari/gameplay.py",
-    "stackelberg_pomdp/envs/atari/bilateral.py",
-    "stackelberg_pomdp/wrappers/atari/preprocessing.py",
-    "stackelberg_pomdp/wrappers/atari/meta_follower.py",
-    "stackelberg_pomdp/policies/atari/composite.py",
-    "stackelberg_pomdp/policies/atari/loading.py",
-    "stackelberg_pomdp/atari/protocol.py",
-    "stackelberg_pomdp/atari/query_trace.py",
-    "stackelberg_pomdp/atari/sampling.py",
-    "stackelberg_pomdp/policies/cache.py",
-    "stackelberg_pomdp/envs/base.py",
-    "stackelberg_pomdp/wrappers/core.py",
-    "stackelberg_pomdp/callbacks.py",
-)
-E2_PACKAGE_DISTRIBUTIONS = (
-    "stable-baselines3",
-    "torch",
-    "gym",
-    "numpy",
-    "multi-agent-ale-py",
-    "opencv-python",
-)
-LEGACY_LAYOUT_E2_IMPLEMENTATION_SHA256 = frozenset({
-    # Public ``jair-2026-v1.0.0`` checkpoints.  The following release only
-    # reorganizes modules; accepting this exact fingerprint preserves
-    # evaluation/resume compatibility without weakening provenance checks.
-    "4c187999e6bf073d35c7caa71033d7e1790306d2dac45dce25e3e090862d037a",
-})
+FROZEN_E1_SELLER_ARCHITECTURES = {SELLER_SHARED_CONTEXT_BETA_V5}
 
 
 def _actor_loss_mode(args):
@@ -145,8 +111,6 @@ def _run_variant_suffix(args):
     parts = []
     if _actor_loss_mode(args) != STANDARD_ACTOR_LOSS_MODE:
         parts.append(_actor_loss_mode(args))
-    if bool(getattr(args, "freeze_gameplay_actor", False)):
-        parts.append("frozen_gameplay")
     if args.target_kl is not None:
         parts.append(f"kl{_value_slug(args.target_kl)}")
     return "" if not parts else "_" + "_".join(parts)
@@ -198,73 +162,6 @@ def _existing_checkpoint(path, label):
     raise FileNotFoundError(f"{label} checkpoint does not exist: {candidate}")
 
 
-def _sha256_file(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _canonical_json_copy(value):
-    """Return a JSON-only deep copy and reject non-finite numbers."""
-
-    return json.loads(json.dumps(
-        value,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ))
-
-
-def _canonical_sha256(value):
-    payload = json.dumps(
-        value,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def e2_implementation_provenance():
-    """Hash the implementation and runtime packages that define E2 behavior."""
-
-    source_hashes = {}
-    for relative in E2_IMPLEMENTATION_FILES:
-        path = REPOSITORY_ROOT / relative
-        if not path.is_file():
-            raise FileNotFoundError(f"E2 implementation file is missing: {path}")
-        source_hashes[relative] = _sha256_file(path)
-    packages = {}
-    for distribution in E2_PACKAGE_DISTRIBUTIONS:
-        try:
-            packages[distribution] = importlib_metadata.version(distribution)
-        except importlib_metadata.PackageNotFoundError:
-            packages[distribution] = "unavailable"
-    return _canonical_json_copy({
-        "protocol_implementation": E2_PROTOCOL_IMPLEMENTATION,
-        "python": platform.python_version(),
-        "packages": packages,
-        "source_sha256": source_hashes,
-    })
-
-
-def e2_implementation_provenance_compatible(recorded, current=None):
-    """Accept current code or the exact pre-reorganization release layout."""
-
-    if not isinstance(recorded, dict):
-        return False
-    resolved_current = (
-        e2_implementation_provenance() if current is None else current
-    )
-    if recorded == resolved_current:
-        return True
-    return _canonical_sha256(recorded) in (
-        LEGACY_LAYOUT_E2_IMPLEMENTATION_SHA256
-    )
-
-
 def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
     """Read and validate the curriculum identity stored in one checkpoint."""
 
@@ -312,10 +209,7 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                 policy, "gameplay_actor_frozen", False
             ))
         economic_architecture = None
-        if bool(
-                getattr(policy, "economic_threshold_residual", False)
-                or getattr(policy, "economic_architecture", None) is not None
-        ):
+        if getattr(policy, "economic_architecture", None) is not None:
             economic_architecture = (
                 policy.economic_architecture_provenance()
             )
@@ -324,7 +218,7 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
             )
             if recorded_architecture != economic_architecture:
                 raise ValueError(
-                    f"{label} threshold-residual policy lacks exact saved "
+                    f"{label} specialized policy lacks exact saved "
                     "economic architecture provenance"
                 )
             training_code_revision = getattr(
@@ -334,38 +228,13 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                     r"[0-9a-f]{40}", training_code_revision
             ) is None:
                 raise ValueError(
-                    f"{label} threshold-residual policy lacks a full saved "
+                    f"{label} specialized policy lacks a full saved "
                     "training code revision"
                 )
             policy_metadata["economic_architecture"] = economic_architecture
             policy_metadata["e1_training_code_revision"] = (
                 training_code_revision
             )
-            if bool(getattr(
-                    policy,
-                    "economic_threshold_residual_direct_input",
-                    False,
-            )):
-                from replication.atari.train_atari_meta_response_sb3 import (
-                    direct_threshold_initialization_provenance,
-                )
-
-                expected_initialization = (
-                    direct_threshold_initialization_provenance(policy)
-                )
-                recorded_initialization = getattr(
-                    model,
-                    E1_DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE,
-                    None,
-                )
-                if recorded_initialization != expected_initialization:
-                    raise ValueError(
-                        f"{label} direct-threshold policy lacks exact saved "
-                        "initialization provenance"
-                    )
-                policy_metadata["direct_threshold_initialization"] = (
-                    expected_initialization
-                )
             frozen_architecture = getattr(
                 policy, "economic_architecture", None
             )
@@ -373,38 +242,24 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
                 from replication.atari.train_atari_meta_response_sb3 import (
                     gameplay_actor_sha256,
                     shared_context_initialization_provenance,
-                    two_branch_initialization_provenance,
                     validate_frozen_gameplay_actor,
                 )
 
-                if frozen_architecture == SELLER_TWO_BRANCH_BETA_V4:
-                    initialization_key = "two_branch_initialization"
-                    initialization_label = "seller-v4"
-                    initialization_attribute = (
-                        E1_TWO_BRANCH_INITIALIZATION_ATTRIBUTE
-                    )
-                    expected_initialization = (
-                        two_branch_initialization_provenance(policy)
-                    )
-                else:
-                    initialization_key = "shared_context_initialization"
-                    initialization_label = "seller-v5"
-                    initialization_attribute = (
-                        E1_SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE
-                    )
-                    expected_initialization = (
-                        shared_context_initialization_provenance(policy)
-                    )
+                expected_initialization = (
+                    shared_context_initialization_provenance(policy)
+                )
                 recorded_initialization = getattr(
-                    model, initialization_attribute, None
+                    model, E1_SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None
                 )
                 if recorded_initialization != expected_initialization:
                     raise ValueError(
-                        f"{label} {initialization_label} policy lacks exact saved "
+                        f"{label} meta-seller policy lacks exact saved "
                         "initialization provenance"
                     )
                 validate_frozen_gameplay_actor(model)
-                policy_metadata[initialization_key] = expected_initialization
+                policy_metadata["shared_context_initialization"] = (
+                    expected_initialization
+                )
                 policy_metadata["frozen_gameplay_actor_sha256"] = (
                     gameplay_actor_sha256(policy)
                 )
@@ -420,14 +275,6 @@ def checkpoint_policy_metadata(path, *, device="cpu", label="Atari"):
         if economic_architecture is not None:
             result["economic_architecture"] = economic_architecture
             result["e1_training_code_revision"] = training_code_revision
-            if "direct_threshold_initialization" in policy_metadata:
-                result["direct_threshold_initialization"] = policy_metadata[
-                    "direct_threshold_initialization"
-                ]
-            if "two_branch_initialization" in policy_metadata:
-                result["two_branch_initialization"] = policy_metadata[
-                    "two_branch_initialization"
-                ]
             if "shared_context_initialization" in policy_metadata:
                 result["shared_context_initialization"] = policy_metadata[
                     "shared_context_initialization"
@@ -553,7 +400,7 @@ def e2_scientific_config(args):
             "economic_hidden": 64,
             "critic_hidden": 256,
             "pretrained_lr_scale": float(args.pretrained_lr_scale),
-            "gameplay_actor_frozen": bool(args.freeze_gameplay_actor),
+            "gameplay_actor_frozen": False,
             "game_action_count": 6,
             "actor_loss_mode": _actor_loss_mode(args),
             "economic_head_initialization": {
@@ -607,38 +454,6 @@ def build_e2_provenance_manifest(
     manifest = _canonical_json_copy(unsigned)
     manifest["fingerprint_sha256"] = _canonical_sha256(manifest)
     return manifest
-
-
-def validate_e2_provenance_manifest(manifest):
-    """Validate the schema and its self-consistent canonical checksums."""
-
-    if not isinstance(manifest, dict):
-        raise ValueError("E2 checkpoint has no valid provenance manifest")
-    result = _canonical_json_copy(manifest)
-    if result.get("schema") != E2_PROVENANCE_SCHEMA:
-        raise ValueError("E2 checkpoint provenance schema is unsupported")
-    if result.get("version") != E2_PROVENANCE_VERSION:
-        raise ValueError("E2 checkpoint provenance version is unsupported")
-    fingerprint = result.pop("fingerprint_sha256", None)
-    if fingerprint != _canonical_sha256(result):
-        raise ValueError("E2 checkpoint provenance fingerprint is invalid")
-    result["fingerprint_sha256"] = fingerprint
-    lineage = result.get("run_lineage_id")
-    if not isinstance(lineage, str) or len(lineage) != 32:
-        raise ValueError("E2 checkpoint provenance lineage ID is invalid")
-    try:
-        int(lineage, 16)
-    except ValueError as error:
-        raise ValueError(
-            "E2 checkpoint provenance lineage ID is invalid"
-        ) from error
-    identity = {
-        "scientific_config": result.get("scientific_config"),
-        "artifacts": result.get("artifacts"),
-    }
-    if result.get("scientific_identity_sha256") != _canonical_sha256(identity):
-        raise ValueError("E2 scientific identity checksum is invalid")
-    return result
 
 
 def require_compatible_e2_provenance(
@@ -715,54 +530,6 @@ def attach_e2_provenance(model, manifest):
             raise ValueError("refusing to replace an E2 checkpoint's provenance")
     setattr(model, E2_PROVENANCE_ATTRIBUTE, copy.deepcopy(manifest))
     return manifest
-
-
-def gameplay_actor_sha256(policy):
-    """Return stable hashes for the three transferred gameplay modules."""
-
-    from replication.atari.train_atari_meta_response_sb3 import (
-        gameplay_actor_sha256 as hash_gameplay_actor,
-    )
-
-    return hash_gameplay_actor(policy)
-
-
-def validate_e2_gameplay_actor_freeze(model, *, initialize=False):
-    """Certify that an opt-in frozen E2 gameplay actor never changes."""
-
-    policy = model.policy
-    frozen = bool(getattr(policy, "gameplay_actor_frozen", False))
-    recorded = getattr(
-        model, E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE, None
-    )
-    if not frozen:
-        if recorded is not None:
-            raise ValueError(
-                "trainable-gameplay E2 checkpoint stores a frozen-actor hash"
-            )
-        return None
-    actual = gameplay_actor_sha256(policy)
-    if recorded is None:
-        if not initialize:
-            raise ValueError(
-                "frozen-gameplay E2 checkpoint lacks its actor hash"
-            )
-        setattr(
-            model,
-            E2_FROZEN_GAMEPLAY_ACTOR_SHA256_ATTRIBUTE,
-            dict(actual),
-        )
-    elif recorded != actual:
-        raise RuntimeError("frozen E2 gameplay actor changed")
-    for module in policy.gameplay_actor_modules():
-        if any(parameter.requires_grad for parameter in module.parameters()):
-            raise RuntimeError("frozen E2 gameplay actor became trainable")
-    if not all(
-            parameter.requires_grad
-            for parameter in policy.economic_head.parameters()
-    ):
-        raise RuntimeError("frozen-gameplay E2 economic head is not trainable")
-    return actual
 
 
 def provenance_sidecar_path(checkpoint):
@@ -896,7 +663,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
             "economic_hidden": 64,
             "critic_hidden": 256,
             "pretrained_lr_scale": args.pretrained_lr_scale,
-            "gameplay_actor_frozen": args.freeze_gameplay_actor,
+            "gameplay_actor_frozen": False,
         },
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
@@ -944,23 +711,6 @@ def _new_model(args, vec_env, *, provenance_manifest):
             != source_policy.get("economic_role")
             or provenance.get("source_economic_input_mode")
             != source_policy.get("economic_input_mode")
-            or bool(provenance.get(
-                "source_economic_threshold_residual", False
-            )) != (
-                source_policy.get("economic_architecture", {}).get(
-                    "parameterization"
-                ) in {
-                    "seller_threshold_residual_beta_v1",
-                    "seller_direct_threshold_residual_beta_v3",
-                }
-            )
-            or bool(provenance.get(
-                "source_economic_threshold_residual_direct_input", False
-            )) != (
-                source_policy.get("economic_architecture", {}).get(
-                    "parameterization"
-                ) == "seller_direct_threshold_residual_beta_v3"
-            )
             or provenance.get("source_economic_architecture") != (
                 source_frozen_architecture
             )
@@ -984,7 +734,7 @@ def _new_model(args, vec_env, *, provenance_manifest):
     )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
-    validate_e2_gameplay_actor_freeze(model, initialize=True)
+    validate_e2_gameplay_actor(model)
     print({"actor_transfer": provenance, "fresh_economic_head": True}, flush=True)
     return model
 
@@ -1024,12 +774,9 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
         raise ValueError("--resume role does not match --leader-role")
     if model.policy.economic_input_mode != "event_only":
         raise ValueError("--resume is not an event-only E2 leader")
-    if bool(model.policy.gameplay_actor_frozen) != bool(
-            args.freeze_gameplay_actor
-    ):
+    if model.policy.gameplay_actor_frozen:
         raise ValueError(
-            "--freeze-gameplay-actor must match the saved E2 checkpoint "
-            f"({model.policy.gameplay_actor_frozen})"
+            "The paper E2 workflow requires a trainable gameplay actor."
         )
     saved_target_kl = getattr(model, "target_kl", None)
     if (
@@ -1090,7 +837,7 @@ def _resumed_model(args, vec_env, *, provenance_manifest):
     )
     model.policy.clear_obs_action_map()
     attach_e2_provenance(model, provenance_manifest)
-    validate_e2_gameplay_actor_freeze(model, initialize=False)
+    validate_e2_gameplay_actor(model)
     return model
 
 
@@ -1167,24 +914,16 @@ def parse_args(argv=None):
     parser.add_argument("--start-method", default="spawn")
     parser.add_argument("--n-steps", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--n-epochs", type=int, default=4)
-    parser.add_argument("--learning-rate", type=float, default=1.0e-4)
+    parser.add_argument("--n-epochs", type=int, default=ATARI_PAPER_PPO["n_epochs"])
+    parser.add_argument("--learning-rate", type=float, default=ATARI_PAPER_PPO["transfer_learning_rate"])
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
-    parser.add_argument(
-        "--freeze-gameplay-actor",
-        action="store_true",
-        help=(
-            "Freeze the transferred visual encoder, state encoder, and Atari "
-            "head; train only the economic actor and stage-private critic."
-        ),
-    )
     parser.add_argument(
         "--actor-loss-mode",
         choices=ACTOR_LOSS_MODES,
         default=STANDARD_ACTOR_LOSS_MODE,
     )
-    parser.add_argument("--entropy-coeff", type=float, default=0.01)
-    parser.add_argument("--clip-range", type=float, default=0.1)
+    parser.add_argument("--entropy-coeff", type=float, default=ATARI_PAPER_PPO["entropy_coeff"])
+    parser.add_argument("--clip-range", type=float, default=ATARI_PAPER_PPO["clip_range"])
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--target-kl", type=float)
@@ -1310,25 +1049,23 @@ def main(argv=None):
             "response_algorithm": "frozen_meta_policy",
             "leader_economic_input": "event_only",
             "response_economic_input": "full",
-            "gameplay_actor_frozen": bool(args.freeze_gameplay_actor),
-            "trainable_actor_modules": (
-                ["economic_head"]
-                if args.freeze_gameplay_actor
-                else ["features_extractor", "game_action_net", "economic_head"]
-            ),
+            "gameplay_actor_frozen": False,
+            "trainable_actor_modules": [
+                "features_extractor", "game_action_net", "economic_head",
+            ],
         }, allow_val_change=True)
     try:
         model = build_model(
             args, vec_env, provenance_manifest=manifest
         )
-        validate_e2_gameplay_actor_freeze(model, initialize=False)
+        validate_e2_gameplay_actor(model)
         if not args.eval_only:
             model.learn(
                 total_timesteps=args.timesteps,
                 callback=make_training_callback(args, wandb_run=run),
                 reset_num_timesteps=not bool(args.resume),
             )
-            validate_e2_gameplay_actor_freeze(model, initialize=False)
+            validate_e2_gameplay_actor(model)
             model.save(args.checkpoint)
         evaluation = evaluate_leader(model, args)
         evaluation["e2_provenance_manifest"] = manifest

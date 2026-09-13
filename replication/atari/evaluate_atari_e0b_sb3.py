@@ -37,7 +37,7 @@ from stackelberg_pomdp.envs.atari.curriculum import (
 )
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
 from stackelberg_pomdp.atari.sampling import ExactFiveEventSchedule
-from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

@@ -110,7 +110,7 @@ if __name__ == '__main__':
             print(f"    {k}: {v} times")
 
     # Compute Delta
-    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
 
     env = BertrandCompetitionEnv(m=4)
     prices = env.action_price_space

@@ -110,16 +110,6 @@ class MatrixGameSpec:
 
 
 MATRIX_GAMES = {
-    "modified_pd": MatrixGameSpec(
-        name="modified_pd",
-        payoffs=np.array([
-            [[4.0, 3.0], [2.0, 4.0]],
-            [[3.0, 1.0], [1.0, 2.0]],
-        ]),
-        episode_length=5,
-        reward_offset=-4.0,
-        memory_mode="joint",
-    ),
     "prisoners_dilemma": MatrixGameSpec(
         name="prisoners_dilemma",
         payoffs=np.array([

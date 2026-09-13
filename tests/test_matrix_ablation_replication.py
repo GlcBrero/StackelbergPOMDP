@@ -20,7 +20,7 @@ def load_script(name):
     return module
 
 
-def test_base_environment_plan_has_twelve_ray_free_leader_runs_per_seed(tmp_path):
+def test_plan_covers_six_phase_six_reset_and_four_reward_curves_per_seed(tmp_path):
     sweep = load_script("sweep")
     args = argparse.Namespace(
         results_root=str(tmp_path),
@@ -34,8 +34,8 @@ def test_base_environment_plan_has_twelve_ray_free_leader_runs_per_seed(tmp_path
     with (tmp_path / "test/plan.json").open() as handle:
         payload = json.load(handle)
     assert payload["e1_runs"] == 2
-    assert payload["leader_runs"] == 24
-    assert len(payload["records"]) == 26
+    assert payload["leader_runs"] == 32
+    assert len(payload["records"]) == 34
     meta = [row for row in payload["records"] if row["stage"] == "meta-follower"]
     assert {row["seed"] for row in meta} == {1, 2}
     response_runs = [
@@ -43,6 +43,12 @@ def test_base_environment_plan_has_twelve_ray_free_leader_runs_per_seed(tmp_path
         if row.get("response_seed") is not None
     ]
     assert all(row["response_seed"] == row["seed"] for row in response_runs)
+    from stackelberg_pomdp.envs.matrix import get_matrix_game
+    by_seed = {row["seed"]: row for row in meta}
+    for row in response_runs:
+        response_game = get_matrix_game(by_seed[row["seed"]]["match"]["matrix"])
+        leader_game = get_matrix_game(row["match"]["matrix"])
+        np.testing.assert_array_equal(response_game.payoffs, leader_game.payoffs)
     assert all(row["match"]["sweep_id"] == "test" for row in payload["records"])
     assert all(
         row["match"]["record_key"] == row["key"]
@@ -50,11 +56,10 @@ def test_base_environment_plan_has_twelve_ray_free_leader_runs_per_seed(tmp_path
     )
     independent = sweep.select_records(payload, "leader", "independent")
     meta_dependent = sweep.select_records(payload, "leader", "meta-dependent")
-    assert len(independent) == 12
+    assert len(independent) == 20
     assert len(meta_dependent) == 12
 
     leaders = [row for row in payload["records"] if row["stage"] == "leader"]
-    assert all(row["match"]["algorithm"] != "ES" for row in leaders)
     assert all("--learning-rate" in row["argv"] for row in leaders)
     assert all(
         not any(argument.startswith("--es-") for argument in row["argv"])
@@ -101,7 +106,7 @@ def test_wandb_record_args_are_bound_to_logical_attempt(tmp_path):
     sweep = load_script("sweep")
     args = sweep.common_output(
         tmp_path, tmp_path / "plan.json", "qualitative-v1",
-        "hidden.modified_pd.a2c.observed.seed1", 2,
+        "phase.prisoners_dilemma.a2c.visible.seed1", 2,
         wandb=True, wandb_project="StackPOMDP",
     )
     assert "--wandb" in args
@@ -137,7 +142,7 @@ def test_meta_follower_parser_resolves_paper_reinforce_protocol():
     assert args.episodes_per_batch == 10
     assert args.n_steps == 50
     assert args.net_arch == ()
-    config = meta_config(args, get_matrix_game("modified_pd"))
+    config = meta_config(args, get_matrix_game("prisoners_dilemma"))
     assert config["profile_id"] == "paper_joint_v1"
     assert config["reinforce_protocol"]["checkpoint_geometry"] == {
         "update_interval": 100,
@@ -162,7 +167,7 @@ def test_meta_follower_parser_resolves_paper_reinforce_protocol():
     assert legacy_memory.n_steps == 65
     assert meta_config(
         legacy_memory,
-        get_matrix_game("modified_pd", memory_mode="opponent"),
+        get_matrix_game("prisoners_dilemma", memory_mode="opponent"),
     )["profile_id"] == "paper_opponent_sensitivity_v1"
 
     historical = build_parser().parse_args([
@@ -171,7 +176,7 @@ def test_meta_follower_parser_resolves_paper_reinforce_protocol():
     ])
     validate_meta_args(historical)
     historical_spec = get_matrix_game(
-        "modified_pd", profile_id="legacy_opponent_v1"
+        "prisoners_dilemma", profile_id="legacy_opponent_v1"
     )
     historical_config = meta_config(historical, historical_spec)
     assert historical.timesteps == 32_500
@@ -180,8 +185,8 @@ def test_meta_follower_parser_resolves_paper_reinforce_protocol():
     assert historical_config["profile_id"] == "legacy_opponent_v1"
 
     leader = build_parser().parse_args([
-        "leader", "--experiment", "hidden_queries",
-        "--condition", "observed", "--response-algorithm", "REINFORCE",
+        "leader", "--experiment", "phase_observability",
+        "--condition", "visible", "--response-algorithm", "REINFORCE",
     ])
     assert leader.response_algorithm == "REINFORCE"
 
@@ -203,8 +208,8 @@ def test_matrix_parsers_accept_dqn_response_protocol():
     assert meta.dqn_final_epsilon == 0.02
 
     leader = build_parser().parse_args([
-        "leader", "--experiment", "hidden_queries",
-        "--condition", "observed", "--response-algorithm", "DQN",
+        "leader", "--experiment", "phase_observability",
+        "--condition", "visible", "--response-algorithm", "DQN",
     ])
     assert leader.response_algorithm == "DQN"
 
@@ -254,89 +259,6 @@ def test_plot_collects_only_evaluation_rows_and_verifies_hashes(tmp_path):
     assert history.iloc[0]["evaluation_target_step"] == 20
 
 
-def test_plot_collects_nested_pg_and_corrected_es_step_sizes(tmp_path):
-    plot = load_script("plot")
-
-    def write_run(batch, algorithm, seed, learning_rate, es_stepsize):
-        run_dir = (
-            tmp_path / batch / "hidden_queries/modified_pd"
-            / algorithm.lower() / "observed" / "seed{}".format(seed)
-        )
-        run_dir.mkdir(parents=True)
-        config = {
-            "stage": "leader",
-            "profile_id": "paper_joint_v1",
-            "experiment": "hidden_queries",
-            "condition": "observed",
-            "matrix": "modified_pd",
-            "algorithm": algorithm,
-            "seed": seed,
-            "learning_rate": learning_rate,
-            "episode_length": 5,
-        }
-        if algorithm == "ES":
-            config["es_protocol"] = {
-                "implementation": "ray_rllib_es_2_0_1",
-                "stepsize": es_stepsize,
-                "report_length": 10,
-            }
-        config_path = run_dir / "config.json"
-        progress_path = run_dir / "progress.jsonl"
-        config_path.write_text(json.dumps(config), encoding="utf-8")
-        progress = {
-            "global_step": 100,
-            "evaluation_target_step": 100,
-            "evaluation_mean": float(seed),
-            "evaluation_sem": 0.1,
-            "evaluation_episodes": 20,
-        }
-        if algorithm == "ES":
-            progress.update({
-                "iteration": 1,
-                "measured_timesteps_total": 100,
-                "native_episode_reward_mean": float(seed) * 5,
-                "native_leader_reward_per_stage": float(seed),
-            })
-        progress_path.write_text(
-            json.dumps(progress) + "\n", encoding="utf-8"
-        )
-        (run_dir / "run_manifest.json").write_text(json.dumps({
-            "status": "completed",
-            "config_sha256": plot.config_sha256(config),
-            "artifacts": {
-                "progress": {"sha256": plot.sha256(progress_path)},
-            },
-        }), encoding="utf-8")
-
-    for batch, seed in (("seeds1to3", 1), ("seeds4to10", 4)):
-        write_run(batch, "PG", seed, 0.008, 0.01)
-        write_run(batch, "ES", seed, None, 0.01)
-    runs, history, _configs = plot.collect_runs(tmp_path)
-
-    pg = runs[runs["algorithm"] == "PG"]
-    es = runs[runs["algorithm"] == "ES"]
-    assert set(pg["learning_rate"]) == {0.008}
-    assert pg["es_stepsize"].isna().all()
-    assert es["learning_rate"].isna().all()
-    assert set(es["es_stepsize"]) == {0.01}
-    assert {Path(path).parts[-6] for path in runs["run_dir"]} == {
-        "seeds1to3", "seeds4to10",
-    }
-    plot.validate_runs(runs, {1, 4}, allow_incomplete=False)
-    plot.validate_history(history, {1, 4}, allow_incomplete=False)
-    summary = plot.summarize(history)
-    assert len(summary) == 2
-    assert set(summary["n_independent_seeds"]) == {2}
-
-    multi_runs, multi_history, multi_configs = plot.collect_input_roots([
-        tmp_path / "seeds1to3",
-        tmp_path / "seeds4to10",
-    ])
-    assert len(multi_runs) == 4
-    assert len(multi_history) == 4
-    assert len(multi_configs) == 4
-    plot.validate_runs(multi_runs, {1, 4}, allow_incomplete=False)
-    plot.validate_history(multi_history, {1, 4}, allow_incomplete=False)
 
 
 def test_plot_parser_accepts_repeated_additional_inputs():
@@ -353,27 +275,27 @@ def test_plot_parser_accepts_repeated_additional_inputs():
     ]
 
 
-def test_plot_rejects_mixed_effective_step_size_cohorts():
+def test_plot_rejects_missing_seeds_within_each_learning_rate():
     plot = load_script("plot")
     base = {
         "status": "completed",
         "profile_id": "paper_joint_v1",
-        "experiment": "hidden_queries",
-        "condition": "observed",
-        "matrix": "modified_pd",
-        "algorithm": "ES",
-        "learning_rate": np.nan,
+        "experiment": "phase_observability",
+        "condition": "visible",
+        "matrix": "prisoners_dilemma",
+        "algorithm": "A2C",
+        "learning_rate": 0.008,
     }
     runs = pd.DataFrame([
-        {**base, "seed": 1, "es_stepsize": 0.01},
-        {**base, "seed": 2, "es_stepsize": 0.02},
+        {**base, "seed": 1, "learning_rate": 0.008},
+        {**base, "seed": 2, "learning_rate": 0.02},
     ])
     try:
-        plot.validate_runs(runs, {1, 2}, allow_incomplete=True)
+        plot.validate_runs(runs, {1, 2}, allow_incomplete=False)
     except ValueError as error:
-        assert "mixed effective step sizes" in str(error)
+        assert "seed mismatch" in str(error)
     else:
-        raise AssertionError("incompatible ES step-size cohorts must be rejected")
+        raise AssertionError("incompatible learning-rate cohorts must be rejected")
 
 
 def test_plot_summary_uses_sample_sem_across_seed_level_means():
@@ -385,7 +307,6 @@ def test_plot_summary_uses_sample_sem_across_seed_level_means():
             "algorithm": "A2C",
             "condition": "reset",
             "learning_rate": 0.008,
-            "es_stepsize": np.nan,
             "evaluation_target_step": 100,
             "seed": 1,
             "leader_reward": 1.0,
@@ -396,7 +317,6 @@ def test_plot_summary_uses_sample_sem_across_seed_level_means():
             "algorithm": "A2C",
             "condition": "reset",
             "learning_rate": 0.008,
-            "es_stepsize": np.nan,
             "evaluation_target_step": 100,
             "seed": 2,
             "leader_reward": 3.0,

@@ -5,6 +5,20 @@ import pickle
 from stackelberg_pomdp.utils import check_empirical_bcce_gap
 
 
+def round_down_mw_response_games(requested, games_per_update):
+    """Keep only complete joint-action sweeps in a fixed MW response prefix."""
+    requested, games_per_update = int(requested), int(games_per_update)
+    if games_per_update < 1:
+        raise ValueError("An MW update must contain at least one follower game")
+    aligned = requested - requested % games_per_update
+    if aligned < games_per_update:
+        raise ValueError(
+            f"tot_num_response_episodes={requested} is shorter than one MW "
+            f"update period ({games_per_update})."
+        )
+    return aligned
+
+
 class MultiplicativeWeightsResponse:
     """Follower response process based on multiplicative weights.
 
@@ -678,36 +692,3 @@ class QLearningResponse:
         if observation in self.q_tables[agent]:
             return
         self.q_tables[agent][observation] = self._make_q_entry()
-
-
-class RoundRobinResponse:
-    """Try each common follower action once, then exploit the best one."""
-
-    def __init__(self, followers_list, n_actions):
-        self.followers_list = list(followers_list)
-        self.n_actions = n_actions
-        self.reset_episode()
-
-    def reset_episode(self):
-        self.action_idx = 0
-        self.profits = np.zeros(self.n_actions)
-        self.best_profit = 0.0
-        self.best_action = 0
-
-    def response_actions(self):
-        return {agent: self.action_idx for agent in self.followers_list}
-
-    def reward_actions(self):
-        return {agent: self.best_action for agent in self.followers_list}
-
-    def observe_response_result(self, rewards):
-        self.profits[self.action_idx] = sum(rewards.get(agent, 0) for agent in self.followers_list)
-        self.action_idx += 1
-        self.best_profit = float(np.max(self.profits[:self.action_idx]))
-        self.best_action = int(np.argmax(self.profits[:self.action_idx]))
-
-    def response_complete(self):
-        return self.action_idx >= self.n_actions
-
-    def next_actions(self):
-        return self.reward_actions() if self.response_complete() else self.response_actions()

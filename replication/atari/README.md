@@ -28,6 +28,11 @@ and automatic/cached trade executions carry no second policy decision.
 SB3 itself is unmodified; the repository subclasses PPO/policy hooks for the
 two-headed distribution, credit mask, and learning-rate parameter groups.
 
+This workflow retains an explicit Atari paper optimizer protocol, centralized
+as `ATARI_PAPER_PPO` in `atari/training.py`. It is an exception to the generic
+SB3 defaults. [PARAMETERS.md](../PARAMETERS.md) explains its full-rollout
+minibatches, phase-balanced objective, and retained fine-tuning settings.
+
 There are five exogenous, paused trade events in 200 gameplay decisions.  A
 trade gives the seller one bullet; acceptance is `price <= threshold`; and an
 accepted trade transfers exactly one bullet and charges the price immediately.
@@ -41,36 +46,54 @@ adapters.  The Atari leader then composes with the same game-agnostic
 
 ```text
 stackelberg_pomdp/envs/atari/                 ALE, gameplay, curriculum, trade
-stackelberg_pomdp/policies/atari/             actor--critic and frozen loading
+stackelberg_pomdp/policies/atari/policy.py    unified SB3 actor--critic
+stackelberg_pomdp/policies/atari/components.py generic CNN/distribution pieces
+stackelberg_pomdp/policies/atari/meta_seller.py specialized follower response head
+stackelberg_pomdp/checkpoints/               loading, actor transfer, provenance
+stackelberg_pomdp/evaluation/atari/          leader rollouts, audits, selection
 stackelberg_pomdp/wrappers/atari/             preprocessing/response adapters
 stackelberg_pomdp/atari/protocol.py           stable spaces and field layout
 stackelberg_pomdp/atari/sampling.py           trade schedules and commitments
 stackelberg_pomdp/atari/training.py           Atari PPO and training utilities
 stackelberg_pomdp/wrappers/core.py            shared StackPOMDP phase wrapper
 replication/atari/train_*.py                  experiment entrypoints
-replication/atari/evaluate_*.py               deterministic selectors/audits
+replication/atari/evaluate_*.py               evaluation command-line entrypoints
 ```
 
 `stackelberg_pomdp/atari/stackpomdp_policy.py` is intentionally only a thin
 compatibility import: released SB3 checkpoints serialize that historical
-module path.  Maintained code imports `policies.atari.composite` directly.
+module path. Maintained code imports the public `policies.atari` interface.
+
+The leader evaluator starts at `evaluation/atari/workflow.py::run_selection`.
+It uses `rollouts.py` to collect trajectories, `protocol_audit.py` to check
+scientific invariants, `selection.py` to apply the economic gate and ranking,
+and `reporting.py` to write artifacts. The existing
+`evaluate_atari_stackpomdp_leader_sb3.py` command parses arguments and invokes
+this pipeline. See the [code guide](../../CODE_GUIDE.md) for module details.
 
 ## Runtime inputs
 
 Run commands from the repository root after exporting
 `PYTHONNOUSERSITE=1` and `PYTHONPATH=.`.  The ROM is not distributed; provide
 it with `--rom-path` or
-`STACKPOMDP_SPACE_INVADERS_ROM`.  Large checkpoints and run outputs are also
-external artifacts.  The trainers fail closed when a required checkpoint is
-missing, has the wrong policy class, or violates its saved provenance.
+`STACKPOMDP_SPACE_INVADERS_ROM`. The trainers fail closed when a required
+checkpoint is missing, has the wrong policy class, or violates its saved
+provenance.
 
-Six representative checkpoints, their sizes and SHA-256 digests, and a
-verified downloader are published with the journal reproducibility release:
-<https://github.com/GlcBrero/Stackelberg-Journal-Version/releases/tag/jair-2026-v1.0.0>.
-The downloader installs them under
-`reproducibility/artifacts/atari/checkpoints/` in that artifact checkout.
-The full multi-seed paper figures are reproduced from the retained normalized
-tables; readers do not need every training checkpoint merely to redraw them.
+Six frozen reference checkpoints are included in
+[`checkpoints/paper/`](checkpoints/paper/README.md) (122.4 MiB total). They cover
+both gameplay stages, both meta-responses, and a selected seed-1 leader for
+each role. The folder includes the original release manifest and a
+`SHA256SUMS` file; its README maps every archive to its use in the pipeline.
+These files are byte-for-byte copies of the
+[journal release assets](https://github.com/GlcBrero/Stackelberg-Journal-Version/releases/tag/jair-2026-v1.0.0).
+Newly generated checkpoints and run outputs remain ignored by Git.
+
+The bundle contains representative leaders, not the full ten-seed cohort.
+The full multi-seed paper figures use retained normalized tables in the
+[journal artifact](https://github.com/GlcBrero/Stackelberg-Journal-Version/tree/jair-2026-v1.0.0/reproducibility),
+combined with the current manuscript's initialization records and plotters; see
+[the coverage map](../PAPER_COVERAGE.md).
 
 The reference software environment uses Python 3.9, Stable-Baselines3 1.8,
 PyTorch, Gym 0.21, OpenCV, and `multi-agent-ale-py`.  W&B defaults to project
@@ -79,9 +102,9 @@ offline smoke test.
 
 ## Canonical curriculum
 
-The names below are illustrative local artifact paths. The release manifest
-records SHA-256 hashes for the selected checkpoints; the ROM digest is
-documented separately because the ROM is not redistributed.
+The commands below use bundled checkpoints as inputs to individual stages
+and write new models under `checkpoints/clean/`. Keep the frozen files in
+`checkpoints/paper/` unchanged so their release hashes remain valid.
 
 ### 1. Five-bullet gameplay bootstrap
 
@@ -102,7 +125,7 @@ evaluation seeds.
 python -m replication.atari.train_atari_curriculum_sb3 \
   --stage e0b --seed 1 --timesteps 2000000 --num-envs 4 \
   --rom-path /path/to/space_invaders.bin \
-  --init-checkpoint replication/atari/checkpoints/clean/gameplay_e0a_target.zip \
+  --init-checkpoint replication/atari/checkpoints/paper/gameplay_fixed_ammunition.zip \
   --checkpoint replication/atari/checkpoints/clean/gameplay_e0b.zip
 ```
 
@@ -112,16 +135,37 @@ accounting, and deterministic gameplay on matched schedules.
 
 ### 3. Buyer and seller meta-responses
 
-Buyer:
+Buyer, initial uniform-sampling stage:
 
 ```bash
 python -m replication.atari.train_atari_meta_response_sb3 \
   --role buyer --seed 1 --timesteps 2000800 --num-envs 4 \
+  --actor-loss-mode balanced --e1-sampler-mode uniform \
+  --e0b-checkpoint replication/atari/checkpoints/paper/gameplay_delayed_ammunition.zip \
+  --rom-path /path/to/space_invaders.bin \
+  --checkpoint replication/atari/checkpoints/clean/meta_buyer_uniform.zip
+```
+
+The released buyer is a resumed checkpoint at **2,400,960 total transitions**.
+After 2,000,800 uniform-sampling transitions, its retained sampler history
+records a `temporal-marginal-v1` continuation. To reproduce that training
+schedule, continue the first run for 400,160 additional transitions:
+
+```bash
+python -m replication.atari.train_atari_meta_response_sb3 \
+  --role buyer --seed 1 --timesteps 400160 --num-envs 4 \
   --actor-loss-mode balanced --e1-sampler-mode temporal-marginal-v1 \
-  --e0b-checkpoint replication/atari/checkpoints/clean/gameplay_e0b_selected.zip \
+  --resume replication/atari/checkpoints/clean/meta_buyer_uniform.zip \
+  --e0b-checkpoint replication/atari/checkpoints/paper/gameplay_delayed_ammunition.zip \
   --rom-path /path/to/space_invaders.bin \
   --checkpoint replication/atari/checkpoints/clean/meta_buyer.zip
 ```
+
+This training mixture oversamples early/late fifth events and low-price
+prefixes; evaluation uses the canonical uniform sampler. The saved history
+and selected hash are in the
+[buyer selection record](results/e1_selections/e1_buyer_temporal_mix_v1_primary_economic_protocol_v1.json).
+For evaluation of the published results, use the bundled `paper/meta_buyer.zip`.
 
 Seller:
 
@@ -130,7 +174,7 @@ python -m replication.atari.train_atari_meta_response_sb3 \
   --role seller --seed 1 --timesteps 2000800 --num-envs 4 \
   --learning-rate 0.0005 --actor-loss-mode balanced \
   --economic-architecture seller_shared_context_beta_v5 \
-  --e0b-checkpoint replication/atari/checkpoints/clean/gameplay_e0b_selected.zip \
+  --e0b-checkpoint replication/atari/checkpoints/paper/gameplay_delayed_ammunition.zip \
   --rom-path /path/to/space_invaders.bin \
   --checkpoint replication/atari/checkpoints/clean/meta_seller.zip
 ```
@@ -150,8 +194,8 @@ python -m replication.atari.train_atari_stackpomdp_leader_sb3 \
   --leader-role seller --seed 1 --timesteps 2000040 \
   --num-envs 4 --n-steps 210 --batch-size 840 \
   --actor-loss-mode balanced \
-  --response-checkpoint replication/atari/checkpoints/clean/meta_buyer_selected.zip \
-  --leader-e1-checkpoint replication/atari/checkpoints/clean/meta_seller_selected.zip \
+  --response-checkpoint replication/atari/checkpoints/paper/meta_buyer.zip \
+  --leader-e1-checkpoint replication/atari/checkpoints/paper/meta_seller.zip \
   --rom-path /path/to/space_invaders.bin \
   --checkpoint replication/atari/checkpoints/clean/leader_seller.zip
 ```
@@ -186,34 +230,13 @@ python -m replication.atari.automation.aggregate_atari_e2_multiseed \
   --output atari_e2_aggregate.json
 ```
 
-## Retained additional experiment: frozen gameplay actor
-
-The paper's main runs fine-tune both actor branches.  The retained ablation
-freezes the transferred CNN, state encoder, and game head while training the
-leader economic head and a fresh critic.  The checkpoint stores hashes of all
-three frozen modules and validates them before and after learning and on load.
-
-Use the same launcher with a ten-task buyer-only array:
-
-```bash
-sbatch --array=0-9%8 \
-  --export=ALL,STACKPOMDP_E2_VARIANT=frozen-buyer,STACKPOMDP_CODE_ROOT=$PWD,STACKPOMDP_RUN_ROOT=/scratch/$USER/atari-e2-frozen \
-  replication/atari/automation/unity_atari_e2_multiseed.sbatch
-
-python -m replication.atari.automation.aggregate_atari_e2_multiseed \
-  --roles buyer \
-  --input-dir /scratch/$USER/atari-e2-frozen/outputs/results/frozen-buyer \
-  --output atari_e2_frozen_buyer_aggregate.json
-```
-
-For a local run, add `--freeze-gameplay-actor` to the leader trainer.  This is
-an additional diagnostic, not the paper's primary architecture.
-
 ## Tests
 
-The Atari suite is ROM-free unless the optional integration smoke is enabled:
+Most tests use a mocked emulator. The full suite also checks configuration and
+checkpoint provenance against a locally supplied ROM:
 
 ```bash
+export STACKPOMDP_SPACE_INVADERS_ROM=/path/to/space_invaders.bin
 pytest -q tests/test_atari_*.py
 ```
 

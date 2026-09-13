@@ -1,8 +1,11 @@
 from stackelberg_pomdp.algorithms.on_policy import CustomA2C, CustomPPO
-from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
 from stackelberg_pomdp.policies.generic import CustomPolicy
 from stackelberg_pomdp.wrappers.core import StackPOMDPWrapper
 from stackelberg_pomdp.utils import get_all_wrappers
+from stackelberg_pomdp.training_defaults import (
+    algorithm_defaults, complete_episode_count, resolve_common_optimizer_defaults,
+)
 
 
 PPO_ROLLOUT_GEOMETRIES = ("complete_episodes", "historical_ratio_scaled")
@@ -23,12 +26,11 @@ def _historical_response_phase_probability(config_dict):
 def ppo_rollout_geometry(config_dict, max_episode_transitions):
     """Resolve PPO rollout and minibatch sizes for one training run.
 
-    ``complete_episodes`` is the scientifically cleaner maintained default.
-    ``historical_ratio_scaled`` exactly preserves the batching formula used by
-    the plotted Simple Allocation and Matrix Design cohorts.  The legacy
-    ``ppo_episodes_per_batch`` name is retained because it was the multiplier
-    in those runs, although the resulting rollout did not contain exactly that
-    many complete outer episodes.
+    The default rounds SB3's rollout budget up to complete episode budgets.
+    Minibatches retain the SB3 default independently of episode length.
+    ``historical_ratio_scaled`` is an explicit compatibility option for the
+    old ratio formula; it does not identify the missing historical run settings.
+    Replaying September 2026 also requires its explicit multiplier/minibatch.
     """
     mode = config_dict.get("ppo_rollout_geometry", "complete_episodes")
     if mode not in PPO_ROLLOUT_GEOMETRIES:
@@ -37,7 +39,13 @@ def ppo_rollout_geometry(config_dict, max_episode_transitions):
             f"expected one of {PPO_ROLLOUT_GEOMETRIES}."
         )
 
-    rollout_multiplier = int(config_dict.get("ppo_episodes_per_batch", 16))
+    rollout_multiplier = config_dict.get("ppo_episodes_per_batch")
+    if rollout_multiplier is None:
+        rollout_multiplier = (
+            complete_episode_count("PPO", int(max_episode_transitions))
+            if mode == "complete_episodes" else 1
+        )
+    rollout_multiplier = int(rollout_multiplier)
     if rollout_multiplier <= 0:
         raise ValueError("ppo_episodes_per_batch must be positive")
 
@@ -68,9 +76,13 @@ def ppo_rollout_geometry(config_dict, max_episode_transitions):
         # it did not enforce a minimum number of completed outer episodes.
         minimum_completed_episodes = 0
 
-    batch_size = int(config_dict.get("ppo_batch_size") or block_steps)
-    if batch_size <= 0:
-        raise ValueError("ppo_batch_size must be positive")
+    requested_batch_size = config_dict.get("ppo_batch_size")
+    batch_size = int(algorithm_defaults("PPO")["batch_size"]
+                     if requested_batch_size is None else requested_batch_size)
+    if batch_size <= 1:
+        raise ValueError("ppo_batch_size must be greater than one")
+    if block_steps * rollout_multiplier <= 1:
+        raise ValueError("PPO requires more than one stored transition per rollout")
     return {
         "mode": mode,
         "block_steps": block_steps,
@@ -114,9 +126,10 @@ def _stack_pomdp_wrapper(env):
 
 def get_custom_training_algorithm(config_dict, env, tensorboard_folder=None):
 
+    config_dict = resolve_common_optimizer_defaults(config_dict)
     algorithm = config_dict['algorithm']
     seed = config_dict['training_seed']
-    learning_rate = config_dict.get('learning_rate', 7e-4)
+    learning_rate = config_dict['learning_rate']
 
     # Compute the actor/critic feature split from the final wrapped observation
     # space. Actor sees every non-critic key; critic additionally sees critic:*.
@@ -134,11 +147,12 @@ def get_custom_training_algorithm(config_dict, env, tensorboard_folder=None):
         m = config_dict.get('price_grid_length', 4)
         max_episode_transitions += m * m
 
+    # Commitment exploration across episodes is a documented task exception.
     ent_coef = config_dict.get('ent_coef', 0.01)
 
     if algorithm == "PPO":
         geometry = ppo_rollout_geometry(config_dict, max_episode_transitions)
-        ppo_n_epochs = config_dict.get('ppo_n_epochs', 4)
+        ppo_n_epochs = config_dict['ppo_n_epochs']
         m = CustomPPO(env=env, policy=CustomPolicy, gamma=1, learning_rate=learning_rate, seed=seed, n_steps=geometry["n_steps"],
                 ent_coef=ent_coef, batch_size=geometry["batch_size"], n_epochs=ppo_n_epochs,
                 policy_kwargs={

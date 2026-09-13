@@ -50,7 +50,7 @@ def run_session(
         max_steps=MAX_STEPS,
 ):
     from stable_baselines3.common import logger
-    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
     from stackelberg_pomdp.wrappers.core import QLearningFollowersWrapper
 
     alpha = alpha or ALPHA
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     output_dir = args.output_dir or os.path.join(os.path.dirname(__file__), f'results/price_collusion_m{args.m}')
     os.makedirs(output_dir, exist_ok=True)
 
-    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
 
     env = BertrandCompetitionEnv(m=args.m)
     prices = env.action_price_space

@@ -109,7 +109,7 @@ def make_completed_run(root):
         "stage": "meta_follower",
         "profile_id": profile["profile_id"],
         "profile": profile,
-        "matrix": "modified_pd",
+        "matrix": "prisoners_dilemma",
         "memory_mode": "joint",
         "algorithm": "REINFORCE",
         "seed": 1,

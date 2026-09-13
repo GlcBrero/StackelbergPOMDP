@@ -1,5 +1,4 @@
 from collections import OrderedDict
-from types import SimpleNamespace
 
 import gym
 import numpy as np
@@ -16,7 +15,6 @@ from stackelberg_pomdp.atari.protocol import (
     CRITIC_STATE,
     CRITIC_STATE_DIM,
     EVENT_SLICE,
-    FOLLOWER_TRADE,
     GAMEPLAY,
     IMAGE,
     LEADER_QUERY,
@@ -29,9 +27,9 @@ from stackelberg_pomdp.atari.protocol import (
     validate_action,
 )
 from stackelberg_pomdp.atari.query_trace import LeaderQuery, QueryTraceError
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari.components import (
     GatedCompositeAtariDistribution,
-    StackPOMDPAtariPolicy,
 )
 from stackelberg_pomdp.wrappers.atari.preprocessing import (
     AmmoLedger,
@@ -51,8 +49,12 @@ def test_published_checkpoint_policy_import_remains_compatible():
     from stackelberg_pomdp.atari.stackpomdp_policy import (
         StackPOMDPAtariPolicy as PublishedCheckpointPolicy,
     )
+    from stackelberg_pomdp.policies.atari.composite import (
+        StackPOMDPAtariPolicy as PreviousPackagePolicy,
+    )
 
     assert PublishedCheckpointPolicy is StackPOMDPAtariPolicy
+    assert PreviousPackagePolicy is StackPOMDPAtariPolicy
 
 
 def _policy(*, event_only=False):

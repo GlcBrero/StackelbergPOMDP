@@ -15,7 +15,7 @@ from stackelberg_pomdp.envs.atari.bilateral import (
     BilateralAtariRewardEnv,
     DualAtariTradeCore,
 )
-from stackelberg_pomdp.policies.atari.loading import (
+from stackelberg_pomdp.checkpoints import (
     FrozenAtariPolicyController,
 )
 from stackelberg_pomdp.atari.protocol import (

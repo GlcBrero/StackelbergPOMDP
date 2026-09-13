@@ -26,12 +26,12 @@ class ConstantFollower:
 
 
 def test_joint_memory_preserves_raw_centered_payoffs_and_five_states():
-    spec = get_matrix_game("modified_pd", memory_mode="joint")
+    spec = get_matrix_game("prisoners_dilemma", memory_mode="joint")
     assert spec.num_leader_states == 5
     assert spec.num_follower_states == 5
     np.testing.assert_allclose(
         spec.centered_payoffs[:, :, 0],
-        [[0.0, -2.0], [-1.0, -3.0]],
+        [[-1.0, -3.0], [0.0, -2.0]],
     )
     np.testing.assert_allclose(
         spec.centered_payoffs[:, :, 1],
@@ -42,7 +42,7 @@ def test_joint_memory_preserves_raw_centered_payoffs_and_five_states():
     game.reset()
     observations, rewards, done, _ = game.step(1, 0)
     assert observations == {"leader": 3, "follower_0": 3}
-    assert rewards == {"leader": -1.0, "follower_0": -3.0}
+    assert rewards == {"leader": 0.0, "follower_0": -3.0}
     assert not done
     for _ in range(4):
         _, _, done, _ = game.step(0, 0)
@@ -60,7 +60,7 @@ def test_opponent_memory_remains_available_for_legacy_comparison():
 
 
 def test_e1_commitments_cover_all_tables_and_stay_fixed_within_episode():
-    spec = get_matrix_game("modified_pd")
+    spec = get_matrix_game("prisoners_dilemma")
     commitments = MatrixFixedCommitmentResponseEnv.commitments(spec)
     assert len(commitments) == 32
     assert commitments[0] == (0, 0, 0, 0, 0)
@@ -79,7 +79,7 @@ def test_e1_commitments_cover_all_tables_and_stay_fixed_within_episode():
 
 
 def test_meta_follower_encoding_matches_legacy_mixed_radix_layout():
-    joint = get_matrix_game("modified_pd", memory_mode="joint")
+    joint = get_matrix_game("prisoners_dilemma", memory_mode="joint")
     assert encode_meta_follower_observation(
         joint, 0, (0, 1, 0, 1, 0)
     ) == 10
@@ -87,7 +87,7 @@ def test_meta_follower_encoding_matches_legacy_mixed_radix_layout():
         joint, 4, (1, 1, 1, 1, 1)
     ) == 159
 
-    opponent = get_matrix_game("modified_pd", memory_mode="opponent")
+    opponent = get_matrix_game("prisoners_dilemma", memory_mode="opponent")
     assert encode_meta_follower_observation(
         opponent, 2, (1, 0, 1)
     ) == 21
@@ -110,8 +110,12 @@ def test_response_contract_reuses_identical_follower_game_and_rejects_mismatch(
 ):
     checkpoint = tmp_path / "model.zip"
     checkpoint.write_bytes(b"frozen response bytes")
-    modified = get_matrix_game("modified_pd")
+    from dataclasses import replace
+
     canonical = get_matrix_game("prisoners_dilemma")
+    payoffs = canonical.payoffs.copy()
+    payoffs[:, :, 0] += 1.0  # Follower behavior is independent of leader payoffs.
+    modified = replace(canonical, payoffs=payoffs)
     contract_path = write_response_checkpoint_contract(
         modified,
         checkpoint,
@@ -153,7 +157,7 @@ def test_reinforce_response_mechanics_checkpoint_and_meta_leader_load(tmp_path):
         "meta-follower", "--algorithm", "REINFORCE", "--timesteps", "50",
     ])
     validate_meta_args(args)
-    spec = get_matrix_game("modified_pd")
+    spec = get_matrix_game("prisoners_dilemma")
     response_env = MatrixFixedCommitmentResponseEnv(spec, seed=args.seed)
     model = _meta_model(args, response_env, spec.episode_length)
     assert isinstance(model, Reinforce)
@@ -317,14 +321,16 @@ def test_dqn_response_saves_loads_and_runs_inside_meta_leader(tmp_path):
         "--net-arch", "8",
         "--dqn-exploration-steps", "6",
         "--dqn-target-update-interval", "5",
+        "--dqn-learning-starts", "0",
+        "--dqn-final-epsilon", "0.1",
     ])
     validate_meta_args(args)
-    spec = get_matrix_game("modified_pd")
+    spec = get_matrix_game("prisoners_dilemma")
     response_env = MatrixFixedCommitmentResponseEnv(spec, seed=args.seed)
     model = _meta_model(args, response_env, spec.episode_length)
     assert isinstance(model, DQN)
     assert meta_config(args, spec)["dqn_protocol"] == {
-        "buffer_size": 12,
+        "buffer_size": 1_000_000,
         "learning_starts": 0,
         "batch_size": 4,
         "train_freq": 4,
@@ -374,7 +380,7 @@ def test_dqn_response_saves_loads_and_runs_inside_meta_leader(tmp_path):
 def test_meta_e2_query_trace_fresh_reward_game_and_geometry(
         visibility, expected_stored
 ):
-    spec = get_matrix_game("modified_pd")
+    spec = get_matrix_game("prisoners_dilemma")
     env = MatrixMetaLeaderEnv(
         spec,
         response_model=ConstantFollower(0),

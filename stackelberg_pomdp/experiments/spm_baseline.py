@@ -20,12 +20,8 @@ def build_parser():
     add_common_training_args(parser, default_algorithm="PPO")
     parser.set_defaults(
         learning_method="RL:Standard",
-        learning_rate=3e-4,
         critic_obs="none",
         ent_coef=0.0,
-        ppo_episodes_per_batch=1024,
-        ppo_batch_size=64,
-        ppo_n_epochs=10,
         tot_num_reward_episodes=1,
         eval_reward_episodes=1,
         response_diagnostic_freq=0,

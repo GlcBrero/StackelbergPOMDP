@@ -14,12 +14,16 @@ from stackelberg_pomdp.policies.cache import FixedActionPolicyMixin
 
 
 class CustomPolicy(FixedActionPolicyMixin, MultiInputActorCriticPolicy):
-    """
-    Modified MultiInputActorCriticPolicy to focus on deterministic policies.
+    """Actor--critic policy with optional fixed actions within an episode.
 
-    This policy uses an observation-action map to store and reuse actions for specific observations,
-    effectively creating a deterministic behavior. It also uses epsilon-greedy exploration during
-    training to help discover the optimal action mapping.
+    With caching enabled, the first visit to an actor-visible observation
+    samples an action from the policy distribution (or selects its deterministic
+    action when requested). Later visits reuse that action, even when
+    critic-only observations change. FixPolicyActionsCallback enables caching
+    and clears it at each outer episode boundary.
+
+    Training exploration comes from sampling the learned action distribution;
+    the RL algorithm's entropy coefficient controls its entropy regularization.
     """
     def __init__(self, *args, **kwargs):
 

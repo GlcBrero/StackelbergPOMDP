@@ -21,7 +21,13 @@ os.environ.setdefault("WANDB_START_METHOD", "thread")
 
 from stable_baselines3.common.callbacks import CallbackList
 
+# Keep both hash helpers importable from the historical trainer path.
+from stackelberg_pomdp.checkpoints.atari import (
+    gameplay_actor_sha256,
+    module_parameter_sha256,
+)
 from stackelberg_pomdp.atari.training import (
+    ATARI_PAPER_PPO,
     ACTOR_LOSS_MODES,
     EpisodeCheckpointCallback,
     PHASE_BALANCED_ACTOR_LOSS_MODE,
@@ -61,12 +67,12 @@ from stackelberg_pomdp.atari.protocol import (
     NUM_TRADE_EVENTS,
     OPPONENT_COMMITMENT_SLICE,
 )
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import (
     BETA_PARAMETER_EPSILON,
     SELLER_SHARED_CONTEXT_BETA_V5,
-    SELLER_TWO_BRANCH_BETA_V4,
     StackPOMDPAtariPolicy,
 )
+from stackelberg_pomdp.policies.atari.components import inverse_softplus
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -77,14 +83,9 @@ SELLER_INIT_CONCENTRATION = 2.0
 ECONOMIC_ARCHITECTURE_ATTRIBUTE = (
     "atari_e1_economic_architecture_provenance"
 )
-E1_TRAINING_CODE_REVISION_ATTRIBUTE = (
+# Historical serialized key retained for the published meta-seller archive.
+TRAINING_CODE_REVISION_ATTRIBUTE = (
     "atari_e1_threshold_residual_training_code_revision"
-)
-DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE = (
-    "atari_e1_direct_threshold_initialization_provenance"
-)
-TWO_BRANCH_INITIALIZATION_ATTRIBUTE = (
-    "atari_e1_two_branch_initialization_provenance"
 )
 SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE = (
     "atari_e1_shared_context_initialization_provenance"
@@ -100,16 +101,6 @@ def _actor_loss_mode(args):
 
 def _e1_sampler_mode(args):
     return str(getattr(args, "e1_sampler_mode", UNIFORM_E1_SAMPLER))
-
-
-def _economic_threshold_residual(args):
-    return bool(getattr(args, "economic_threshold_residual", False))
-
-
-def _economic_threshold_residual_direct_input(args):
-    return bool(getattr(
-        args, "economic_threshold_residual_direct_input", False
-    ))
 
 
 def _economic_architecture(args):
@@ -170,18 +161,6 @@ def _validate_e0b_source(provenance):
         )
     if provenance["source_economic_input_mode"] != "full":
         raise ValueError("E1 actor sources must use economic_input_mode='full'")
-    if bool(provenance.get("source_economic_threshold_residual", False)):
-        raise ValueError(
-            "E1 actor sources must be ordinary E0b gameplay checkpoints "
-            "without the seller-only threshold-residual transform"
-        )
-    if bool(provenance.get(
-            "source_economic_threshold_residual_direct_input", False
-    )):
-        raise ValueError(
-            "E1 actor sources must be ordinary E0b gameplay checkpoints "
-            "without the seller-only direct threshold input"
-        )
     if provenance.get("source_economic_architecture") is not None:
         raise ValueError(
             "E1 actor sources must be ordinary E0b gameplay checkpoints "
@@ -319,21 +298,19 @@ def _current_training_code_revision():
 
 
 def _attach_training_code_revision(model, *, initialize):
-    """Bind residual checkpoints to one immutable training revision.
+    """Bind specialized seller checkpoints to one training revision.
 
-    Ordinary E0/E1 policies deliberately retain their historical schema.  A
-    residual seller may initialize this field only when it is created fresh;
-    resume must find and preserve the exact saved revision.
+    Ordinary policies deliberately retain their historical schema. A
+    specialized seller may initialize this field only when it is created
+    fresh; resume must find and preserve the exact saved revision.
     """
 
-    enabled = bool(getattr(
-        model.policy, "economic_threshold_residual", False
-    )) or getattr(model.policy, "economic_architecture", None) is not None
-    saved = getattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None)
+    enabled = getattr(model.policy, "economic_architecture", None) is not None
+    saved = getattr(model, TRAINING_CODE_REVISION_ATTRIBUTE, None)
     if not enabled:
         if saved is not None:
             raise ValueError(
-                "ordinary E1 checkpoint unexpectedly stores a residual "
+                "ordinary E1 checkpoint unexpectedly stores a specialized "
                 "training code revision"
             )
         return None
@@ -341,197 +318,20 @@ def _attach_training_code_revision(model, *, initialize):
     if saved is None:
         if not initialize:
             raise ValueError(
-                "residual E1 resume is missing its training code revision"
+                "specialized E1 resume is missing its training code revision"
             )
-        setattr(model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, current)
+        setattr(model, TRAINING_CODE_REVISION_ATTRIBUTE, current)
         return current
     if re.fullmatch(r"[0-9a-f]{40}", str(saved)) is None:
-        raise ValueError("residual E1 checkpoint has an invalid code revision")
+        raise ValueError(
+            "specialized E1 checkpoint has an invalid code revision"
+        )
     if saved != current:
         raise ValueError(
-            "residual E1 resume code revision differs from the current "
+            "specialized E1 resume code revision differs from the current "
             f"training checkout ({saved} != {current})"
         )
     return saved
-
-
-def direct_threshold_initialization_contract(
-        *, state_features=64, economic_hidden=64
-):
-    """Return the exact architecture-level v3 initialization contract."""
-
-    state_features = int(state_features)
-    economic_hidden = int(economic_hidden)
-    return {
-        "schema": "stackpomdp.atari.e1_direct_threshold_initialization.v1",
-        "architecture_parameterization": (
-            "seller_direct_threshold_residual_beta_v3"
-        ),
-        "parameter": "economic_head.0.weight",
-        "first_linear_shape": [economic_hidden, state_features + 1],
-        "ordinary_prefix_columns": [0, state_features],
-        "new_direct_column_index": state_features,
-        "new_direct_column_width": 1,
-        "new_direct_parameter_count": economic_hidden,
-        "new_direct_column_initialized_exact_zero": True,
-        "initial_learned_base_threshold_slope": 0.0,
-        "canonical_64_input_head_prefix_copied_exactly": True,
-        "canonical_rng_stream_preserved": True,
-        "non_economic_weights_same_seed_invariant": True,
-    }
-
-
-def direct_threshold_initialization_provenance(policy):
-    """Return the exact immutable initialization record for seller v3."""
-
-    if not bool(getattr(
-            policy, "economic_threshold_residual_direct_input", False
-    )):
-        return None
-    return direct_threshold_initialization_contract(
-        state_features=policy.state_features,
-        economic_hidden=policy.economic_hidden,
-    )
-
-
-def _attach_direct_threshold_initialization_provenance(model, *, initialize):
-    """Persist v3 zero-column provenance and reject cross-mode resumes."""
-
-    expected = direct_threshold_initialization_provenance(model.policy)
-    recorded = getattr(
-        model, DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
-    )
-    if expected is None:
-        if recorded is not None:
-            raise ValueError(
-                "non-v3 E1 checkpoint unexpectedly stores direct-threshold "
-                "initialization provenance"
-            )
-        return None
-    if recorded is None:
-        if not initialize:
-            raise ValueError(
-                "direct-threshold E1 resume is missing exact initialization "
-                "provenance"
-            )
-        direct_column = model.policy.economic_head[0].weight[
-            :, model.policy.state_features
-        ]
-        if not th.equal(direct_column, th.zeros_like(direct_column)):
-            raise RuntimeError(
-                "direct-threshold input column was not initialized to exact zero"
-            )
-        setattr(
-            model,
-            DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE,
-            dict(expected),
-        )
-        return expected
-    if recorded != expected:
-        raise ValueError(
-            "direct-threshold E1 initialization provenance differs from the "
-            "saved architecture"
-        )
-    return recorded
-
-
-def two_branch_initialization_contract():
-    """Return the exact neutral seller-v4 initialization contract."""
-
-    return {
-        "schema": "stackpomdp.atari.e1_two_branch_initialization.v1",
-        "architecture_parameterization": SELLER_TWO_BRANCH_BETA_V4,
-        "live_input_features": OPPONENT_COMMITMENT_SLICE.start,
-        "live_hidden_features": 32,
-        "context_input_features": NUM_TRADE_EVENTS,
-        "context_hidden_features": 32,
-        "event_outputs": NUM_TRADE_EVENTS,
-        "initial_mean": SELLER_INIT_MEAN,
-        "initial_concentration": SELLER_INIT_CONCENTRATION,
-        "live_output_weight_initialized_exact_zero": True,
-        "live_mean_logit_bias": math.log(
-            SELLER_INIT_MEAN / (1.0 - SELLER_INIT_MEAN)
-        ),
-        "live_raw_concentration_bias": (
-            StackPOMDPAtariPolicy._inverse_softplus(
-                SELLER_INIT_CONCENTRATION - BETA_PARAMETER_EPSILON
-            )
-        ),
-        "context_output_weight_initialized_exact_zero": True,
-        "context_output_bias_initialized_exact_zero": True,
-        "current_slope_parameter": "economic_current_slopes",
-        "current_slope_shape": [NUM_TRADE_EVENTS],
-        "current_slopes_initialized_exact_zero": True,
-        "current_slopes_trainable": True,
-        "fixed_threshold_anchor": False,
-        "gameplay_actor_frozen": True,
-        "economic_learning_rate": 5.0e-4,
-        "critic_learning_rate": 1.0e-4,
-    }
-
-
-def two_branch_initialization_provenance(policy):
-    """Return v4 initialization provenance without inspecting trained values."""
-
-    if getattr(policy, "economic_architecture", None) != (
-            SELLER_TWO_BRANCH_BETA_V4
-    ):
-        return None
-    return two_branch_initialization_contract()
-
-
-def _attach_two_branch_initialization_provenance(model, *, initialize):
-    """Persist v4 neutral initialization and reject cross-mode resumes."""
-
-    expected = two_branch_initialization_provenance(model.policy)
-    recorded = getattr(model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None)
-    if expected is None:
-        if recorded is not None:
-            raise ValueError(
-                "non-v4 E1 checkpoint unexpectedly stores two-branch "
-                "initialization provenance"
-            )
-        return None
-    if recorded is None:
-        if not initialize:
-            raise ValueError(
-                "two-branch E1 resume is missing initialization provenance"
-            )
-        policy = model.policy
-        zero_checks = (
-            policy.economic_live_output.weight,
-            policy.economic_context_output.weight,
-            policy.economic_context_output.bias,
-            policy.economic_current_slopes,
-        )
-        if any(
-                not th.equal(values, th.zeros_like(values))
-                for values in zero_checks
-        ):
-            raise RuntimeError(
-                "seller-v4 live/context output weights, context bias, and "
-                "current slopes must start at exact zero"
-            )
-        expected_live_bias = th.tensor([
-            expected["live_mean_logit_bias"],
-            expected["live_raw_concentration_bias"],
-        ], dtype=policy.economic_live_output.bias.dtype,
-           device=policy.economic_live_output.bias.device)
-        if not th.equal(policy.economic_live_output.bias, expected_live_bias):
-            raise RuntimeError(
-                "seller-v4 live-output bias does not implement the exact "
-                "neutral Beta initialization"
-            )
-        for module in policy.gameplay_actor_modules():
-            if any(parameter.requires_grad for parameter in module.parameters()):
-                raise RuntimeError("seller-v4 gameplay actor is not frozen")
-        setattr(model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, dict(expected))
-        return expected
-    if recorded != expected:
-        raise ValueError(
-            "two-branch E1 initialization differs from saved provenance"
-        )
-    return recorded
 
 
 def shared_context_initialization_contract():
@@ -553,7 +353,7 @@ def shared_context_initialization_contract():
             SELLER_INIT_MEAN / (1.0 - SELLER_INIT_MEAN)
         ),
         "live_raw_concentration_bias": (
-            StackPOMDPAtariPolicy._inverse_softplus(
+            inverse_softplus(
                 SELLER_INIT_CONCENTRATION - BETA_PARAMETER_EPSILON
             )
         ),
@@ -650,33 +450,6 @@ def _attach_shared_context_initialization_provenance(model, *, initialize):
     return recorded
 
 
-def module_parameter_sha256(module):
-    """Hash a module state without serialization or global RNG effects."""
-
-    digest = hashlib.sha256()
-    for name, value in module.state_dict().items():
-        array = value.detach().cpu().contiguous().numpy()
-        digest.update(name.encode("utf-8"))
-        digest.update(str(array.dtype).encode("ascii"))
-        digest.update(np.asarray(array.shape, dtype=np.int64).tobytes())
-        digest.update(array.tobytes())
-    return digest.hexdigest()
-
-
-def gameplay_actor_sha256(policy):
-    """Hash each frozen gameplay component in stable module order."""
-
-    names = (
-        "features_extractor.visual",
-        "features_extractor.state_encoder",
-        "game_action_net",
-    )
-    return {
-        name: module_parameter_sha256(module)
-        for name, module in zip(names, policy.gameplay_actor_modules())
-    }
-
-
 def validate_frozen_gameplay_actor(model):
     """Fail if frozen seller gameplay changed after its recorded transfer."""
 
@@ -736,12 +509,6 @@ def _new_model(args, vec_env):
         "economic_hidden": 64,
         "critic_hidden": 256,
         "pretrained_lr_scale": args.pretrained_lr_scale,
-        "economic_threshold_residual": (
-            _economic_threshold_residual(args)
-        ),
-        "economic_threshold_residual_direct_input": (
-            _economic_threshold_residual_direct_input(args)
-        ),
     }
     if _economic_architecture(args) is not None:
         policy_kwargs["economic_architecture"] = _economic_architecture(args)
@@ -772,9 +539,10 @@ def _new_model(args, vec_env):
     _validate_e0b_source(provenance)
     # The opponent commitment is identically zero throughout E0a/E0b, so its
     # five input columns retain arbitrary initialization values.  Reset only
-    # those previously unseen columns before E1.  Ordinary E1 policies may
-    # subsequently learn through them; seller v4/v5 freeze this gameplay path
-    # and learn commitment effects only in independent economic branches.
+    # those previously unseen columns before response training. Ordinary
+    # policies may subsequently learn through them; the retained meta-seller
+    # freezes this gameplay path and learns commitment effects only through
+    # its economic branch.
     state_input = model.policy.features_extractor.state_encoder[0]
     with th.no_grad():
         state_input.weight[:, OPPONENT_COMMITMENT_SLICE].zero_()
@@ -793,12 +561,8 @@ def _new_model(args, vec_env):
             "economic_live_output",
             "economic_context_encoder",
             "economic_context_output",
+            "economic_current_slope",
         ]
-        excluded_modules.append(
-            "economic_current_slopes"
-            if _economic_architecture(args) == SELLER_TWO_BRANCH_BETA_V4
-            else "economic_current_slope"
-        )
         provenance.update({
             "frozen_gameplay_actor": True,
             "frozen_gameplay_actor_sha256": gameplay_actor_sha256(
@@ -817,10 +581,6 @@ def _new_model(args, vec_env):
     )
     _attach_sampler_contract(model, args)
     _attach_economic_architecture_contract(model)
-    _attach_direct_threshold_initialization_provenance(
-        model, initialize=True
-    )
-    _attach_two_branch_initialization_provenance(model, initialize=True)
     _attach_shared_context_initialization_provenance(model, initialize=True)
     _attach_training_code_revision(model, initialize=True)
     print({"actor_transfer": provenance}, flush=True)
@@ -855,22 +615,6 @@ def _resumed_model(args, vec_env):
         raise ValueError("--resume role does not match --role")
     if policy.economic_input_mode != "full":
         raise ValueError("--resume is not a full-state E1 response")
-    saved_threshold_residual = bool(getattr(
-        policy, "economic_threshold_residual", False
-    ))
-    if saved_threshold_residual != _economic_threshold_residual(args):
-        raise ValueError(
-            "--economic-threshold-residual must match the saved E1 "
-            f"checkpoint ({saved_threshold_residual})"
-        )
-    saved_direct_input = bool(getattr(
-        policy, "economic_threshold_residual_direct_input", False
-    ))
-    if saved_direct_input != _economic_threshold_residual_direct_input(args):
-        raise ValueError(
-            "--economic-threshold-residual-direct-input must match the saved "
-            f"E1 checkpoint ({saved_direct_input})"
-        )
     saved_economic_architecture = getattr(
         policy, "economic_architecture", None
     )
@@ -961,10 +705,6 @@ def _resumed_model(args, vec_env):
         preserve_existing_sampler=bool(getattr(args, "eval_only", False)),
     )
     _attach_economic_architecture_contract(model)
-    _attach_direct_threshold_initialization_provenance(
-        model, initialize=False
-    )
-    _attach_two_branch_initialization_provenance(model, initialize=False)
     _attach_shared_context_initialization_provenance(model, initialize=False)
     _attach_training_code_revision(model, initialize=False)
     if saved_economic_architecture in FROZEN_SELLER_ARCHITECTURES:
@@ -975,24 +715,7 @@ def _resumed_model(args, vec_env):
                 "frozen seller gameplay actor differs from its source "
                 "provenance"
             )
-    if saved_economic_architecture == SELLER_TWO_BRANCH_BETA_V4:
-        group_names = [
-            group.get("group_name") for group in policy.optimizer.param_groups
-        ]
-        if group_names != ["seller_v4_economic", "seller_v4_critic"]:
-            raise ValueError(
-                "seller-v4 optimizer groups did not survive checkpoint load"
-            )
-        group_scales = [
-            float(group.get("lr_scale", np.nan))
-            for group in policy.optimizer.param_groups
-        ]
-        if not np.allclose(group_scales, [1.0, 0.2], rtol=0.0, atol=0.0):
-            raise ValueError(
-                "seller-v4 optimizer learning-rate scales did not survive "
-                "checkpoint load"
-            )
-    elif saved_economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
+    if saved_economic_architecture == SELLER_SHARED_CONTEXT_BETA_V5:
         group_names = [
             group.get("group_name") for group in policy.optimizer.param_groups
         ]
@@ -1164,15 +887,9 @@ def parse_args(argv=None):
     parser.add_argument("--start-method", default="spawn")
     parser.add_argument("--n-steps", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--n-epochs", type=int, default=4)
-    parser.add_argument("--learning-rate", type=float, default=1.0e-4)
+    parser.add_argument("--n-epochs", type=int, default=ATARI_PAPER_PPO["n_epochs"])
+    parser.add_argument("--learning-rate", type=float, default=ATARI_PAPER_PPO["transfer_learning_rate"])
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
-    # These internal defaults keep old constructor metadata readable while
-    # removing superseded recovery variants from the release CLI.
-    parser.set_defaults(
-        economic_threshold_residual=False,
-        economic_threshold_residual_direct_input=False,
-    )
     parser.add_argument(
         "--economic-architecture",
         choices=(SELLER_SHARED_CONTEXT_BETA_V5,),
@@ -1191,8 +908,8 @@ def parse_args(argv=None):
         type=float,
         default=BUYER_INIT_CONCENTRATION,
     )
-    parser.add_argument("--entropy-coeff", type=float, default=0.01)
-    parser.add_argument("--clip-range", type=float, default=0.1)
+    parser.add_argument("--entropy-coeff", type=float, default=ATARI_PAPER_PPO["entropy_coeff"])
+    parser.add_argument("--clip-range", type=float, default=ATARI_PAPER_PPO["clip_range"])
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--target-kl", type=float)
@@ -1269,31 +986,10 @@ def parse_args(argv=None):
         )
     if args.num_envs <= 0:
         parser.error("--num-envs must be positive")
-    if args.economic_threshold_residual and args.role != SELLER:
-        parser.error(
-            "--economic-threshold-residual is reserved for E1 seller "
-            "response policies"
-        )
-    if (
-            args.economic_threshold_residual_direct_input
-            and not args.economic_threshold_residual
-    ):
-        parser.error(
-            "--economic-threshold-residual-direct-input requires "
-            "--economic-threshold-residual"
-        )
     if args.economic_architecture is not None:
         if args.role != SELLER:
             parser.error(
                 "--economic-architecture is reserved for E1 seller responses"
-            )
-        if (
-                args.economic_threshold_residual
-                or args.economic_threshold_residual_direct_input
-        ):
-            parser.error(
-                "--economic-architecture cannot be combined with legacy "
-                "threshold-residual flags"
             )
     if args.economic_architecture in FROZEN_SELLER_ARCHITECTURES:
         if args.e1_sampler_mode != UNIFORM_E1_SAMPLER:
@@ -1385,13 +1081,7 @@ def main(argv=None):
             model, ECONOMIC_ARCHITECTURE_ATTRIBUTE, None
         )
         training_code_revision = getattr(
-            model, E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
-        )
-        direct_initialization = getattr(
-            model, DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
-        )
-        two_branch_initialization = getattr(
-            model, TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None
+            model, TRAINING_CODE_REVISION_ATTRIBUTE, None
         )
         shared_context_initialization = getattr(
             model, SHARED_CONTEXT_INITIALIZATION_ATTRIBUTE, None
@@ -1415,14 +1105,6 @@ def main(argv=None):
                 wandb_provenance["e1_training_code_revision"] = (
                     training_code_revision
                 )
-                if direct_initialization is not None:
-                    wandb_provenance[
-                        "direct_threshold_initialization_provenance"
-                    ] = direct_initialization
-                if two_branch_initialization is not None:
-                    wandb_provenance[
-                        "two_branch_initialization_provenance"
-                    ] = two_branch_initialization
                 if shared_context_initialization is not None:
                     wandb_provenance[
                         "shared_context_initialization_provenance"
@@ -1477,14 +1159,6 @@ def main(argv=None):
             evaluation_provenance["e1_training_code_revision"] = (
                 training_code_revision
             )
-            if direct_initialization is not None:
-                evaluation_provenance[
-                    "direct_threshold_initialization"
-                ] = direct_initialization
-            if two_branch_initialization is not None:
-                evaluation_provenance[
-                    "two_branch_initialization"
-                ] = two_branch_initialization
             if shared_context_initialization is not None:
                 evaluation_provenance[
                     "shared_context_initialization"

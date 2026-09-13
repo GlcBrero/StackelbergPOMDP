@@ -33,7 +33,7 @@ def build_parser():
 def run_deviation(state, post_deviation_periods=POST_DEVIATION_PERIODS):
     """Run deviation experiment from a saved converged state."""
     from stable_baselines3.common import logger
-    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
     from stackelberg_pomdp.wrappers.core import QLearningFollowersWrapper
 
     m = state['m']
@@ -147,7 +147,7 @@ if __name__ == '__main__':
         if s['converged']:
             states.append(s)
 
-    from stackelberg_pomdp.envs.base import BertrandCompetitionEnv
+    from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
 
     m = states[0]['m']
     env = BertrandCompetitionEnv(m=m)

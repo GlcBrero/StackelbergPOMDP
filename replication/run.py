@@ -85,6 +85,10 @@ def _variant_specs(target, selected_variant=None):
             continue
         merged = dict(target)
         merged["args"] = {**target.get("args", {}), **variant.get("args", {})}
+        merged["parameter_exceptions"] = {
+            **target.get("parameter_exceptions", {}),
+            **variant.get("parameter_exceptions", {}),
+        }
         merged["flags"] = [*target.get("flags", []), *variant.get("flags", [])]
         merged["command"] = [
             *_as_tokens(target.get("command"), "command"),
@@ -100,6 +104,41 @@ def _variant_specs(target, selected_variant=None):
     return expanded
 
 
+def _validate_optimizer_overrides(spec):
+    """Require a value-specific reason for nondefault mechanism target knobs.
+
+    Explicit user CLI overrides remain available for diagnostics. Atari and
+    the appendix PG/SimpleQ recipes have separate scientific protocols.
+    """
+    module = spec["module"]
+    if module not in {
+        "stackelberg_pomdp.experiments." + name for name in
+        ("simple_allocation", "matrix_design", "mspm", "spm_baseline",
+         "price_collusion", "normal_form")
+    }:
+        return
+    from stackelberg_pomdp.training_defaults import algorithm_defaults
+
+    args = spec.get("args", {})
+    algorithm = args.get("algorithm", "A2C" if module.endswith("price_collusion") else "PPO")
+    defaults = algorithm_defaults(algorithm)
+    expected = {"learning_rate": defaults["learning_rate"], "ent_coef": defaults["ent_coef"]}
+    if algorithm == "PPO":
+        expected.update(ppo_batch_size=defaults["batch_size"],
+                        ppo_n_epochs=defaults["n_epochs"],
+                        ppo_episodes_per_batch=None,
+                        ppo_rollout_geometry="complete_episodes")
+    for key, default in expected.items():
+        if key not in args or args[key] is None or args[key] == default:
+            continue
+        exception = spec.get("parameter_exceptions", {}).get(key, {})
+        if exception.get("value") != args[key] or not exception.get("reason", "").strip():
+            raise ManifestError(
+                f"{module}: nondefault {key}={args[key]!r} requires a matching "
+                "parameter_exceptions value and reason; see replication/PARAMETERS.md"
+            )
+
+
 def build_commands(target, seed, variant=None, extra_args=None):
     """Expand one target into ``(variant_name, argv)`` command pairs."""
     if "module" not in target or target["module"] is None:
@@ -108,7 +147,9 @@ def build_commands(target, seed, variant=None, extra_args=None):
         raise ManifestError("module must be a string or null")
 
     commands = []
+    extra_options = {token.split("=", 1)[0] for token in (extra_args or [])}
     for variant_name, spec in _variant_specs(target, variant):
+        _validate_optimizer_overrides(spec)
         command = [sys.executable, "-m", spec["module"]]
         command.extend(_as_tokens(spec.get("command"), "command"))
         args = spec.get("args", {})
@@ -116,6 +157,10 @@ def build_commands(target, seed, variant=None, extra_args=None):
             raise ManifestError("args must be a JSON object")
         for key, value in args.items():
             if value is None:
+                continue
+            # A CLI override may select the other response-budget unit.
+            if ((key == "mw_response_cycles" and "--tot_num_response_episodes" in extra_options)
+                    or (key == "tot_num_response_episodes" and "--mw_response_cycles" in extra_options)):
                 continue
             if not isinstance(key, str) or not key:
                 raise ManifestError("argument names must be non-empty strings")

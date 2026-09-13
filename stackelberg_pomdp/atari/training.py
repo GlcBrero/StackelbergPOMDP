@@ -16,7 +16,7 @@ from stable_baselines3.common.utils import explained_variance
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from stackelberg_pomdp.atari.protocol import ACTION_CREDIT, NUM_TRADE_EVENTS
-from stackelberg_pomdp.policies.atari.composite import (
+from stackelberg_pomdp.policies.atari import (
     SELLER_SHARED_CONTEXT_BETA_V5,
 )
 
@@ -38,6 +38,17 @@ SELLER_V5_OPTIMIZER_GROUPS = (
     "seller_v5_context",
     "seller_v5_critic",
 )
+
+# Explicit paper-protocol exception to generic SB3 defaults. Shared by E0/E1/E2
+# so stages cannot silently inherit inconsistent knobs. Rationale and limits:
+# replication/PARAMETERS.md (Atari uses full-rollout phase-balanced losses).
+ATARI_PAPER_PPO = {
+    "n_epochs": 4,
+    "entropy_coeff": 0.01,
+    "clip_range": 0.1,
+    "gameplay_learning_rate": 2.5e-4,
+    "transfer_learning_rate": 1e-4,
+}
 
 
 class ScaledLearningRatePPO(PPO):

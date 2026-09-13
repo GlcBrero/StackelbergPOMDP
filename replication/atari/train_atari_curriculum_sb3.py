@@ -17,6 +17,7 @@ os.environ.setdefault(
 os.environ.setdefault("WANDB_START_METHOD", "thread")
 
 from stackelberg_pomdp.atari.training import (
+    ATARI_PAPER_PPO,
     EpisodeCheckpointCallback,
     ScaledLearningRatePPO,
     WANDB_GROUP,
@@ -39,7 +40,7 @@ from stackelberg_pomdp.envs.atari.curriculum import (
     AtariCurriculumEnv,
 )
 from stackelberg_pomdp.atari.protocol import NUM_TRADE_EVENTS
-from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -285,11 +286,11 @@ def parse_args(argv=None):
     parser.add_argument("--start-method", default="spawn")
     parser.add_argument("--n-steps", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--n-epochs", type=int, default=4)
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4)
+    parser.add_argument("--n-epochs", type=int, default=ATARI_PAPER_PPO["n_epochs"])
+    parser.add_argument("--learning-rate", type=float, default=ATARI_PAPER_PPO["gameplay_learning_rate"])
     parser.add_argument("--pretrained-lr-scale", type=float, default=0.1)
-    parser.add_argument("--entropy-coeff", type=float, default=0.01)
-    parser.add_argument("--clip-range", type=float, default=0.1)
+    parser.add_argument("--entropy-coeff", type=float, default=ATARI_PAPER_PPO["entropy_coeff"])
+    parser.add_argument("--clip-range", type=float, default=ATARI_PAPER_PPO["clip_range"])
     parser.add_argument("--value-coefficient", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--noop-max", type=int, default=30)

@@ -32,7 +32,7 @@ from stackelberg_pomdp.atari.protocol import (
     TRADE_MODE_INDEX,
 )
 from stackelberg_pomdp.envs.atari.bilateral import BUYER, SELLER
-from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
 
 
 SCREEN_EPISODES = 20
@@ -54,14 +54,12 @@ TIMING_MIN_EARLY_ACCEPTANCE = 0.75
 TIMING_MAX_LATE_ACCEPTANCE = 0.25
 TIMING_MIN_ACCEPTANCE_DROP = 0.5
 TIMING_MAX_PAYOFF_REGRET = 0.15
-THRESHOLD_RESIDUAL_CONSTANT_PRICE = 0.5
-THRESHOLD_RESIDUAL_MIN_ECONOMIC_BASELINE_IMPROVEMENT = 0.05
-V4_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT = 0.05
-V4_PREFLIGHT_PRICE_RESPONSE = 0.15
-V4_PREFLIGHT_ABLATION_PRICE_DIFFERENCE = 0.02
-V4_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE = 0.02
-V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE = 0.10
-V4_FORMAL_ABLATION_PRICE_DIFFERENCE = 0.05
+SELLER_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT = 0.05
+SELLER_PREFLIGHT_PRICE_RESPONSE = 0.15
+SELLER_PREFLIGHT_ABLATION_PRICE_DIFFERENCE = 0.02
+SELLER_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE = 0.02
+SELLER_FORMAL_TOTAL_PAYOFF_DIFFERENCE = 0.10
+SELLER_FORMAL_ABLATION_PRICE_DIFFERENCE = 0.05
 
 
 def checkpoint_path(raw, *, label="checkpoint"):
@@ -291,10 +289,7 @@ def candidate_economic_architecture_contract(model):
     """
 
     policy = model.policy
-    enabled = bool(
-        getattr(policy, "economic_threshold_residual", False)
-        or getattr(policy, "economic_architecture", None) is not None
-    )
+    enabled = getattr(policy, "economic_architecture", None) is not None
     if not enabled:
         return None
     expected = _jsonable(policy.economic_architecture_provenance())
@@ -308,22 +303,22 @@ def candidate_economic_architecture_contract(model):
     )
     if not isinstance(recorded, dict) or _jsonable(recorded) != expected:
         raise ValueError(
-            "threshold-residual E1 candidate lacks exact economic "
+            "specialized E1 candidate lacks exact economic "
             "architecture provenance"
         )
     return expected
 
 
 def candidate_e1_training_code_revision(model, economic_architecture):
-    """Return the saved residual-training revision, if the mode is active."""
+    """Return the saved seller-training revision, if applicable."""
 
     recorded = getattr(
-        model, trainer.E1_TRAINING_CODE_REVISION_ATTRIBUTE, None
+        model, trainer.TRAINING_CODE_REVISION_ATTRIBUTE, None
     )
     if economic_architecture is None:
         if recorded is not None:
             raise ValueError(
-                "ordinary E1 candidate unexpectedly stores a residual "
+                "ordinary E1 candidate unexpectedly stores a specialized "
                 "training code revision"
             )
         return None
@@ -331,108 +326,10 @@ def candidate_e1_training_code_revision(model, economic_architecture):
             r"[0-9a-f]{40}", recorded
     ) is None:
         raise ValueError(
-            "threshold-residual E1 candidate lacks a full saved training "
+            "specialized E1 candidate lacks a full saved training "
             "code revision"
         )
     return recorded
-
-
-def candidate_direct_threshold_initialization(
-        model, economic_architecture
-):
-    """Return the exact saved v3 zero-column initialization contract."""
-
-    direct = bool(getattr(
-        model.policy, "economic_threshold_residual_direct_input", False
-    ))
-    recorded = getattr(
-        model, trainer.DIRECT_THRESHOLD_INITIALIZATION_ATTRIBUTE, None
-    )
-    if not direct:
-        if recorded is not None:
-            raise ValueError(
-                "non-v3 E1 candidate unexpectedly stores direct-threshold "
-                "initialization provenance"
-            )
-        return None
-    if not isinstance(economic_architecture, dict) or (
-            economic_architecture.get("parameterization")
-            != "seller_direct_threshold_residual_beta_v3"
-    ):
-        raise ValueError(
-            "direct-threshold E1 candidate has the wrong economic architecture"
-        )
-    expected = trainer.direct_threshold_initialization_provenance(
-        model.policy
-    )
-    if recorded != expected:
-        raise ValueError(
-            "direct-threshold E1 candidate lacks exact zero-column "
-            "initialization provenance"
-        )
-    return _jsonable(recorded)
-
-
-def economic_architecture_training_flags(policy, economic_architecture):
-    """Return versioned flags without changing the immutable v2 schema."""
-
-    if economic_architecture is None:
-        return {}
-    parameterization = economic_architecture.get("parameterization")
-    if parameterization in trainer.FROZEN_SELLER_ARCHITECTURES:
-        return {"economic_architecture": parameterization}
-    flags = {"economic_threshold_residual": True}
-    if bool(getattr(
-            policy, "economic_threshold_residual_direct_input", False
-    )):
-        flags["economic_threshold_residual_direct_input"] = True
-    return flags
-
-
-def candidate_two_branch_initialization(model, economic_architecture):
-    """Return and verify the exact seller-v4 initialization contract."""
-
-    active = getattr(model.policy, "economic_architecture", None) == (
-        trainer.SELLER_TWO_BRANCH_BETA_V4
-    )
-    recorded = getattr(
-        model, trainer.TWO_BRANCH_INITIALIZATION_ATTRIBUTE, None
-    )
-    if not active:
-        if recorded is not None:
-            raise ValueError(
-                "non-v4 E1 candidate unexpectedly stores two-branch "
-                "initialization provenance"
-            )
-        return None
-    if not isinstance(economic_architecture, dict) or (
-            economic_architecture.get("parameterization")
-            != trainer.SELLER_TWO_BRANCH_BETA_V4
-    ):
-        raise ValueError("seller-v4 candidate has the wrong architecture")
-    expected = trainer.two_branch_initialization_provenance(model.policy)
-    if recorded != expected:
-        raise ValueError(
-            "seller-v4 candidate lacks exact initialization provenance"
-        )
-    trainer.validate_frozen_gameplay_actor(model)
-    group_names = [
-        group.get("group_name") for group in model.policy.optimizer.param_groups
-    ]
-    if group_names != ["seller_v4_economic", "seller_v4_critic"]:
-        raise ValueError("seller-v4 candidate has the wrong optimizer groups")
-    group_scales = [
-        float(group.get("lr_scale", np.nan))
-        for group in model.policy.optimizer.param_groups
-    ]
-    if not np.allclose(group_scales, [1.0, 0.2], rtol=0.0, atol=0.0):
-        raise ValueError("seller-v4 candidate has the wrong optimizer scales")
-    group_rates = [float(group["lr"]) for group in model.policy.optimizer.param_groups]
-    if not np.allclose(group_rates, [5.0e-4, 1.0e-4], rtol=0.0, atol=1.0e-12):
-        raise ValueError(
-            "seller-v4 candidate has the wrong effective optimizer rates"
-        )
-    return _jsonable(recorded)
 
 
 def candidate_shared_context_initialization(model, economic_architecture):
@@ -564,12 +461,6 @@ def load_candidate(
     training_code_revision = candidate_e1_training_code_revision(
         model, economic_architecture
     )
-    direct_initialization = candidate_direct_threshold_initialization(
-        model, economic_architecture
-    )
-    two_branch_initialization = candidate_two_branch_initialization(
-        model, economic_architecture
-    )
     shared_context_initialization = candidate_shared_context_initialization(
         model, economic_architecture
     )
@@ -599,9 +490,10 @@ def load_candidate(
         "critic_hidden": int(policy.critic_hidden),
         "pretrained_lr_scale": float(policy.pretrained_lr_scale),
     }
-    training_config.update(economic_architecture_training_flags(
-        policy, economic_architecture
-    ))
+    if economic_architecture is not None:
+        training_config["economic_architecture"] = (
+            economic_architecture["parameterization"]
+        )
     metadata = {
         "path": str(reported_path),
         "sha256": digest,
@@ -615,14 +507,6 @@ def load_candidate(
     if economic_architecture is not None:
         metadata["economic_architecture"] = economic_architecture
         metadata["e1_training_code_revision"] = training_code_revision
-        if direct_initialization is not None:
-            metadata["direct_threshold_initialization"] = (
-                direct_initialization
-            )
-        if two_branch_initialization is not None:
-            metadata["two_branch_initialization"] = (
-                two_branch_initialization
-            )
         if shared_context_initialization is not None:
             metadata["shared_context_initialization"] = (
                 shared_context_initialization
@@ -819,7 +703,6 @@ def _episode(
         phase,
         fifth_economic_override=None,
         all_trade_economic_override=None,
-        v4_context_ablation=False,
         v5_context_ablation=False,
 ):
     if (
@@ -830,8 +713,6 @@ def _episode(
             "fifth-trade and all-trade economic overrides are mutually "
             "exclusive"
         )
-    if v4_context_ablation and v5_context_ablation:
-        raise ValueError("v4 and v5 context ablations are mutually exclusive")
     local = copy(args)
     local.fixed_event_steps = args.fixed_event_steps
     env = trainer.make_env(
@@ -839,11 +720,8 @@ def _episode(
         seed=int(seed),
         context_sampler=lambda rng, values=np.asarray(context): values.copy(),
     )
-    v4_ablation_active = bool(v4_context_ablation)
     v5_ablation_active = bool(v5_context_ablation)
-    if v4_ablation_active:
-        model.policy.set_v4_context_ablation(True)
-    elif v5_ablation_active:
+    if v5_ablation_active:
         model.policy.set_v5_context_ablation(True)
     try:
         observation = env.reset()
@@ -870,9 +748,7 @@ def _episode(
         try:
             env.close()
         finally:
-            if v4_ablation_active:
-                model.policy.set_v4_context_ablation(False)
-            elif v5_ablation_active:
+            if v5_ablation_active:
                 model.policy.set_v5_context_ablation(False)
     row = {
         "phase": phase,
@@ -900,9 +776,7 @@ def _episode(
                 all_trade_override_applications
             ),
         })
-    if v4_ablation_active:
-        row["v4_context_ablation"] = True
-    elif v5_ablation_active:
+    if v5_ablation_active:
         row["v5_context_ablation"] = True
     row.pop("episode", None)
     return row
@@ -1121,7 +995,7 @@ def audit_episode(row, *, role):
 
     ablations = {
         field: row.get(field, False)
-        for field in ("v4_context_ablation", "v5_context_ablation")
+        for field in ("v5_context_ablation",)
     }
     for field, ablation in ablations.items():
         if ablation not in (False, True):
@@ -1214,7 +1088,6 @@ def evaluate_rows(
         phase,
         fifth_economic_override=None,
         all_trade_economic_override=None,
-        v4_context_ablation=False,
         v5_context_ablation=False,
 ):
     rows = [
@@ -1227,7 +1100,6 @@ def evaluate_rows(
             phase=phase,
             fifth_economic_override=fifth_economic_override,
             all_trade_economic_override=all_trade_economic_override,
-            v4_context_ablation=v4_context_ablation,
             v5_context_ablation=v5_context_ablation,
         )
         for seed, context in zip(seeds, contexts)
@@ -1250,18 +1122,11 @@ def evaluate_rows(
                 "all_trade_economic_override": row.get(
                     "all_trade_economic_override"
                 ),
-                "v4_context_ablation": bool(row.get(
-                    "v4_context_ablation", False
+                "v5_context_ablation": bool(row.get(
+                    "v5_context_ablation", False
                 )),
                 **event,
             }
-            if metadata.get("economic_architecture", {}).get(
-                    "parameterization"
-            ) == trainer.SELLER_SHARED_CONTEXT_BETA_V5:
-                event_row.pop("v4_context_ablation")
-                event_row["v5_context_ablation"] = bool(row.get(
-                    "v5_context_ablation", False
-                ))
             event_rows.append(event_row)
     return {
         "summary": _summary(rows, role=args.role),
@@ -1550,241 +1415,6 @@ def buyer_primary_economic_gate(*, random_result, fixed_results):
     }
 
 
-def seller_threshold_residual_behavioral_gate(
-        *, random_result, fixed_results, mechanics_verified=None
-):
-    """Gate the seller-only residual architecture on real ALE behavior.
-
-    The constant-price comparison is an economic-transfer payoff benchmark:
-    at price 0.5 it earns 2.5 when the all-equal threshold is at least 0.5
-    and zero otherwise.  Relative to the full-information transfer oracle,
-    the candidate's payment improvement is the same quantity as its regret
-    reduction.  Gameplay reward is checked separately rather than imputed in
-    this counterfactual benchmark.
-    """
-
-    fixed_by_value = {
-        round(float(result["opponent_value"]), 6): result
-        for result in fixed_results
-    }
-    expected_values = tuple(round(index / 10.0, 6) for index in range(11))
-    missing = [value for value in expected_values if value not in fixed_by_value]
-    if missing:
-        return {
-            "name": "seller_threshold_residual_behavioral_readiness_v1",
-            "passed": False,
-            "mechanics_passed": False,
-            "checks": [],
-            "error": f"fixed grid missing {missing}",
-        }
-
-    summaries = [fixed_by_value[value]["summary"] for value in expected_values]
-    zero = fixed_by_value[0.0]
-    point_eight = fixed_by_value[0.8]
-    one = fixed_by_value[1.0]
-    fixed_prices = np.asarray(
-        [float(summary["mean_price"]) for summary in summaries],
-        dtype=np.float64,
-    )
-    fixed_payments = np.asarray(
-        [float(summary["mean_payments"]) for summary in summaries],
-        dtype=np.float64,
-    )
-    all_numeric = [
-        float(value)
-        for result in (random_result, *fixed_results)
-        for value in result["summary"].values()
-        if isinstance(value, (int, float, np.integer, np.floating))
-    ]
-    finite = bool(all_numeric and np.all(np.isfinite(all_numeric)))
-    prices_in_unit = bool(
-        np.all(np.isfinite(fixed_prices))
-        and np.all((fixed_prices >= 0.0) & (fixed_prices <= 1.0))
-    )
-    maximum_adjacent_reversal = float(
-        max(0.0, np.max(fixed_prices[:-1] - fixed_prices[1:]))
-    )
-    endpoint_response = float(fixed_prices[-1] - fixed_prices[0])
-
-    def episode_values(result, field):
-        return np.asarray(
-            [float(row[field]) for row in result.get("episode_rows", ())],
-            dtype=np.float64,
-        )
-
-    zero_purchases = episode_values(zero, "purchases")
-    point_eight_purchases = episode_values(point_eight, "purchases")
-    one_purchases = episode_values(one, "purchases")
-    random_rewards = episode_values(random_result, "seller_reward")
-    raw_rows_present = bool(
-        zero_purchases.size
-        and point_eight_purchases.size
-        and one_purchases.size
-    )
-
-    constant_payments = np.asarray([
-        5.0 * THRESHOLD_RESIDUAL_CONSTANT_PRICE
-        if value >= THRESHOLD_RESIDUAL_CONSTANT_PRICE else 0.0
-        for value in expected_values
-    ], dtype=np.float64)
-    economic_baseline_improvement = float(
-        np.mean(fixed_payments - constant_payments)
-    )
-    oracle_payments = 5.0 * np.asarray(expected_values, dtype=np.float64)
-    candidate_regret = float(np.mean(oracle_payments - fixed_payments))
-    constant_regret = float(np.mean(oracle_payments - constant_payments))
-
-    random_summary = random_result["summary"]
-    random_payoff = float(random_summary.get(
-        "mean_controlled_payoff",
-        random_summary.get("mean_seller_reward", np.nan),
-    ))
-    random_payoff_lcb = (
-        float(
-            np.mean(random_rewards)
-            - 2.0 * np.std(random_rewards) / np.sqrt(random_rewards.size)
-        )
-        if random_rewards.size else -np.inf
-    )
-    zero_summary = zero["summary"]
-    point_eight_summary = point_eight["summary"]
-    one_summary = one["summary"]
-    checks = [
-        {
-            "name": "all reported numeric summaries finite",
-            "actual": finite,
-            "required": True,
-            "passed": finite,
-        },
-        {
-            "name": "all fixed-grid mean prices in unit interval",
-            "actual": prices_in_unit,
-            "required": True,
-            "passed": prices_in_unit,
-        },
-        _check("fixed-grid endpoint price response", endpoint_response, ">=", 0.45),
-        _check(
-            "largest adjacent fixed-grid price reversal",
-            maximum_adjacent_reversal,
-            "<=",
-            0.15,
-        ),
-        {
-            "name": "raw episode rows present at thresholds 0, 0.8, and 1",
-            "actual": raw_rows_present,
-            "required": True,
-            "passed": raw_rows_present,
-        },
-        _check(
-            "threshold 0 maximum per-episode purchases",
-            float(np.max(zero_purchases)) if zero_purchases.size else np.inf,
-            "<=",
-            0.0,
-        ),
-        _check(
-            "threshold 0 mean seller shots",
-            float(zero_summary["mean_seller_shots_fired"]),
-            ">=",
-            4.0,
-        ),
-        _check(
-            "threshold 0 mean raw seller game reward",
-            float(zero_summary["mean_seller_game_reward"]),
-            ">=",
-            4.0,
-        ),
-        _check(
-            "threshold 0.8 minimum per-episode purchases",
-            float(np.min(point_eight_purchases))
-            if point_eight_purchases.size else -np.inf,
-            ">=",
-            5.0,
-        ),
-        _check(
-            "threshold 0.8 mean payments",
-            float(point_eight_summary["mean_payments"]),
-            ">=",
-            2.75,
-        ),
-        _check(
-            "threshold 1 minimum per-episode purchases",
-            float(np.min(one_purchases)) if one_purchases.size else -np.inf,
-            ">=",
-            5.0,
-        ),
-        _check(
-            "threshold 1 mean payments",
-            float(one_summary["mean_payments"]),
-            ">=",
-            3.5,
-        ),
-        _check(
-            "threshold 1 mean price",
-            float(one_summary["mean_price"]),
-            ">=",
-            0.70,
-        ),
-        _check(
-            "threshold 1 mean controlled seller payoff",
-            float(one_summary.get(
-                "mean_controlled_payoff",
-                one_summary.get("mean_seller_reward", np.nan),
-            )),
-            ">=",
-            3.5,
-        ),
-        _check("random seller payoff", random_payoff, ">", 0.5),
-        _check(
-            "random seller payoff mean minus two standard errors",
-            random_payoff_lcb,
-            ">",
-            0.5,
-        ),
-        _check(
-            "economic payoff improvement over constant price 0.5",
-            economic_baseline_improvement,
-            ">=",
-            THRESHOLD_RESIDUAL_MIN_ECONOMIC_BASELINE_IMPROVEMENT,
-        ),
-        _check(
-            "economic regret reduction versus constant price 0.5",
-            constant_regret - candidate_regret,
-            ">=",
-            THRESHOLD_RESIDUAL_MIN_ECONOMIC_BASELINE_IMPROVEMENT,
-        ),
-    ]
-    protocol_flags = [
-        result.get("protocol", {}).get("passed")
-        for result in (random_result, *fixed_results)
-        if "protocol" in result
-    ]
-    if mechanics_verified is None:
-        mechanics = bool(
-            len(protocol_flags) == len(fixed_results) + 1
-            and all(protocol_flags)
-        )
-    else:
-        mechanics = bool(mechanics_verified and all(protocol_flags or [True]))
-    return {
-        "name": "seller_threshold_residual_behavioral_readiness_v1",
-        "predeclared": True,
-        "learned_threshold_slope_claim": False,
-        "anchor_slope_is_fixed_inductive_bias": True,
-        "passed": bool(mechanics and all(row["passed"] for row in checks)),
-        "mechanics_passed": mechanics,
-        "checks": checks,
-        "economic_constant_price_baseline": {
-            "price": THRESHOLD_RESIDUAL_CONSTANT_PRICE,
-            "mean_candidate_transfer_payoff": float(np.mean(fixed_payments)),
-            "mean_constant_transfer_payoff": float(np.mean(constant_payments)),
-            "mean_full_information_transfer_oracle": float(
-                np.mean(oracle_payments)
-            ),
-            "candidate_regret": candidate_regret,
-            "constant_price_regret": constant_regret,
-            "regret_reduction": constant_regret - candidate_regret,
-        },
-    }
 
 
 def _paired_delta(treatment, control, *, field):
@@ -1804,9 +1434,9 @@ def _paired_delta(treatment, control, *, field):
             len(treatment_rows) != len(treatment_source)
             or len(control_rows) != len(control_source)
     ):
-        raise ValueError("paired seller-v4 evaluation has duplicate seeds")
+        raise ValueError("paired seller evaluation has duplicate seeds")
     if not treatment_rows or treatment_rows.keys() != control_rows.keys():
-        raise ValueError("paired seller-v4 evaluations have different seeds")
+        raise ValueError("paired seller evaluations have different seeds")
     for seed in treatment_rows:
         treatment_context = np.asarray(
             treatment_rows[seed].get("opponent_commitment", ()),
@@ -1827,7 +1457,7 @@ def _paired_delta(treatment, control, *, field):
                 )
         ):
             raise ValueError(
-                "paired seller-v4 evaluations have different commitments"
+                "paired seller evaluations have different commitments"
             )
         treatment_steps = tuple(
             int(value) for value in treatment_rows[seed].get(
@@ -1844,7 +1474,7 @@ def _paired_delta(treatment, control, *, field):
                 or treatment_steps != control_steps
         ):
             raise ValueError(
-                "paired seller-v4 evaluations have different event schedules"
+                "paired seller evaluations have different event schedules"
             )
     differences = np.asarray([
         float(treatment_rows[seed][field])
@@ -1852,7 +1482,7 @@ def _paired_delta(treatment, control, *, field):
         for seed in sorted(treatment_rows)
     ], dtype=np.float64)
     if not np.all(np.isfinite(differences)):
-        raise ValueError("paired seller-v4 differences are non-finite")
+        raise ValueError("paired seller differences are non-finite")
     mean = float(np.mean(differences))
     standard_error = (
         float(np.std(differences, ddof=1) / np.sqrt(differences.size))
@@ -1880,26 +1510,26 @@ def _empirical_best_constant_transfer_control(random_result):
 
     rows = list(random_result.get("episode_rows", ()))
     if not rows:
-        raise ValueError("seller-v4 transfer control requires episode rows")
+        raise ValueError("seller transfer control requires episode rows")
     seeds = [int(row["evaluation_seed"]) for row in rows]
     if len(seeds) != len(set(seeds)):
-        raise ValueError("seller-v4 transfer control has duplicate seeds")
+        raise ValueError("seller transfer control has duplicate seeds")
     contexts = np.asarray([
         row.get("opponent_commitment", ()) for row in rows
     ], dtype=np.float64)
     if contexts.shape != (len(rows), NUM_TRADE_EVENTS):
         raise ValueError(
-            "seller-v4 transfer control requires five thresholds per episode"
+            "seller transfer control requires five thresholds per episode"
         )
     if not np.all(np.isfinite(contexts)) or not np.all(
             (contexts >= 0.0) & (contexts <= 1.0)
     ):
-        raise ValueError("seller-v4 transfer thresholds must lie in [0,1]")
+        raise ValueError("seller transfer thresholds must lie in [0,1]")
     candidate_payments = np.asarray([
         float(row["payments"]) for row in rows
     ], dtype=np.float64)
     if not np.all(np.isfinite(candidate_payments)):
-        raise ValueError("seller-v4 candidate payments are non-finite")
+        raise ValueError("seller candidate payments are non-finite")
 
     candidate_prices = np.unique(np.concatenate((
         np.asarray([0.0], dtype=np.float64),
@@ -1935,11 +1565,11 @@ def _empirical_best_constant_transfer_control(random_result):
     }
 
 
-def seller_v4_behavioral_gate(
+def _seller_context_behavioral_gate(
         *, random_result, fixed_results, ablated_random_result,
         forced_constant_results=None, formal=False,
 ):
-    """Gate learned seller-v4 conditioning on paired real-ALE behavior."""
+    """Gate learned seller conditioning on paired real-ALE behavior."""
 
     by_value = {
         round(float(result["opponent_value"]), 6): result
@@ -1949,7 +1579,7 @@ def seller_v4_behavioral_gate(
     missing = [value for value in expected if value not in by_value]
     if missing:
         return {
-            "name": "seller_two_branch_behavioral_gate_v4",
+            "name": "seller_context_behavioral_gate",
             "passed": False,
             "checks": [],
             "error": f"fixed grid missing {missing}",
@@ -2003,7 +1633,7 @@ def seller_v4_behavioral_gate(
             or len(ablated_events)
             != len(ablated_random_result.get("event_rows", ()))
     ):
-        raise ValueError("seller-v4 ablation event rows are not paired")
+        raise ValueError("seller ablation event rows are not paired")
     ablation_price_difference = float(np.mean([
         abs(float(full_events[key]["price"])
             - float(ablated_events[key]["price"]))
@@ -2015,15 +1645,16 @@ def seller_v4_behavioral_gate(
             transfer_improvement,
             ">=",
             (
-                V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE
-                if formal else V4_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT
+                SELLER_FORMAL_TOTAL_PAYOFF_DIFFERENCE
+                if formal
+                else SELLER_PREFLIGHT_TRANSFER_BASELINE_IMPROVEMENT
             ),
         ),
         _check(
             "price response from threshold 0.4 to 0.9",
             response_04_09,
             ">=",
-            V4_PREFLIGHT_PRICE_RESPONSE,
+            SELLER_PREFLIGHT_PRICE_RESPONSE,
         ),
         _check(
             "largest adjacent fixed-grid price reversal",
@@ -2036,8 +1667,8 @@ def seller_v4_behavioral_gate(
             ablation_price_difference,
             ">=",
             (
-                V4_FORMAL_ABLATION_PRICE_DIFFERENCE
-                if formal else V4_PREFLIGHT_ABLATION_PRICE_DIFFERENCE
+                SELLER_FORMAL_ABLATION_PRICE_DIFFERENCE
+                if formal else SELLER_PREFLIGHT_ABLATION_PRICE_DIFFERENCE
             ),
         ),
         _check(
@@ -2071,8 +1702,8 @@ def seller_v4_behavioral_gate(
             ablation_payoff["mean"],
             ">=",
             (
-                V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE
-                if formal else V4_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE
+                SELLER_FORMAL_TOTAL_PAYOFF_DIFFERENCE
+                if formal else SELLER_PREFLIGHT_ABLATION_PAYOFF_DIFFERENCE
             ),
         ),
     ]
@@ -2110,7 +1741,7 @@ def seller_v4_behavioral_gate(
                     "paired full-minus-best-forced-constant total payoff",
                     forced_control["mean"],
                     ">=",
-                    V4_FORMAL_TOTAL_PAYOFF_DIFFERENCE,
+                    SELLER_FORMAL_TOTAL_PAYOFF_DIFFERENCE,
                 ),
                 _check(
                     "paired forced-constant total-payoff two-SE lower bound",
@@ -2148,7 +1779,7 @@ def seller_v4_behavioral_gate(
         )
     )
     return {
-        "name": "seller_two_branch_behavioral_gate_v4",
+        "name": "seller_context_behavioral_gate",
         "predeclared": True,
         "formal": bool(formal),
         "passed": bool(mechanics and all(check["passed"] for check in checks)),
@@ -2167,9 +1798,9 @@ def seller_v5_behavioral_gate(
         *, random_result, fixed_results, ablated_random_result,
         forced_constant_results=None, formal=False,
 ):
-    """Apply the unchanged v4 numerical gates to seller-v5 behavior."""
+    """Apply the predeclared numerical gates to the retained seller."""
 
-    result = dict(seller_v4_behavioral_gate(
+    result = dict(_seller_context_behavioral_gate(
         random_result=random_result,
         fixed_results=fixed_results,
         ablated_random_result=ablated_random_result,
@@ -2180,39 +1811,6 @@ def seller_v5_behavioral_gate(
     return result
 
 
-def seller_threshold_residual_final_gate(
-        *, random_result, fixed_results, conditioning_probe
-):
-    """Require both the unchanged seller selector and residual readiness."""
-
-    original = behavioral_gate(
-        role=SELLER,
-        random_result=random_result,
-        fixed_results=fixed_results,
-        timing_results=[],
-    )
-    readiness = seller_threshold_residual_behavioral_gate(
-        random_result=random_result,
-        fixed_results=fixed_results,
-    )
-    probe_gate = conditioning_probe.get("warmup_gate", {})
-    return {
-        "name": "seller_threshold_residual_final_gate_v1",
-        "predeclared": True,
-        "passed": bool(
-            original["passed"]
-            and readiness["passed"]
-            and probe_gate.get("passed") is True
-        ),
-        "mechanics_passed": bool(
-            original.get("mechanics_passed")
-            and readiness.get("mechanics_passed")
-        ),
-        "unchanged_seller_selector_gate": original,
-        "threshold_residual_behavioral_readiness": readiness,
-        "threshold_residual_conditioning_probe_gate": probe_gate,
-        "checks": [*original.get("checks", ()), *readiness.get("checks", ())],
-    }
 
 
 def behavioral_gate(

@@ -1,11 +1,11 @@
-"""Legacy-compatible REINFORCE for the matrix meta-follower.
+"""Linear REINFORCE shared by the appendix leader and meta-follower.
 
 This module ports the policy-gradient mechanics used by the historical
 StackeRLberg matrix experiments while retaining Stable-Baselines3's rollout,
 callback, and checkpoint interfaces.  The reference implementation is:
 
 * ``stackerlberg/train/experiments/configurations.py``
-  (``smipd_hiddenqueries_pg_pg_new``),
+  (``smipd_leadermemory_pg_pg`` and ``bots_pg_tabularq``),
 * RLlib's ``PGTorchPolicy`` and ``post_process_advantages``, and
 * ``stackerlberg/models/linear_torch_model.py``.
 
@@ -29,7 +29,10 @@ from torch import nn
 
 from stable_baselines3 import A2C
 from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.common.torch_layers import CombinedExtractor
 from stable_baselines3.common.type_aliases import GymEnv, Schedule
+
+from stackelberg_pomdp.policies.cache import FixedActionPolicyMixin
 
 
 LEGACY_PG_COLLECTION_TARGET_ENV_STEPS = 100
@@ -88,7 +91,7 @@ def _normc_(weight, scale=0.01):
     return weight
 
 
-class ReinforcePolicy(ActorCriticPolicy):
+class ReinforcePolicy(FixedActionPolicyMixin, ActorCriticPolicy):
     """Bias-free linear categorical policy used by legacy RLlib PG.
 
     SB3's rollout buffer always asks an actor-critic policy for values.  The
@@ -103,10 +106,18 @@ class ReinforcePolicy(ActorCriticPolicy):
             action_space,
             lr_schedule: Schedule,
             net_arch=None,
+            cache_actions=False,
             **kwargs,
     ):
-        if not isinstance(observation_space, spaces.Discrete):
-            raise TypeError("ReinforcePolicy requires a Discrete observation space")
+        if isinstance(observation_space, spaces.Dict):
+            if not observation_space.spaces or any(
+                not isinstance(space, spaces.Discrete)
+                for space in observation_space.spaces.values()
+            ):
+                raise TypeError("REINFORCE requires categorical observations")
+            kwargs.setdefault("features_extractor_class", CombinedExtractor)
+        elif not isinstance(observation_space, spaces.Discrete):
+            raise TypeError("REINFORCE requires categorical observations")
         if not isinstance(action_space, spaces.Discrete):
             raise TypeError("ReinforcePolicy requires a Discrete action space")
         net_arch = [] if net_arch is None else net_arch
@@ -128,6 +139,32 @@ class ReinforcePolicy(ActorCriticPolicy):
             optimizer_kwargs=optimizer_kwargs,
             **kwargs,
         )
+        self._initialize_fixed_action_cache()
+        self.fix_actions = bool(cache_actions)
+
+    def _cached_actions(self, obs, distribution, deterministic):
+        if not self.fix_actions:
+            return distribution.get_actions(deterministic=deterministic)
+        columns = list(obs.values()) if isinstance(obs, dict) else [obs]
+        if columns[0].shape[0] != 1:
+            raise ValueError("cached appendix PG supports one environment")
+        key = tuple(value for column in columns for value in column.flatten().tolist())
+        # Evaluation must use the clean argmax, regardless of a training cache.
+        if deterministic:
+            return distribution.get_actions(deterministic=True)
+        if key not in self.obs_action_map:
+            self.obs_action_map[key] = distribution.get_actions().detach()
+        return self.obs_action_map[key]
+
+    def forward(self, obs, deterministic=False):
+        features = self.extract_features(obs)
+        latent_pi, latent_vf = self.mlp_extractor(features)
+        distribution = self._get_action_dist_from_latent(latent_pi)
+        actions = self._cached_actions(obs, distribution, deterministic)
+        return actions, self.value_net(latent_vf), distribution.log_prob(actions)
+
+    def _predict(self, observation, deterministic=False):
+        return self.forward(observation, deterministic)[0]
 
     def _build(self, lr_schedule: Schedule) -> None:
         self._build_mlp_extractor()

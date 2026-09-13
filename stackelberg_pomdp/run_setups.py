@@ -1,5 +1,6 @@
 # Python standard library imports
 import hashlib
+import json
 import os
 
 # Third-party library imports
@@ -26,6 +27,10 @@ except ImportError:
     from wrappers.core import MWFollowersWrapper
     from rl_trainer_setup import get_custom_training_algorithm
 from stable_baselines3.common import logger
+from stackelberg_pomdp.rl_trainer_setup import ppo_rollout_geometry
+from stackelberg_pomdp.training_defaults import resolve_common_optimizer_defaults
+from stackelberg_pomdp.follower_responses import round_down_mw_response_games
+from stackelberg_pomdp.experiments.common import mw_update_period_from_config
 
 
 def _format_value(value):
@@ -34,38 +39,23 @@ def _format_value(value):
     return str(value)
 
 
-def _mw_update_period_from_config(config_dict):
-    experiment_family = config_dict["experiment_type"].split(":")[0]
-    if experiment_family == "simple_allocation":
-        return int(config_dict["experiment_type"].split(":")[1])
-    if experiment_family == "mspm":
-        num_messages = int(config_dict["experiment_type"].split(":")[3])
-        return num_messages ** 2
-    if experiment_family == "matrix_design":
-        return 4
-    return None
-
-
 def _requested_response_episodes(config_dict):
     return config_dict['tot_num_response_episodes']
 
 
 def _effective_tot_num_response_episodes(config_dict):
     requested = _requested_response_episodes(config_dict)
-    if (
-            config_dict.get('followers_algorithm') != 'MW'
-            or not config_dict.get('align_mw_response_phase', True)
-    ):
+    if config_dict.get('followers_algorithm') != 'MW':
         return requested
 
-    period = _mw_update_period_from_config(config_dict)
+    period = mw_update_period_from_config(config_dict)
     if period is None:
         return requested
-    aligned = requested - (requested % period)
-    return aligned if aligned > 0 else requested
+    return round_down_mw_response_games(requested, period)
 
 
 def _experiment_name(config_dict):
+    config_dict = resolve_common_optimizer_defaults(dict(config_dict))
     experiment_family = config_dict["experiment_type"].split(":")[0]
     if experiment_family == "spm":
         _, setting, num_types = config_dict["experiment_type"].split(":")
@@ -77,7 +67,7 @@ def _experiment_name(config_dict):
             config_dict["algorithm"],
             f"steps{config_dict['max_steps']}",
             f"seed{config_dict['seed']}",
-            f"lr{_format_value(config_dict.get('learning_rate', 7e-4))}",
+            f"lr{_format_value(config_dict['learning_rate'])}",
             f"ent{_format_value(config_dict.get('ent_coef', 0.01))}",
         ]
         return ".".join(_format_value(part).replace("/", "-") for part in parts)
@@ -90,11 +80,11 @@ def _experiment_name(config_dict):
         f"steps{config_dict['max_steps']}",
         config_dict["algorithm"],
         f"seed{config_dict['seed']}",
-        f"lr{_format_value(config_dict.get('learning_rate', 7e-4))}",
+        f"lr{_format_value(config_dict['learning_rate'])}",
         f"ent{_format_value(config_dict.get('ent_coef', 0.01))}",
-        f"ppobatch{config_dict.get('ppo_batch_size') or 'episode'}",
-        f"ppoepochs{config_dict.get('ppo_n_epochs', 4)}",
-        f"pporollout{config_dict.get('ppo_episodes_per_batch', 16)}ep",
+        f"ppobatch{config_dict.get('ppo_batch_size', 'na')}",
+        f"ppoepochs{config_dict.get('ppo_n_epochs', 'na')}",
+        f"pporollout{config_dict.get('ppo_episodes_per_batch') or 'auto'}ep",
         f"reward{config_dict['tot_num_reward_episodes']}",
         f"response{config_dict.get('effective_tot_num_response_episodes', _effective_tot_num_response_episodes(config_dict))}",
         f"critic{config_dict['critic_obs']}",
@@ -156,6 +146,7 @@ def _experiment_name(config_dict):
 
 
 def train_run(config_dict):
+    resolve_common_optimizer_defaults(config_dict)
     # First, we use config_dict to name our experiment and set up the folder where we log our results
     exp_name = _experiment_name(config_dict)
 
@@ -252,25 +243,20 @@ def train_run(config_dict):
             action_samples=config_dict.get('spm_eval_action_samples', 1),
         ))
         max_episode_transitions = env.unwrapped.max_episode_transitions()
-        n_steps = (
-            max_episode_transitions
-            * config_dict.get('ppo_episodes_per_batch', 16)
-        )
-        batch_size = (
-            config_dict.get('ppo_batch_size') or max_episode_transitions
-        )
+        geometry = ppo_rollout_geometry(config_dict, max_episode_transitions)
         mod = PPO(
             policy="MlpPolicy",
             env=env,
             gamma=1.0,
-            learning_rate=config_dict.get('learning_rate', 7e-6),
+            learning_rate=config_dict['learning_rate'],
             seed=config_dict["training_seed"],
-            n_steps=n_steps,
-            batch_size=batch_size,
-            n_epochs=config_dict.get('ppo_n_epochs', 4),
+            n_steps=geometry['n_steps'],
+            batch_size=geometry['batch_size'],
+            n_epochs=config_dict['ppo_n_epochs'],
             ent_coef=config_dict.get('ent_coef', 0.01),
         )
         mod.set_logger(log)
+        _write_optimizer_parameters(mod, log_folder)
         print(f"[train] standard_spm_ppo=true log_folder={log_folder}", flush=True)
         mod.learn(
             total_timesteps=config_dict['max_steps'],
@@ -301,6 +287,7 @@ def train_run(config_dict):
 
     # We are now ready to train our policy
     mod = get_custom_training_algorithm(config_dict, env, tensorboard_folder=None)
+    _write_optimizer_parameters(mod, log_folder)
     print(f"[train] log_folder={log_folder}", flush=True)
     mod.learn(
         total_timesteps=config_dict['max_steps'],
@@ -309,3 +296,20 @@ def train_run(config_dict):
 
     if config_dict['use_wandb']:
         wandb.finish()
+
+
+def _write_optimizer_parameters(model, log_folder):
+    """Persist actual constructor values, including automatic rollout sizing."""
+    import stable_baselines3
+
+    parameters = {
+        "stable_baselines3_version": stable_baselines3.__version__,
+        "algorithm": type(model).__name__,
+    }
+    for key in ("learning_rate", "n_steps", "batch_size", "n_epochs", "gamma",
+                "gae_lambda", "ent_coef", "clip_range", "vf_coef", "max_grad_norm"):
+        if hasattr(model, key):
+            value = getattr(model, key)
+            parameters[key] = value(1.0) if callable(value) else value
+    with open(os.path.join(log_folder, "optimizer_parameters.json"), "w") as stream:
+        json.dump(parameters, stream, indent=2)

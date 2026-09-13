@@ -1,6 +1,7 @@
 import argparse
 
 from stackelberg_pomdp.experiments.common import (
+    DEFAULT_MECHANISM_MW_CYCLES,
     add_common_training_args,
     add_response_phase_args,
     finalized_config,
@@ -10,7 +11,8 @@ from stackelberg_pomdp.experiments.common import (
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Matrix-design StackPOMDP experiment.")
-    add_response_phase_args(parser, default_response_episodes=4, default_reward_episodes=1)
+    add_response_phase_args(parser, default_response_episodes=4, default_reward_episodes=1,
+                            default_response_cycles=DEFAULT_MECHANISM_MW_CYCLES)
     add_common_training_args(parser, default_algorithm="PPO")
     return parser
 

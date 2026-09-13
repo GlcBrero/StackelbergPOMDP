@@ -26,7 +26,7 @@ cd "$PROJECT_DIR"
 mkdir -p replication/matrix_ablations/slurm_logs
 
 python replication/matrix_ablations/sweep.py run \
-  --sweep-id qualitative-v1 \
+  --sweep-id appendix-v1 \
   --stage meta-follower \
   --record-index "$SLURM_ARRAY_TASK_ID" \
   --wandb

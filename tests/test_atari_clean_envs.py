@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import gym
 import numpy as np
 
-from replication.atari.evaluate_atari_stackpomdp_leader_sb3 import (
+from stackelberg_pomdp.evaluation.atari.rollouts import (
     apply_economic_commitment_override,
 )
 from stackelberg_pomdp.envs.atari.curriculum import (

@@ -23,7 +23,7 @@ from stackelberg_pomdp.atari.protocol import (
     observation,
     observation_space,
 )
-from stackelberg_pomdp.policies.atari.composite import StackPOMDPAtariPolicy
+from stackelberg_pomdp.policies.atari import StackPOMDPAtariPolicy
 from stackelberg_pomdp.callbacks import FixPolicyActionsCallback
 
 
@@ -126,7 +126,6 @@ def test_rollout_is_exactly_queries_gameplay_and_cached_trades(tmp_path):
     assert args.event_tail_steps == 0
     assert args.actor_loss_mode == STANDARD_ACTOR_LOSS_MODE
     assert args.target_kl is None
-    assert args.freeze_gameplay_actor is False
     assert args.wandb_project == "StackPOMDP"
 
     with pytest.raises(SystemExit):
@@ -356,13 +355,6 @@ def test_scientific_config_distinguishes_actor_loss_mode(tmp_path):
     ))
     assert target["optimization"]["target_kl"] == pytest.approx(0.01)
 
-    frozen = trainer.e2_scientific_config(_args(
-        tmp_path,
-        "--freeze-gameplay-actor",
-    ))
-    assert frozen["leader_policy"]["gameplay_actor_frozen"] is True
-    assert standard["leader_policy"]["gameplay_actor_frozen"] is False
-    assert frozen != standard
 
 
 def test_provenance_rejects_config_or_manifest_tampering(tmp_path):
@@ -471,10 +463,9 @@ def test_real_sb3_checkpoint_round_trip_retains_manifest(tmp_path):
         vec_env.close()
 
 
-def test_frozen_gameplay_actor_round_trip_trains_only_economic_actor(tmp_path):
+def test_e2_rejects_frozen_gameplay_actor():
     vec_env = DummyVecEnv([_StableProtocolEnv])
     model = None
-    restored = None
     try:
         model = ScaledLearningRatePPO(
             StackPOMDPAtariPolicy,
@@ -494,49 +485,9 @@ def test_frozen_gameplay_actor_round_trip_trains_only_economic_actor(tmp_path):
             device="cpu",
             verbose=0,
         )
-        policy = model.policy
-        assert policy.gameplay_actor_frozen is True
-        assert all(
-            not parameter.requires_grad
-            for module in policy.gameplay_actor_modules()
-            for parameter in module.parameters()
-        )
-        assert all(
-            parameter.requires_grad
-            for parameter in policy.economic_head.parameters()
-        )
-        assert all(
-            parameter.requires_grad
-            for parameter in policy.value_net.parameters()
-        )
-        optimized = {
-            id(parameter)
-            for group in policy.optimizer.param_groups
-            for parameter in group["params"]
-        }
-        trainable = {
-            id(parameter)
-            for parameter in policy.parameters()
-            if parameter.requires_grad
-        }
-        assert optimized == trainable
-
-        expected = trainer.validate_e2_gameplay_actor_freeze(
-            model, initialize=True
-        )
-        model.learn(total_timesteps=2)
-        assert trainer.validate_e2_gameplay_actor_freeze(
-            model, initialize=False
-        ) == expected
-        checkpoint = tmp_path / "frozen_gameplay_e2.zip"
-        model.save(checkpoint)
-        restored = ScaledLearningRatePPO.load(checkpoint, device="cpu")
-        assert restored.policy.gameplay_actor_frozen is True
-        assert trainer.validate_e2_gameplay_actor_freeze(
-            restored, initialize=False
-        ) == expected
+        with pytest.raises(ValueError, match="trainable gameplay actor"):
+            trainer.validate_e2_gameplay_actor(model)
     finally:
-        del restored
         del model
         vec_env.close()
 

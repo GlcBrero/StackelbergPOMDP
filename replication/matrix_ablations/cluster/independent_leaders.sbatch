@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=matrix-q
 #SBATCH --partition=cpu
-#SBATCH --array=0-59%12
+#SBATCH --array=0-57%12
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
 #SBATCH --time=04:00:00
@@ -26,7 +26,7 @@ cd "$PROJECT_DIR"
 mkdir -p replication/matrix_ablations/slurm_logs
 
 python replication/matrix_ablations/sweep.py run \
-  --sweep-id qualitative-v1 \
+  --sweep-id appendix-v1 \
   --stage leader \
   --record-group independent \
   --record-index "$SLURM_ARRAY_TASK_ID" \

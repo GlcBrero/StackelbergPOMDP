@@ -21,11 +21,11 @@ export OPENBLAS_NUM_THREADS=1
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/matplotlib-${SLURM_JOB_ID}"
 
 PROJECT_DIR="${SLURM_SUBMIT_DIR:?submit this job from the repository root}"
-SWEEP_ROOT="replication/matrix_ablations/results/qualitative-v1"
+SWEEP_ROOT="replication/matrix_ablations/results/appendix-v1"
 cd "$PROJECT_DIR"
 mkdir -p "$MPLCONFIGDIR" replication/matrix_ablations/slurm_logs
 
-python replication/matrix_ablations/trend.py --sweep-id qualitative-v1
+python replication/matrix_ablations/trend.py --sweep-id appendix-v1
 python replication/matrix_ablations/plot.py \
   --input "$SWEEP_ROOT" \
   --figure all \

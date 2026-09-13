@@ -4,14 +4,11 @@ from stackelberg_pomdp.games import (
     get_mspm_setting,
     get_normal_form_game,
 )
-from stackelberg_pomdp.envs.base import (
-    BaseEnvMatrixDesignGame,
-    BaseEnvSimpleMatrixGame,
-    BaseMessageSPM,
-    BaseSPM,
-    BaseSimpleAllocation,
-    BertrandCompetitionEnv,
-)
+from stackelberg_pomdp.envs.bertrand import BertrandCompetitionEnv
+from stackelberg_pomdp.envs.matrix_design import BaseEnvMatrixDesignGame
+from stackelberg_pomdp.envs.normal_form import BaseEnvSimpleMatrixGame
+from stackelberg_pomdp.envs.simple_allocation import BaseSimpleAllocation
+from stackelberg_pomdp.envs.spm import BaseMessageSPM, BaseSPM
 from stackelberg_pomdp.wrappers.core import (
     ExpectedResponseRewardWrapper,
     LoggingWrapper,
@@ -19,46 +16,14 @@ from stackelberg_pomdp.wrappers.core import (
     OpennessEvaluationWrapper,
     QLearningFollowersWrapper,
     ReactiveLeaderWrapper,
-    RoundRobinFollowersWrapper,
     StackPOMDPWrapper,
     StationaryCycleRewardWrapper,
 )
 
 
-def _mw_update_period(env):
-    period = 1
-    for follower in env.followers_list:
-        period *= env.followers_action_space[follower].n
-    return period
-
-
 def _requested_response_episodes(config_dict, default=50000):
-    return config_dict.get('tot_num_response_episodes', default)
-
-
-def _set_effective_response_episodes(config_dict, value):
-    config_dict['effective_tot_num_response_episodes'] = value
-
-
-def _align_mw_response_episodes(env, config_dict):
-    if not config_dict.get('align_mw_response_phase', True):
-        return _requested_response_episodes(config_dict)
-
-    requested = _requested_response_episodes(config_dict)
-    period = _mw_update_period(env)
-    aligned = requested - (requested % period)
-    if aligned <= 0:
-        raise ValueError(
-            f"tot_num_response_episodes={requested} is shorter than one MW update period ({period})."
-        )
-    if aligned != requested:
-        print(
-            f"[config] aligning MW response phase: tot_num_response_episodes {requested} -> {aligned} "
-            f"(update_period={period})",
-            flush=True,
-        )
-    _set_effective_response_episodes(config_dict, aligned)
-    return aligned
+    requested = config_dict.get('tot_num_response_episodes')
+    return default if requested is None else requested
 
 
 def get_bertrand_env(config_dict):
@@ -83,7 +48,6 @@ def get_bertrand_env(config_dict):
     return wrap_env(
         env,
         config_dict,
-        allow_round_robin=True,
         use_reactive_leader=config_dict.get('platform_observation_space', 'no_observation') == 'price_profile',
         use_cycle_reward=True,
         use_openness_evaluation=True,
@@ -192,7 +156,6 @@ def wrap_env(
         env,
         config_dict,
         *,
-        allow_round_robin=False,
         use_reactive_leader=False,
         use_cycle_reward=False,
         use_openness_evaluation=False,
@@ -200,13 +163,9 @@ def wrap_env(
 ):
     followers_alg = config_dict.get('followers_algorithm', 'Qlearning')
     tot_num_response_episodes = _requested_response_episodes(config_dict)
-    if followers_alg == 'RoundRobin':
-        if not allow_round_robin:
-            raise ValueError("RoundRobin followers are not supported for this experiment.")
-        _set_effective_response_episodes(config_dict, tot_num_response_episodes)
-        env = RoundRobinFollowersWrapper(env)
-    elif followers_alg == "MW":
-        tot_num_response_episodes = _align_mw_response_episodes(env, config_dict)
+    if followers_alg == "MW":
+        if config_dict.get('align_mw_response_phase') is False:
+            raise ValueError("MW always uses complete updates; remove align_mw_response_phase=false")
         fixed_seed = config_dict.get('mw_fixed_seed')
         if (
                 config_dict.get('response_bcce_threshold') is not None
@@ -227,8 +186,19 @@ def wrap_env(
                 10000,
             ),
         )
-    else:
-        _set_effective_response_episodes(config_dict, tot_num_response_episodes)
+        cycles = config_dict.get('mw_response_cycles')
+        if cycles is not None:
+            if int(cycles) != cycles or cycles < 1:
+                raise ValueError("mw_response_cycles must be a positive integer")
+            cycle_games = int(cycles) * env.response.response_games_per_update
+            requested = config_dict.get('tot_num_response_episodes')
+            if requested is not None and requested != cycle_games:
+                raise ValueError("mw_response_cycles conflicts with tot_num_response_episodes")
+            tot_num_response_episodes = cycle_games
+            config_dict['tot_num_response_episodes'] = cycle_games
+    elif followers_alg == "Qlearning":
+        if config_dict.get('mw_response_cycles') is not None:
+            raise ValueError("mw_response_cycles requires MW followers")
         env = QLearningFollowersWrapper(
             env,
             alpha=config_dict.get('follower_alpha', 0.15),
@@ -237,11 +207,14 @@ def wrap_env(
             q_tables_path=config_dict.get('q_tables_path'),
         )
 
+    else:
+        raise ValueError(f"Unsupported followers_algorithm: {followers_alg}")
+
     if use_reactive_leader:
         env = ReactiveLeaderWrapper(env)
 
     pomdp_mode = config_dict.get('pomdp_mode', 'stackelberg')
-    if pomdp_mode in ("stackelberg", "hidden_queries", "reward_during_response"):
+    if pomdp_mode in ("stackelberg", "hidden_queries"):
         env = StackPOMDPWrapper(
             env,
             tot_num_response_episodes=tot_num_response_episodes,
@@ -251,6 +224,8 @@ def wrap_env(
         )
     else:
         raise ValueError(f"Unsupported pomdp_mode: {pomdp_mode}")
+
+    config_dict['effective_tot_num_response_episodes'] = env.tot_num_response_episodes
 
     if config_dict.get('response_bcce_threshold') is not None and followers_alg != "MW":
         raise ValueError("Certified response stopping is supported only for MW followers.")

@@ -20,7 +20,11 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DEFAULT_CODE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 readonly CODE_ROOT="${STACKPOMDP_CODE_ROOT:-$DEFAULT_CODE_ROOT}"
-readonly VARIANT="${STACKPOMDP_E2_VARIANT:-canonical}"
+if [[ "${STACKPOMDP_E2_VARIANT:-canonical}" != canonical ]]; then
+  echo "Only the canonical paper cohort is supported" >&2
+  exit 64
+fi
+readonly VARIANT="canonical"
 readonly RUN_ROOT="${STACKPOMDP_RUN_ROOT:-$HOME/stackpomdp-atari-e2-$VARIANT}"
 readonly INPUT_ROOT="${STACKPOMDP_INPUT_ROOT:-$RUN_ROOT/inputs}"
 readonly OUTPUT_ROOT="${STACKPOMDP_OUTPUT_ROOT:-$RUN_ROOT/outputs}"
@@ -32,34 +36,16 @@ readonly TASK_ID="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}"
   exit 66
 }
 
-case "$VARIANT" in
-  canonical)
-    if (( TASK_ID < 0 || TASK_ID > 19 )); then
-      echo "canonical array index must lie in [0, 19], got $TASK_ID" >&2
-      exit 64
-    fi
-    readonly SEED=$((TASK_ID / 2 + 1))
-    if (( TASK_ID % 2 == 0 )); then
-      readonly ROLE=buyer
-    else
-      readonly ROLE=seller
-    fi
-    readonly FREEZE_GAMEPLAY=0
-    ;;
-  frozen-buyer)
-    if (( TASK_ID < 0 || TASK_ID > 9 )); then
-      echo "frozen-buyer array index must lie in [0, 9], got $TASK_ID" >&2
-      exit 64
-    fi
-    readonly SEED=$((TASK_ID + 1))
-    readonly ROLE=buyer
-    readonly FREEZE_GAMEPLAY=1
-    ;;
-  *)
-    echo "STACKPOMDP_E2_VARIANT must be canonical or frozen-buyer" >&2
-    exit 64
-    ;;
-esac
+if (( TASK_ID < 0 || TASK_ID > 19 )); then
+  echo "array index must lie in [0, 19], got $TASK_ID" >&2
+  exit 64
+fi
+readonly SEED=$((TASK_ID / 2 + 1))
+if (( TASK_ID % 2 == 0 )); then
+  readonly ROLE=buyer
+else
+  readonly ROLE=seller
+fi
 
 readonly BUYER_E1="${STACKPOMDP_BUYER_E1:-$INPUT_ROOT/meta_buyer_e1_selected.zip}"
 readonly SELLER_E1="${STACKPOMDP_SELLER_E1:-$INPUT_ROOT/meta_seller_e1_selected.zip}"
@@ -139,18 +125,12 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-declare -a FREEZE_ARGS=()
-if (( FREEZE_GAMEPLAY == 1 )); then
-  FREEZE_ARGS+=(--freeze-gameplay-actor)
-fi
-
 cd "$CODE_ROOT"
 set +e
 "$PYTHON_BIN" -u -m replication.atari.train_atari_stackpomdp_leader_sb3 \
   --leader-role "$ROLE" \
   --response-checkpoint "$RESPONSE" \
   --leader-e1-checkpoint "$LEADER_E1" \
-  "${FREEZE_ARGS[@]}" \
   --seed "$SEED" --timesteps 2000040 \
   --gameplay-horizon 200 --event-tail-steps 0 \
   --num-envs 4 --start-method spawn --n-steps 210 --batch-size 840 \
