@@ -46,10 +46,10 @@ def summary_rows(experiment, matrices, algorithms, conditions):
 def test_sample_sem_is_across_unique_seed_values_and_not_zero_for_one_seed():
     plot = load_plotter()
     base = {
-        "experiment": "q_reset",
-        "matrix": "battle_of_the_sexes",
+        "experiment": "phase_observability",
+        "matrix": "prisoners_dilemma",
         "algorithm": "A2C",
-        "condition": "reset",
+        "condition": "visible",
         "learning_rate": 0.008,
         "evaluation_target_step": 100,
     }
@@ -99,10 +99,6 @@ def test_all_plot_types_use_normal_weight_semantic_titles_and_figure_legends():
             "phase_observability", ["prisoners_dilemma"], ["A2C"],
             ["visible", "hidden"],
         )),
-        plot.plot_q_reset(summary_rows(
-            "q_reset", ["battle_of_the_sexes"], ["A2C"],
-            ["reset", "ongoing"],
-        )),
         plot.plot_response_reward(summary_rows(
             "response_reward",
             [
@@ -139,18 +135,18 @@ def test_render_keeps_vector_pdf_and_figure_grouped_paper_logs(tmp_path):
     runs = []
     history = []
     configs = []
-    for condition_index, condition in enumerate(("reset", "ongoing")):
-        seeds = (1,) if condition == "reset" else (1, 2)
+    for condition_index, condition in enumerate(("visible", "hidden")):
+        seeds = (1,) if condition == "visible" else (1, 2)
         for seed in seeds:
             run_id = "{}-seed{}".format(condition, seed)
             base = {
                 "run_id": run_id,
                 "run_dir": "/fixture/{}".format(run_id),
                 "status": "completed",
-                "profile_id": "paper_v1",
-                "experiment": "q_reset",
+                "profile_id": "paper_joint_v1",
+                "experiment": "phase_observability",
                 "condition": condition,
-                "matrix": "battle_of_the_sexes",
+                "matrix": "prisoners_dilemma",
                 "algorithm": "A2C",
                 "seed": seed,
                 "learning_rate": 0.008,
@@ -173,17 +169,17 @@ def test_render_keeps_vector_pdf_and_figure_grouped_paper_logs(tmp_path):
     output = tmp_path / "output"
     paper_logs = tmp_path / "paper_logs"
     plot.render_figure(
-        "fig_q_reset", output, paper_logs,
+        "fig_phase_observability", output, paper_logs,
         pd.DataFrame(runs), pd.DataFrame(history), pd.DataFrame(configs),
     )
 
-    pdf = output / "figures/fig_reset.pdf"
+    pdf = output / "figures/fig_memory_pg.pdf"
     assert pdf.read_bytes().startswith(b"%PDF")
     assert b"/Subtype /Image" not in pdf.read_bytes()
-    assert (output / "figures/fig_reset.png").is_file()
-    assert (output / "figures/fig_reset_summary.csv").is_file()
+    assert (output / "figures/fig_memory_pg.png").is_file()
+    assert (output / "figures/fig_memory_pg_summary.csv").is_file()
 
-    logs_dir = paper_logs / "fig_reset"
+    logs_dir = paper_logs / "fig_memory_pg"
     assert {path.name for path in logs_dir.iterdir()} == {
         "configs.csv", "history.csv", "manifest.json", "runs.csv",
     }
@@ -194,7 +190,7 @@ def test_render_keeps_vector_pdf_and_figure_grouped_paper_logs(tmp_path):
         "sample_std(ddof=1) / sqrt(n_independent_seeds)"
     )
     assert spec["within_run_evaluation_sem_pooled"] is False
-    summary_path = output / "figures/fig_reset_summary.csv"
+    summary_path = output / "figures/fig_memory_pg_summary.csv"
     summary = pd.read_csv(summary_path)
     assert set(summary["n_independent_seeds"]) == {1, 2}
     assert "NaN" in summary_path.read_text()

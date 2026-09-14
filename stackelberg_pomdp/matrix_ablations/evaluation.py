@@ -1,4 +1,4 @@
-"""Held-out reward-play evaluation, including carried follower-state snapshots."""
+"""Held-out reward-play evaluation with independently initialized responses."""
 
 from pathlib import Path
 import time
@@ -8,30 +8,15 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stackelberg_pomdp.matrix_ablations.artifacts import append_jsonl, mean_summary
 
 
-def evaluate_leader_policy(model, env_factory, episodes, warmup, seed_start,
-                           response_q_values=None):
-    """Evaluate reward play; a saved Q snapshot supports checkpoint-only replay."""
+def evaluate_leader_policy(model, env_factory, episodes, warmup, seed_start):
+    """Evaluate reward play using a fresh response and seed for each episode."""
     env = env_factory(seed_start)
     rows = []
-    snapshot = None if response_q_values is None else np.asarray(response_q_values).copy()
-    if snapshot is None and getattr(env.unwrapped, "warm_start_q", False):
-        training = getattr(model, "get_env", lambda: None)()
-        if training is not None:
-            values = training.get_attr("q_values")[0]
-            if values is not None:
-                snapshot = np.asarray(values).copy()
-    if snapshot is not None and warmup:
-        raise ValueError("carried-state snapshot evaluation requires zero warmup")
     try:
         if hasattr(model.policy, "fix_policy_actions"):
             model.policy.fix_policy_actions()
-        dependent_stream = bool(getattr(env.unwrapped, "warm_start_q", False)) and snapshot is None
         for sequence_index in range(int(warmup) + int(episodes)):
-            if snapshot is not None:
-                # Each held-out episode starts from the same learned state;
-                # evaluation must neither erase nor further train that state.
-                env.unwrapped.q_values = snapshot.copy()
-            if not dependent_stream and hasattr(env.unwrapped, "seed"):
+            if hasattr(env.unwrapped, "seed"):
                 env.unwrapped.seed(int(seed_start) + sequence_index)
             if hasattr(model.policy, "clear_obs_action_map"):
                 model.policy.clear_obs_action_map()
@@ -57,13 +42,7 @@ def evaluate_leader_policy(model, env_factory, episodes, warmup, seed_start,
             if sequence_index >= warmup:
                 rows.append({
                     "episode": int(sequence_index - warmup),
-                    "seed": (
-                        None if dependent_stream
-                        else int(seed_start) + sequence_index
-                    ),
-                    "rng_stream_seed": int(seed_start),
-                    "stream_sequence_index": int(sequence_index),
-                    "dependent_response_stream": dependent_stream,
+                    "seed": int(seed_start) + sequence_index,
                     "outer_return": total,
                     "reward_phase_return": reward_phase_total,
                     "reward_phase_steps": reward_phase_steps,
@@ -78,17 +57,13 @@ def evaluate_leader_policy(model, env_factory, episodes, warmup, seed_start,
         if hasattr(model.policy, "clear_obs_action_map"):
             model.policy.clear_obs_action_map()
     return {
-        "response_state_source": "training_snapshot" if snapshot is not None else "fresh_initialization",
-        "response_q_values": None if snapshot is None else snapshot.tolist(),
+        "response_state_source": "fresh_initialization",
         "per_stage_summary": mean_summary([
             row["leader_reward_per_stage"] for row in rows
         ]),
         "return_summary": mean_summary([
             row["reward_phase_return"] for row in rows
         ]),
-        "dependent_response_stream": bool(
-            rows and rows[0]["dependent_response_stream"]
-        ),
         "episode_rows": rows,
     }
 
@@ -147,7 +122,6 @@ class JsonlEvaluationCallback(BaseCallback):
             "evaluation_std": summary["std"],
             "evaluation_sem": summary["sem"],
             "evaluation_episodes": summary["n"],
-            "dependent_response_stream": result["dependent_response_stream"],
             "response_state_source": result["response_state_source"],
         }
         append_jsonl(self.output_path, row)

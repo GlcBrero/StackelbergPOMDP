@@ -1,14 +1,12 @@
-"""The three appendix recipes; figure names are stable public identifiers."""
+"""The two appendix recipes; figure names are stable public identifiers."""
 
 FIGURE_EXPERIMENTS = {
     "fig_memory_pg": "phase_observability",
-    "fig_reset": "q_reset",
     "fig_bots_leaderreward": "response_reward",
 }
 
 LEADER_DEFAULTS = {
     "phase_observability": {"algorithm": "PG", "learning_rate": 0.008, "timesteps": 200_000, "seeds": 10},
-    "q_reset": {"algorithm": "PG", "learning_rate": 0.008, "timesteps": 55_000, "seeds": 3},
     "response_reward": {"algorithm": "SIMPLEQ", "learning_rate": 0.1, "timesteps": 22_000, "seeds": 10},
 }
 
@@ -20,8 +18,6 @@ APPENDIX_CURVES = {
         for condition, rates in (("visible", (0.004, 0.008, 0.015, 0.03)),
                                  ("hidden", (0.008, 0.015))) for rate in rates
     ],
-    "q_reset": [(condition, "battle_of_the_sexes", rate)
-                for condition in ("reset", "ongoing") for rate in (0.008, 0.015, 0.03)],
     "response_reward": [(condition, matrix, 0.1)
                         for matrix in ("coordination_zero_miscoordination",
                                        "coordination_penalized_miscoordination")

@@ -439,12 +439,11 @@ def test_phase_conditions_have_identical_spaces_but_distinct_visible_keys():
     assert hidden_obs["base:is_reward_phase"] == 0
 
 
-def test_tabular_q_uses_terminal_target_and_reset_or_carry_semantics():
+def test_tabular_q_uses_terminal_target_and_fresh_response_initialization():
     spec = get_matrix_game("battle_of_the_sexes")
     reset_env = LegacyMatrixQLeaderEnv(
         spec,
         response_episodes=1,
-        reset_between_episodes=True,
         q_alpha=0.5,
         q_epsilon=0.0,
         q_init="zero",
@@ -458,28 +457,12 @@ def test_tabular_q_uses_terminal_target_and_reset_or_carry_semantics():
     reset_env.reset()
     np.testing.assert_allclose(reset_env.q_values, [0.0, 0.0])
 
-    ongoing_env = LegacyMatrixQLeaderEnv(
-        spec,
-        response_episodes=1,
-        reset_between_episodes=False,
-        q_alpha=0.5,
-        q_epsilon=0.0,
-        q_init="zero",
-        seed=7,
-    )
-    ongoing_env.reset()
-    ongoing_env.step(0)
-    ongoing_env.step(0)
-    ongoing_env.reset()
-    np.testing.assert_allclose(ongoing_env.q_values, [0.5, 0.0])
-
 
 def test_response_reward_changes_only_leader_training_reward():
     spec = get_matrix_game("coordination_penalized_miscoordination")
     common = dict(
         spec=spec,
         response_episodes=3,
-        reset_between_episodes=True,
         q_alpha=0.2,
         q_epsilon=0.1,
         exploration="parameter_noise",

@@ -1,4 +1,4 @@
-"""Behavioral checks for the three appendix training recipes."""
+"""Behavioral checks for the two appendix training recipes."""
 
 import json
 
@@ -10,7 +10,7 @@ from stackelberg_pomdp.envs.matrix import (
     LegacyMatrixQLeaderEnv, MatrixMetaLeaderEnv, get_matrix_game,
 )
 from stackelberg_pomdp.experiments.matrix_ablations import (
-    build_parser, train_leader, evaluate_leader_policy,
+    build_parser, train_leader,
 )
 from stackelberg_pomdp.matrix_ablations.reinforce import Reinforce
 
@@ -84,8 +84,6 @@ def test_pg_complete_episode_batch_contains_query_reward_to_go():
 
 
 @pytest.mark.parametrize("figure,condition,algorithm", [
-    ("fig_reset", "reset", "PG"),
-    ("fig_reset", "ongoing", "PG"),
     ("fig_bots_leaderreward", "included", "SIMPLEQ"),
     ("fig_bots_leaderreward", "excluded", "SIMPLEQ"),
 ])
@@ -141,34 +139,6 @@ def test_simpleq_noise_is_episode_fixed_and_never_changes_clean_weights(tmp_path
     model.get_env().close()
 
 
-def test_carried_follower_evaluation_copies_training_state_without_changing_it(tmp_path):
-    def factory(seed):
-        return LegacyMatrixQLeaderEnv(
-            get_matrix_game("battle_of_the_sexes"), reset_between_episodes=False,
-            response_episodes=1, q_alpha=0.1, q_epsilon=0, q_init="zero", seed=seed,
-        )
-    training_env = factory(1)
-    model = Reinforce(env=training_env, n_steps=2,
-                      policy_kwargs={"cache_actions": True}, seed=1)
-    training_env.reset()
-    training_env.q_values[:] = [10, 0]
-    with torch.no_grad():
-        model.policy.action_net.weight.copy_(torch.tensor([[-30.], [30.]]))
-    result = evaluate_leader_policy(model, factory, episodes=20, warmup=0, seed_start=2)
-    assert result["response_state_source"] == "training_snapshot"
-    assert result["per_stage_summary"]["mean"] == 0
-    assert result["dependent_response_stream"] is False
-    np.testing.assert_array_equal(training_env.q_values, [10, 0])
-    assert result["response_q_values"] == [10, 0]
-    model.save(tmp_path / "carried")
-    restored = Reinforce.load(tmp_path / "carried.zip")
-    repeated = evaluate_leader_policy(
-        restored, factory, episodes=20, warmup=0, seed_start=2,
-        response_q_values=result["response_q_values"],
-    )
-    assert repeated["episode_rows"] == result["episode_rows"]
-
-
 def test_phase_figure_command_trains_both_treatments_from_a_real_response(tmp_path):
     from stackelberg_pomdp.experiments.matrix_ablations import train_meta_follower
     follower = train_meta_follower(build_parser().parse_args([
@@ -197,7 +167,6 @@ def test_public_targets_cover_all_appendix_curves_and_learning_rates():
     targets = load_targets(DEFAULT_MANIFEST)
     expected = {
         "fig_memory_phase_ablation": 6,
-        "fig_continuous_follower_learning_ablation": 6,
         "fig_reward_during_learning_ablation": 4,
     }
     for name, count in expected.items():
@@ -217,17 +186,17 @@ def test_plot_keeps_learning_rates_separate():
     spec = importlib.util.spec_from_file_location("appendix_plot", path)
     plot = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(plot)
-    rows = [dict(experiment="q_reset", matrix="battle_of_the_sexes", algorithm="PG",
+    rows = [dict(experiment="phase_observability", matrix="prisoners_dilemma", algorithm="PG",
                  condition=condition, learning_rate=lr, seed=seed,
-                 profile_id="one_shot_battle_of_the_sexes_v1", status="completed",
+                 profile_id="paper_joint_v1", status="completed",
                  evaluation_target_step=step, leader_reward=float(seed))
-            for condition in ("reset", "ongoing") for lr in (0.008, 0.015)
+            for condition in ("visible", "hidden") for lr in (0.008, 0.015)
             for seed in (1, 2) for step in (0, 100)]
     history = pd.DataFrame(rows)
     runs = history.drop(columns=["evaluation_target_step", "leader_reward"]).drop_duplicates()
     plot.validate_runs(runs, {1, 2}, False)
-    plot.validate_required_figure_cells(runs, "fig_q_reset", 2, "test")
-    figure = plot.plot_q_reset(plot.summarize(history))
+    plot.validate_required_figure_cells(runs, "fig_phase_observability", 2, "test")
+    figure = plot.plot_phase(plot.summarize(history))
     assert len(figure.axes[0].lines) == 4
     assert all(len(line.get_xdata()) == 2 for line in figure.axes[0].lines)
     plt.close(figure)
@@ -241,12 +210,12 @@ def test_trend_pairs_seeds_within_the_same_learning_rate():
     spec = importlib.util.spec_from_file_location("appendix_trend", path)
     trend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(trend)
-    rows = [dict(stage="leader", status="completed", experiment="q_reset",
-                 matrix="battle_of_the_sexes", algorithm="PG", condition=condition,
+    rows = [dict(stage="leader", status="completed", experiment="phase_observability",
+                 matrix="prisoners_dilemma", algorithm="PG", condition=condition,
                  learning_rate=rate, seed=seed, per_stage_mean=value)
             for rate in (0.008, 0.015) for seed in (1, 2)
-            for condition, value in (("reset", 2), ("ongoing", 1))]
+            for condition, value in (("visible", 2), ("hidden", 1))]
     assert len(trend._cell_summaries(rows)) == 4
-    deltas = trend.condition_deltas(rows)["q_reset"]
+    deltas = trend.condition_deltas(rows)["phase_observability"]
     assert len(deltas) == 2
     assert all(row["mean"] == 1 and row["paired_seeds"] == [1, 2] for row in deltas)

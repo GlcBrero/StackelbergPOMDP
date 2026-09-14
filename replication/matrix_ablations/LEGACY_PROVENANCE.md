@@ -10,7 +10,6 @@ below are repository-relative paths inside that read-only checkout.
 | Paper output | Historical run definition | Historical plotted cohort | Maintained interpretation |
 |---|---|---|---|
 | `fig_memory_pg` | historical `smipd_tellleader_pg_pg`; phase-aware commit `8421178`, phase-unaware commit `b437644` | intended 10 seeds per LR/condition, with two missing phase-unaware LR `.03` runs | Phase bit visible versus unavailable; “memory” never meant action-history memory |
-| `fig_reset` | `bots_pg_tabularq`; reset group `test_2_longer` at `32dc86f`, ongoing group `test_4_noreset` at `6551100` | notebook filters to seeds 1--3 and LRs `.008`, `.015`, `.03` | Fresh versus carried response state, using a correct terminal Q target |
 | `fig_bots_leaderreward` | `bots_dqn_tabularq_out_of_eq`, group `test_11_rllib_bugfix`; zero-penalty prefix `a1699` near `8db223b`, penalty prefix `ead38` near `a538714` | 10 seeds per matrix/reward-inclusion cell | Reward-game performance with response-phase leader reward excluded versus included |
 
 The authoritative legacy locations are:
@@ -51,8 +50,8 @@ batches, and 500 pretraining updates.
 
 ## Maintained leader recipes
 
-Both commitment consistency and follower reset now have linear PG leader
-training. They reuse `matrix_ablations/reinforce.py`: Adam, undiscounted
+Commitment consistency uses linear PG leader training through
+`matrix_ablations/reinforce.py`: Adam, undiscounted
 reward-to-go, no baseline, no entropy bonus, and complete episodes collected
 to at least 100 transitions per update. The leader accepts categorical Dict
 observations and caches actions by the complete actor-visible observation.
@@ -68,20 +67,19 @@ standard deviation 1 and adapts by a factor of 1.01 against target KL zero;
 one noisy commitment is used for a complete outer episode. Clean network
 weights are used for learning and deterministic evaluation.
 
-The `bots_pg_tabularq` and `bots_dqn_tabularq_out_of_eq` configurations enable
-follower parameter noise; `make_matrix_tabularq_env` fixes its scale at 0.1.
-Both maintained presets now specify this, with Q learning rates 0.1 for reset
-and 0.2 for reward timing. The latter starts from a zero Q-table and uses the
-follower payoff 0.001 at the leader-preferred coordination outcome.
+The `bots_dqn_tabularq_out_of_eq` configuration enables follower parameter
+noise; `make_matrix_tabularq_env` fixes its scale at 0.1. The maintained
+reward-timing preset specifies this scale, a Q learning rate of 0.2,
+a zero initial Q-table, and follower payoff 0.001 at the leader-preferred
+coordination outcome.
 
 These are corrected training recipes, **not exact historical training
 replays**. In addition to the state/reward differences below, the maintained
 PG leader fixes sampled actions within an episode, while historical PG
 training sampled at repeated visits. SimpleQ's SB3 collector and replay RNG
-differ from RLlib's scheduling and RNG. Carried-state evaluation now copies
-the actual training Q-table into each held-out episode; it does not warm a
-new follower against only the current policy. Learning curves for both
-algorithms are evaluated after optimizer updates. Each run records these
+differ from RLlib's scheduling and RNG. Each held-out episode uses an
+independently initialized response. Learning curves for both algorithms are
+evaluated after optimizer updates. Each run records these
 choices in `leader_protocol` and `evaluation_response_state`.
 
 ## Deliberate paper-spec differences

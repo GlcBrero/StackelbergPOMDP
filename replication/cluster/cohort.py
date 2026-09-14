@@ -1,6 +1,6 @@
 """Plan and run the 210 mechanism-design reruns from the paper manifest.
 
-The three normal-form diagnostics use matrix_ablations/sweep.py. This runner
+The two normal-form diagnostics use matrix_ablations/sweep.py. This runner
 adds immutable launch records around the existing mechanism training commands;
 it does not change their training or evaluation protocols.
 """

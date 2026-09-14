@@ -27,7 +27,6 @@ Plotter paths below are relative to the journal repository's
 | `atari_e1_responses` | E0a → E0b → E1, response evaluation and selection; 2 roles × 11 contexts × 20 episodes | `atari/atari_e1_responses.csv` and its summary; `plot_atari_e1_responses.py` |
 | `atari_meta_stackpomdp` | E2 training and evaluation for 10 seeds per role; initialization reconstructed by the journal's `evaluate_atari_e2_initialization.py` | 100 trained-checkpoint policy means plus 20 initialization policy means and their summaries; `plot_atari_meta_stackpomdp.py` |
 | `fig_memory_pg` | `fig_memory_phase_ablation`: 6 PG leader curves, sharing 10 pretrained REINFORCE responses. [Training instructions](matrix_ablations/README.md). | Published: `diagnostics/fig_memory_pg/`; `plot_theory_diagnostics.py`; 10 runs per curve. New runs: `replication/matrix_ablations/plot.py`. |
-| `fig_reset` | `fig_continuous_follower_learning_ablation`: PG/tabular-Q, 3 learning rates × 2 treatments × 3 seeds. | Published: `diagnostics/fig_reset/`; `plot_theory_diagnostics.py`. New runs use the maintained plotter. |
 | `fig_bots_leaderreward` | `fig_reward_during_learning_ablation`: SimpleQ/tabular-Q, 2 reward treatments × 2 matrices × 10 seeds. | Published: `diagnostics/fig_bots_leaderreward/`; `plot_theory_diagnostics.py`. New runs use the maintained plotter. |
 | `MatrixDesign-Ablation_new` | Four variants of `fig_matrix_design_ablation`; 25 seeds each | `matrix_design/`; `plot_allocation_and_matrix.py` |
 
@@ -51,18 +50,18 @@ its conditioning probes remain part of the paper's actual Atari pipeline.
 
 ## Interpretation and release status
 
-The audit regenerated all 11 figures and the scaling table from retained
-inputs. The figure inventory matches the current LaTeX source. The code's
-runnable manifest now expands to 53 parser-validated commands. The appendix
-extension passes 292 tests and a tiny two-seed train/evaluate/plot integration
-check covering all 16 appendix curves. Both episode examples run, and
-canonical Atari traces are unchanged. Six published Atari
+The audit regenerated all ten data-driven figures and the scaling table from
+retained inputs. All ten figures match the committed PDFs pixel for pixel,
+and the inventory matches the current LaTeX source. The code
+passes 325 tests, including the remaining appendix training, evaluation,
+plotting, and provenance checks. Its manifest expands to 47 parser-validated
+commands and covers all ten appendix treatment curves. Six published Atari
 archives are bundled with checksums and their CC BY 4.0 attribution.
 
 This establishes coverage and checks implementation behavior. It does not
 establish that corrected training reproduces every historical conclusion.
 The seed forwarding, hidden-query episode-boundary, and critic phase-flag
-changes are documented in [README.md](README.md). The three historical
+changes are documented in [README.md](README.md). The two historical
 normal-form diagnostics now have maintained PG/SimpleQ training as well as
 archived plot reproduction. Their documented differences from historical
 training still require new evidence. See [RERUN_PLAN.md](RERUN_PLAN.md) for

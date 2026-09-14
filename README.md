@@ -185,7 +185,7 @@ configuration tests still resolve a ROM file. Set
 see the Atari README for setup details.
 
 The [normal-form appendix guide](replication/matrix_ablations/README.md) covers
-all three PG/SimpleQ diagnostics; the [rerun plan](replication/RERUN_PLAN.md)
+both PG/SimpleQ diagnostics; the [rerun plan](replication/RERUN_PLAN.md)
 lists the remaining scientific validation.
 
 ## Citation and license

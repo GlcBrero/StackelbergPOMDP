@@ -5,7 +5,7 @@ StackeRLberg matrix experiments while retaining Stable-Baselines3's rollout,
 callback, and checkpoint interfaces.  The reference implementation is:
 
 * ``stackerlberg/train/experiments/configurations.py``
-  (``smipd_leadermemory_pg_pg`` and ``bots_pg_tabularq``),
+  (``smipd_leadermemory_pg_pg``),
 * RLlib's ``PGTorchPolicy`` and ``post_process_advantages``, and
 * ``stackerlberg/models/linear_torch_model.py``.
 

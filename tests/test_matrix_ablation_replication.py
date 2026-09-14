@@ -20,7 +20,7 @@ def load_script(name):
     return module
 
 
-def test_plan_covers_six_phase_six_reset_and_four_reward_curves_per_seed(tmp_path):
+def test_plan_covers_six_phase_and_four_reward_curves_per_seed(tmp_path):
     sweep = load_script("sweep")
     args = argparse.Namespace(
         results_root=str(tmp_path),
@@ -34,8 +34,8 @@ def test_plan_covers_six_phase_six_reset_and_four_reward_curves_per_seed(tmp_pat
     with (tmp_path / "test/plan.json").open() as handle:
         payload = json.load(handle)
     assert payload["e1_runs"] == 2
-    assert payload["leader_runs"] == 32
-    assert len(payload["records"]) == 34
+    assert payload["leader_runs"] == 20
+    assert len(payload["records"]) == 22
     meta = [row for row in payload["records"] if row["stage"] == "meta-follower"]
     assert {row["seed"] for row in meta} == {1, 2}
     response_runs = [
@@ -56,7 +56,7 @@ def test_plan_covers_six_phase_six_reset_and_four_reward_curves_per_seed(tmp_pat
     )
     independent = sweep.select_records(payload, "leader", "independent")
     meta_dependent = sweep.select_records(payload, "leader", "meta-dependent")
-    assert len(independent) == 20
+    assert len(independent) == 8
     assert len(meta_dependent) == 12
 
     leaders = [row for row in payload["records"] if row["stage"] == "leader"]
@@ -216,13 +216,13 @@ def test_matrix_parsers_accept_dqn_response_protocol():
 
 def test_plot_collects_only_evaluation_rows_and_verifies_hashes(tmp_path):
     plot = load_script("plot")
-    run_dir = tmp_path / "runs/q_reset/example"
+    run_dir = tmp_path / "runs/phase_observability/example"
     run_dir.mkdir(parents=True)
     config = {
         "stage": "leader",
-        "experiment": "q_reset",
-        "condition": "reset",
-        "matrix": "battle_of_the_sexes",
+        "experiment": "phase_observability",
+        "condition": "visible",
+        "matrix": "prisoners_dilemma",
         "algorithm": "A2C",
         "seed": 1,
         "learning_rate": 0.008,
@@ -302,20 +302,20 @@ def test_plot_summary_uses_sample_sem_across_seed_level_means():
     plot = load_script("plot")
     history = pd.DataFrame([
         {
-            "experiment": "q_reset",
-            "matrix": "battle_of_the_sexes",
+            "experiment": "phase_observability",
+            "matrix": "prisoners_dilemma",
             "algorithm": "A2C",
-            "condition": "reset",
+            "condition": "visible",
             "learning_rate": 0.008,
             "evaluation_target_step": 100,
             "seed": 1,
             "leader_reward": 1.0,
         },
         {
-            "experiment": "q_reset",
-            "matrix": "battle_of_the_sexes",
+            "experiment": "phase_observability",
+            "matrix": "prisoners_dilemma",
             "algorithm": "A2C",
-            "condition": "reset",
+            "condition": "visible",
             "learning_rate": 0.008,
             "evaluation_target_step": 100,
             "seed": 2,

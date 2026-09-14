@@ -120,13 +120,13 @@ def test_summary_collapses_attempts_and_uses_paired_sample_sem(tmp_path):
     phase_hidden = leader_record(
         "phase_observability", "prisoners_dilemma", "A2C", "hidden", 1
     )
-    reset = leader_record(
-        "q_reset", "battle_of_the_sexes", "A2C", "reset", 1
+    reward_excluded = leader_record(
+        "response_reward", "coordination_zero_miscoordination", "A2C", "excluded", 1
     )
-    ongoing = leader_record(
-        "q_reset", "battle_of_the_sexes", "A2C", "ongoing", 1
+    reward_included = leader_record(
+        "response_reward", "coordination_zero_miscoordination", "A2C", "included", 1
     )
-    records.extend((phase_visible, phase_hidden, reset, ongoing))
+    records.extend((phase_visible, phase_hidden, reward_excluded, reward_included))
     plan_path = write_plan(tmp_path / "test-sweep", records)
 
     write_attempt(trend, plan_path, hidden["visible", 1], 0, "failed")
@@ -135,7 +135,7 @@ def test_summary_collapses_attempts_and_uses_paired_sample_sem(tmp_path):
     write_attempt(trend, plan_path, hidden["hidden", 1], 0, "completed", 0.0)
     write_attempt(trend, plan_path, hidden["hidden", 2], 0, "completed", 0.0)
     write_attempt(trend, plan_path, phase_visible, 0, "running")
-    write_attempt(trend, plan_path, reset, 0, "failed")
+    write_attempt(trend, plan_path, reward_excluded, 0, "failed")
 
     summary = trend.build_summary(plan_path)
     counts = summary["status_counts_by_stage"]["leader"]
@@ -186,15 +186,12 @@ def test_condition_deltas_cover_all_paper_comparisons():
 
     add("phase_observability", "prisoners_dilemma", "A2C", "visible", 1, 0.0)
     add("phase_observability", "prisoners_dilemma", "A2C", "hidden", 1, -1.0)
-    add("q_reset", "battle_of_the_sexes", "A2C", "reset", 1, 2.0)
-    add("q_reset", "battle_of_the_sexes", "A2C", "ongoing", 1, 1.5)
     for matrix in ("coordination_zero", "coordination_penalized"):
         add("response_reward", matrix, "A2C", "excluded", 1, 2.0)
         add("response_reward", matrix, "A2C", "included", 1, 1.0)
 
     result = trend.condition_deltas(rows)
     assert result["phase_observability"][0]["definition"] == "visible - hidden"
-    assert result["q_reset"][0]["definition"] == "reset - ongoing"
     response = result["response_reward"]
     assert len(response) == 2
     assert len({row["id"] for row in response}) == 2
@@ -204,7 +201,7 @@ def test_condition_deltas_cover_all_paper_comparisons():
 def test_rejects_evaluation_hash_corruption(tmp_path):
     trend = load_trend()
     record = leader_record(
-        "q_reset", "battle_of_the_sexes", "A2C", "reset", 1
+        "phase_observability", "prisoners_dilemma", "A2C", "visible", 1
     )
     plan_path = write_plan(tmp_path / "test-sweep", [record])
     run_dir = write_attempt(
@@ -220,7 +217,7 @@ def test_rejects_evaluation_hash_corruption(tmp_path):
 def test_rejects_nonfinite_completed_evaluation(tmp_path):
     trend = load_trend()
     record = leader_record(
-        "q_reset", "battle_of_the_sexes", "A2C", "reset", 1
+        "phase_observability", "prisoners_dilemma", "A2C", "visible", 1
     )
     plan_path = write_plan(tmp_path / "test-sweep", [record])
     write_attempt(

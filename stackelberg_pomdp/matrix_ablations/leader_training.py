@@ -1,4 +1,4 @@
-"""Configure and train one of the three appendix diagnostic treatments."""
+"""Configure and train one of the two appendix diagnostics."""
 
 from pathlib import Path
 import time
@@ -44,20 +44,16 @@ from stackelberg_pomdp.matrix_ablations.evaluation import (
 
 EXPERIMENT_CONDITIONS = {
     "phase_observability": ("visible", "hidden"),
-    "q_reset": ("reset", "ongoing"),
     "response_reward": ("excluded", "included"),
 }
 DEFAULT_MATRICES = {
     "phase_observability": "prisoners_dilemma",
-    "q_reset": "battle_of_the_sexes",
     "response_reward": "coordination_zero_miscoordination",
 }
 
 
 def _resolved_q_protocol(args):
-    if args.experiment == "q_reset":
-        defaults = (0.1, 0.1, "parameter_noise", "small_normal")
-    elif args.experiment == "response_reward":
+    if args.experiment == "response_reward":
         defaults = (0.2, 0.1, "parameter_noise", "zero")
     else:
         return None
@@ -123,8 +119,6 @@ def validate_leader_args(args):
         "coordination_penalized_miscoordination",
     ):
         raise ValueError("response_reward requires a coordination diagnostic matrix")
-    if args.experiment == "q_reset" and args.matrix != "battle_of_the_sexes":
-        raise ValueError("q_reset requires battle_of_the_sexes")
     if (
         args.experiment == "phase_observability"
         and args.matrix != "prisoners_dilemma"
@@ -132,8 +126,6 @@ def validate_leader_args(args):
         raise ValueError("phase_observability requires prisoners_dilemma")
     if args.eval_warmup is None:
         args.eval_warmup = 0
-    if args.experiment == "q_reset" and args.condition == "ongoing" and args.eval_warmup:
-        raise ValueError("carried-state snapshot evaluation requires --eval-warmup 0")
     args.q_protocol = _resolved_q_protocol(args)
 
 
@@ -181,10 +173,7 @@ def leader_config(args, spec):
         "eval_freq": args.eval_freq,
         "eval_episodes": args.eval_episodes,
         "eval_warmup": args.eval_warmup,
-        "evaluation_response_state": (
-            "training_snapshot" if args.experiment == "q_reset" and args.condition == "ongoing"
-            else "fresh_initialization"
-        ),
+        "evaluation_response_state": "fresh_initialization",
         "eval_seed_start": args.eval_seed_start,
         "final_eval_episodes": args.final_eval_episodes,
         "final_eval_seed_start": args.final_eval_seed_start,
@@ -248,9 +237,6 @@ def leader_env_factory(args, spec, evaluation=False):
         return make_tabular_q_leader_env(
             spec,
             response_episodes=args.response_episodes,
-            warm_start_q=(
-                args.experiment == "q_reset" and args.condition == "ongoing"
-            ),
             include_response_reward=(
                 args.experiment == "response_reward"
                 and args.condition == "included"
@@ -323,7 +309,6 @@ def train_sb3_leader(args, spec, run_dir, config, wandb_run=None):
         "evaluation_std": initial_summary["std"],
         "evaluation_sem": initial_summary["sem"],
         "evaluation_episodes": initial_summary["n"],
-        "dependent_response_stream": initial["dependent_response_stream"],
     })
     evaluation_callback = JsonlEvaluationCallback(
             evaluation_factory,

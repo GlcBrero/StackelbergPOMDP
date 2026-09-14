@@ -109,7 +109,7 @@ Runnable paper targets call experiment-specific modules under
 `stackelberg_pomdp.experiments`, so each experiment exposes only the arguments
 that matter for that experiment.
 
-Owned targets run from this repository. The three normal-form appendix
+Owned targets run from this repository. The two normal-form appendix
 diagnostics now include PG/SimpleQ training and all plotted treatment curves;
 see [matrix_ablations/README.md](matrix_ablations/README.md). Their historical
 curves remain archived data, and new training is not an exact historical

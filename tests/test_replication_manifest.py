@@ -19,7 +19,7 @@ class ReplicationManifestTests(unittest.TestCase):
 
     def test_every_runnable_manifest_expansion_parser_validates(self):
         labels = run.validate_targets(self.targets, seed=7)
-        self.assertEqual(len(labels), 53)
+        self.assertEqual(len(labels), 47)
         self.assertIn("fig_matrix_design_ablation:basic_ppo", labels)
         self.assertIn("fig_collusion_fixed_policy_training:dpdp", labels)
         self.assertIn(

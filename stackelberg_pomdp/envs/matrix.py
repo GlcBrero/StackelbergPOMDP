@@ -713,8 +713,8 @@ class LegacyMatrixQLeaderEnv(gym.Env):
     """One-shot StackPOMDP using the legacy tabular follower semantics.
 
     Every outer episode contains ``response_episodes`` terminal Q updates and
-    one noiseless argmax reward game.  The Q table can reset at outer reset or
-    carry across resets.  Parameter noise is resampled once per one-shot Q
+    one noiseless argmax reward game. The Q table is initialized afresh at
+    every outer reset. Parameter noise is resampled once per one-shot Q
     episode, exactly as in the legacy wrapper.
     """
 
@@ -724,7 +724,6 @@ class LegacyMatrixQLeaderEnv(gym.Env):
             self,
             spec,
             response_episodes=10,
-            reset_between_episodes=True,
             include_response_reward=False,
             q_alpha=0.1,
             q_epsilon=1.0,
@@ -748,7 +747,6 @@ class LegacyMatrixQLeaderEnv(gym.Env):
             raise ValueError("q_init must be 'small_normal' or 'zero'")
         self.game_spec = spec
         self.response_episodes = int(response_episodes)
-        self.reset_between_episodes = bool(reset_between_episodes)
         self.include_response_reward = bool(include_response_reward)
         self.q_alpha = float(q_alpha)
         self.q_epsilon = float(q_epsilon)
@@ -764,10 +762,6 @@ class LegacyMatrixQLeaderEnv(gym.Env):
         self.response_index = 0
         self.phase = "response"
         self.outer_episodes = 0
-
-    @property
-    def warm_start_q(self):
-        return not self.reset_between_episodes
 
     def seed(self, seed=None):
         self.rng = np.random.default_rng(seed)
@@ -791,8 +785,7 @@ class LegacyMatrixQLeaderEnv(gym.Env):
         return self.max_episode_transitions()
 
     def reset(self):
-        if self.q_values is None or self.reset_between_episodes:
-            self.q_values = self._initial_q_values()
+        self.q_values = self._initial_q_values()
         self.outer_episodes += 1
         self.response_index = 0
         self.phase = "response"
@@ -895,7 +888,6 @@ def make_meta_leader_env(
 def make_tabular_q_leader_env(
         spec,
         response_episodes=10,
-        warm_start_q=False,
         include_response_reward=False,
         q_alpha=0.1,
         q_epsilon=1.0,
@@ -907,7 +899,6 @@ def make_tabular_q_leader_env(
     return LegacyMatrixQLeaderEnv(
         spec=spec,
         response_episodes=response_episodes,
-        reset_between_episodes=not warm_start_q,
         include_response_reward=include_response_reward,
         q_alpha=q_alpha,
         q_epsilon=q_epsilon,

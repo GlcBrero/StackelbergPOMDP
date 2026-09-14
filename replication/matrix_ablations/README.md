@@ -1,6 +1,6 @@
 # Normal-form appendix experiments
 
-All three appendix diagnostics have maintained training and plotting support.
+Both appendix diagnostics have maintained training and plotting support.
 
 Their PG/SimpleQ recipes are explicit algorithm-specific exceptions in
 [PARAMETERS.md](../PARAMETERS.md). Optional PPO/A2C/DQN alternatives use SB3
@@ -10,12 +10,11 @@ cohorts.
 | Figure | Comparison | Leader / follower | Full cohort |
 |---|---|---|---|
 | `fig_memory_pg` | Phase indicator visible versus unavailable in iterated Prisoner's Dilemma | Linear PG / pretrained REINFORCE | 60 leaders + 10 shared follower models |
-| `fig_reset` | Fresh versus carried Q-table in Battle of the Sexes | Linear PG / tabular Q | 18 leaders: 3 learning rates × 2 conditions × 3 seeds |
 | `fig_bots_leaderreward` | Include versus exclude adaptation rewards, with coordination penalty 0 or −5 | Linear SimpleQ / tabular Q | 40 leaders: 4 conditions × 10 seeds |
 
 The phase figure uses visible-phase learning rates 0.004, 0.008, 0.015, and
-0.03, with complete historical controls at 0.008 and 0.015. Reset uses 0.008,
-0.015, and 0.03; SimpleQ uses 0.1. The full plan contains **128 runs**.
+0.03, with complete historical controls at 0.008 and 0.015. SimpleQ uses 0.1.
+The full plan contains **110 runs**.
 
 The maintained implementations use the current paper's five-state repeated
 game, correct terminal Q updates, and fixed actions within each outer episode.
@@ -51,35 +50,29 @@ contract or response above the regret threshold is rejected.
 `--allow-uncertified-response` is available for tiny integration checks; the
 full replication plan does not bypass the response-quality gate.
 
-The other two diagnostics need no pretrained checkpoint:
+The reward-timing diagnostic needs no pretrained checkpoint:
 
 ```bash
-python -m stackelberg_pomdp.experiments.matrix_ablations leader \
-  --figure fig_reset --condition reset --seed 1
 python -m stackelberg_pomdp.experiments.matrix_ablations leader \
   --figure fig_bots_leaderreward --condition included --seed 1
 ```
 
-The paired conditions are `ongoing` and `excluded`. Add
+The paired condition is `excluded`. Add
 `--matrix coordination_penalized_miscoordination` for the −5 penalty panel.
-Default leader budgets are 200,000 transitions for commitment consistency,
-55,000 for reset, and 22,000 for reward timing. Complete-episode collection can
+Default leader budgets are 200,000 transitions for commitment consistency
+and 22,000 for reward timing. Complete-episode collection can
 exceed a requested limit; logs record actual steps and optimizer updates.
 Runs save resolved settings, source hashes, `model.zip`, held-out evaluation,
 and `progress.jsonl`. Existing artifacts cannot be overwritten.
 
 PG shares the follower's REINFORCE loss, without a baseline or entropy bonus.
 SimpleQ uses uniform replay, a target network, Huber loss, and Gaussian parameter
-noise fixed for an outer episode. Both tabular followers use parameter noise.
+noise fixed for an outer episode. The tabular follower uses parameter noise.
 A2C/PPO remain explicit `--algorithm` alternatives, labeled separately in plots.
 
-Evaluation always reports reward **after** adaptation. Each carried-state
-measurement copies the training follower's current Q-table, preserving its
-history without modifying the training table. PG/SimpleQ curves are measured
-after completed optimizer updates.
-The final `evaluation.json` retains `response_q_values`; pass that value to
-`evaluate_leader_policy(..., response_q_values=...)` when reevaluating a carried-Q
-leader loaded without its training environment.
+Evaluation always reports reward **after** adaptation, with a fresh response
+initialization and independent seed for each held-out episode. PG/SimpleQ
+curves are measured after completed optimizer updates.
 
 ## Plan and plot the cohort
 
@@ -88,14 +81,14 @@ python replication/matrix_ablations/sweep.py plan --sweep-id appendix-v1
 python replication/matrix_ablations/sweep.py status --sweep-id appendix-v1
 ```
 
-Planning executes no training. Use `plan --figure fig_reset` for one figure;
+Planning executes no training. Use `plan --figure fig_bots_leaderreward` for one figure;
 `--seeds` overrides the paper counts for a smaller check. The cluster scripts
-use the full plan: 10 follower tasks, 58 independent leaders, and 60 phase
+use the full plan: 10 follower tasks, 40 independent leaders, and 60 phase
 leaders. Run the E1 gate before dependent leaders. Each array task executes one
 plan record; retries receive separate immutable directories.
 
 The public `replication/run.py` targets also expand the named curves:
-`fig_memory_phase_ablation`, `fig_continuous_follower_learning_ablation`, and
+`fig_memory_phase_ablation` and
 `fig_reward_during_learning_ablation`. Use `--dry-run` to inspect commands;
 the first requires `--response-checkpoint` as above.
 

@@ -36,7 +36,7 @@ leader interacts with the follower response algorithm.
 ## Normal-form appendix diagnostics
 
 The [diagnostic CLI](stackelberg_pomdp/experiments/matrix_ablations.py) accepts
-the paper's three figure names. Its implementation lives under
+the paper's two figure names. Its implementation lives under
 `stackelberg_pomdp/matrix_ablations/`: `presets.py` defines treatment curves,
 `meta_training.py` trains the contextual follower, `leader_training.py` runs
 the leader treatment, `evaluation.py` measures reward play, and `artifacts.py`

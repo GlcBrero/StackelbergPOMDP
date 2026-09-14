@@ -17,25 +17,20 @@ import pandas as pd
 
 FIGURES = (
     "fig_phase_observability",
-    "fig_q_reset",
     "fig_response_reward",
 )
 EXPERIMENT_FOR_FIGURE = {
     "fig_phase_observability": "phase_observability",
-    "fig_q_reset": "q_reset",
     "fig_response_reward": "response_reward",
 }
 PAPER_BASENAME = {
     "fig_phase_observability": "fig_memory_pg",
-    "fig_q_reset": "fig_reset",
     "fig_response_reward": "fig_bots_leaderreward",
 }
 COLORS = {
     "observed": "#4C72B0",
     "hidden": "#DD8452",
     "visible": "#4C72B0",
-    "reset": "#4C72B0",
-    "ongoing": "#DD8452",
     "excluded": "#4C72B0",
     "included": "#DD8452",
 }
@@ -44,8 +39,6 @@ LINESTYLES = {
     "hidden": "--",
     "visible": "-",
     "phase_hidden": "--",
-    "reset": "-",
-    "ongoing": "--",
     "excluded": "-",
     "included": "--",
 }
@@ -61,8 +54,6 @@ LABELS = {
     "hidden": "Hidden queries",
     "visible": "Phase indicator available",
     "phase_hidden": "Phase indicator unavailable",
-    "reset": "Q-table reset",
-    "ongoing": "Q-table carried",
     "excluded": "Response reward excluded",
     "included": "Response reward included",
 }
@@ -71,10 +62,6 @@ PAPER_REQUIRED_CELLS = {
     "fig_phase_observability": {
         ("phase_observability", "prisoners_dilemma", "PG", condition)
         for condition in ("visible", "hidden")
-    },
-    "fig_q_reset": {
-        ("q_reset", "battle_of_the_sexes", "PG", condition)
-        for condition in ("reset", "ongoing")
     },
     "fig_response_reward": {
         ("response_reward", matrix, "SIMPLEQ", condition)
@@ -607,15 +594,6 @@ def plot_phase(summary):
     return figure
 
 
-def plot_q_reset(summary):
-    figure, ax = plt.subplots(figsize=(7.4, 3.6))
-    draw_curve(ax, summary, "reset")
-    draw_curve(ax, summary, "ongoing")
-    finish_axis(ax)
-    add_uniform_legend(figure, ax, right=0.70)
-    return figure
-
-
 def plot_response_reward(summary):
     panels = (
         ("coordination_zero_miscoordination", "No coordination penalty"),
@@ -635,7 +613,6 @@ def plot_response_reward(summary):
 
 PLOTTERS = {
     "fig_phase_observability": plot_phase,
-    "fig_q_reset": plot_q_reset,
     "fig_response_reward": plot_response_reward,
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, explicitly execute, or inspect the three appendix diagnostics."""
+"""Plan, explicitly execute, or inspect the two appendix diagnostics."""
 
 import argparse
 import hashlib
@@ -152,15 +152,7 @@ def make_plan(args):
             "learning_rate": learning_rate,
             "eval_freq": args.eval_freq,
         }
-        if experiment == "q_reset":
-            match["q_protocol"] = {
-                "alpha": 0.1,
-                "epsilon": 0.1,
-                "exploration": "parameter_noise",
-                "initialization": "small_normal",
-                "initialization_std": 0.01,
-            }
-        elif experiment == "response_reward":
+        if experiment == "response_reward":
             match["q_protocol"] = {
                 "alpha": 0.2,
                 "epsilon": 0.1,

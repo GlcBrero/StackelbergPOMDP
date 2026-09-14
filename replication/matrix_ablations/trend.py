@@ -19,7 +19,6 @@ DEFAULT_ROOT = Path("replication/matrix_ablations/results")
 STATUSES = ("completed", "failed", "running", "missing")
 DELTA_ORDER = (
     "phase_observability",
-    "q_reset",
     "response_reward",
 )
 
@@ -378,17 +377,6 @@ def condition_deltas(rows):
             algorithm,
             "visible",
             "hidden",
-            learning_rate=learning_rate,
-        ))
-    for matrix, algorithm, learning_rate in _planned_axes(rows, "q_reset"):
-        result["q_reset"].append(_comparison(
-            rows,
-            "q_reset_{}_reset_minus_ongoing".format(algorithm.lower()),
-            "q_reset",
-            matrix,
-            algorithm,
-            "reset",
-            "ongoing",
             learning_rate=learning_rate,
         ))
     for matrix, algorithm, learning_rate in _planned_axes(rows, "response_reward"):

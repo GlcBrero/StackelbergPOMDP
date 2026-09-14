@@ -4,10 +4,9 @@ Paper targets owned by this codebase:
 
 - `fig_matrix_design_ablation`
 - `fig_memory_phase_ablation`
-- `fig_continuous_follower_learning_ablation`
 - `fig_reward_during_learning_ablation`
 
-Matrix Design expands to the four final-paper curves. The other three entries
+Matrix Design expands to the four final-paper curves. The other two entries
 now provide PG/SimpleQ training through the maintained appendix workflow.
 Their historical plotted cohorts remain in the journal reproducibility bundle;
 new runs must be assessed before replacing those data. See

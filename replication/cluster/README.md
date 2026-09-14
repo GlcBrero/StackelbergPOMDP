@@ -31,7 +31,7 @@ sbatch --job-name=jair-sa --array=0-149%25 \
 | `matrix_design` | 0–49 | Basic MAPPO and Basic PPO, 25 seeds each |
 | `spm` | 0–9 | Standard-SPM baseline |
 | `meta-follower` | 0–9 | Ten appendix response models |
-| `independent` | 0–57 | Reset and reward-timing appendix leaders |
+| `independent` | 0–39 | Reward-timing appendix leaders |
 | `gate` | Single job | Certify all ten response models |
 | `meta-dependent` | 0–59 | Phase-awareness appendix leaders |
 | `plot` | Single job | Check complete appendix cohorts and generate figures |
