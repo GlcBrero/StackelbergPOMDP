@@ -1,0 +1,2 @@
+# Preserve the bytes checked by SHA256SUMS, including CSV line endings.
+* -text

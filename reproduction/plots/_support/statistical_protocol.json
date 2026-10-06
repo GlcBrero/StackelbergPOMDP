@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "analysis_date": "2026-10-05",
+  "status": "Retrospective analysis of the reported cohorts; comparisons and methods fixed before computing the new tests, after the descriptive results were known.",
+  "alternative": "two-sided",
+  "alpha": 0.05,
+  "multiplicity": "Holm correction separately within the four listed families; every listed comparison is reported.",
+  "zero_tolerance": 1e-10,
+  "bootstrap": {
+    "draws": 1000000,
+    "seed": 20261005,
+    "batch_size": 2000,
+    "method": "Independently resample complete training-seed rows and seller-seed columns, retaining both costs together. Resample each shared seller-seed column jointly across PPO and the fixed/clipped comparator; independently resample the selected random policy's separate seller-seed cohort.",
+    "p_value": "(1 + count(abs(bootstrap_difference - observed_difference) >= abs(observed_difference))) / (draws + 1)",
+    "standard_error": "Sample standard deviation of the bootstrap differences.",
+    "confidence_interval": "Unadjusted 95 percent basic bootstrap interval, supplied in the machine-readable output."
+  },
+  "families": {
+    "MSPM": {
+      "comparisons": ["mspm_2", "mspm_3", "mspm_4", "mspm_5", "mspm_6"],
+      "contrast": "Best exactly evaluated welfare within the reported budget minus exact optimal SPM welfare, separately for types 2 through 6.",
+      "unit": "25 independent training runs per type, seeds 96 through 120; best-checkpoint selection remains part of the reported estimand.",
+      "test": "Exact sign test of equally probable positive and negative seed-level gaps, conditional on a nonzero gap; numerical ties within zero_tolerance are omitted only from the sign count, not from effect estimates.",
+      "endpoint": "Maximum over 51 scheduled evaluations and the separate final greedy evaluation, exactly matching the manuscript welfare table."
+    },
+    "Platform": {
+      "comparisons": ["platform_fixed", "platform_clipped", "platform_selected_random"],
+      "contrast": "Mean final PPO consumer surplus minus each validation-selected fixed comparator or the frozen random-search winner, averaging the two costs equally.",
+      "unit": "25 independent PPO training seeds crossed with 25 shared confirmation seller seeds; the selected random policy uses 25 different confirmation seller seeds.",
+      "test": "Centered crossed bootstrap of the mean difference, using the bootstrap settings above.",
+      "scope": "Conditional on the frozen comparator policies. The single random-search run does not estimate variability across random-search training runs."
+    },
+    "Atari": {
+      "comparisons": ["atari_price", "atari_seller_payoff", "atari_buyer_payoff"],
+      "contrast": "Seller-led minus buyer-led terminal accepted price, seller payoff, and buyer payoff.",
+      "unit": "25 independent training-seed policy means per role, conditional on the shared upstream checkpoints and fixed 20-episode evaluation cohort.",
+      "test": "Welch unequal-variance two-sample t-test, retaining the existing analysis.",
+      "endpoint": "Final scheduled evaluation, with no testing at intermediate training checkpoints."
+    },
+    "Ablations": {
+      "comparisons": ["response_credit", "commitment_008", "commitment_015", "reward_timing_zero", "reward_timing_penalized"],
+      "contrast": "Full minus gameplay-only response credit; phase-visible minus phase-hidden at each of the two shared learning rates; response-reward exclusion minus inclusion for each coordination game.",
+      "unit": "25 matched training seeds for each comparison, averaging evaluation episodes within each trained policy.",
+      "test": "Exact paired sign test of equally probable positive and negative within-seed differences, conditional on a nonzero difference. This handles discrete and constant differences without a zero-variance t-test.",
+      "endpoint": "Final update for response credit; final fresh 100-episode policy evaluations for both matrix ablations."
+    }
+  }
+}

@@ -1,0 +1,12 @@
+/results/
+/pretrained/atari/checkpoints/*.zip.part
+**/roms/*.bin
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+/build/
+/dist/
+/reproduction/build/

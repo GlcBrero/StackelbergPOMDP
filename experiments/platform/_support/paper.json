@@ -1,0 +1,150 @@
+{
+  "actor_reward": "mean_training_costs",
+  "alpha": 0.15,
+  "baseline_selection": "Evaluate all 15 fixed caps and 120 clipped-minimum rules on five separate validation seller seeds per cost, then freeze one winner of each family per grid.",
+  "beta": 4e-06,
+  "cem": {
+    "elite_fraction": 0.2,
+    "population": 10,
+    "smoothing": 0.5,
+    "uniform_mix": 0.05
+  },
+  "comparison": "Matched leader, training-seller, validation-seller, and confirmation-seller seeds; only the 15-price vector changes across arms. Compare mean CS and paired leader-seed differences, plus each grid's gap and failure count relative to its validation-selected fixed cap.",
+  "confirmation_seeds": [
+    6251040001,
+    6251040002,
+    6251040003,
+    6251040004,
+    6251040005,
+    6251040006,
+    6251040007,
+    6251040008,
+    6251040009,
+    6251040010,
+    6251040011,
+    6251040012,
+    6251040013,
+    6251040014,
+    6251040015,
+    6251040016,
+    6251040017,
+    6251040018,
+    6251040019,
+    6251040020,
+    6251040021,
+    6251040022,
+    6251040023,
+    6251040024,
+    6251040025
+  ],
+  "costs": [
+    1.0,
+    1.5
+  ],
+  "created_utc": "2026-09-23T22:08:50.873112+00:00",
+  "delta": 0.95,
+  "distillation": {
+    "learning_rate": 0.001,
+    "max_probability_error": 0.02,
+    "max_steps": 20000,
+    "target_probability": 0.98
+  },
+  "episodes": 20000,
+  "evaluation_every": 400,
+  "grid": "johnson",
+  "grid_reference": "Johnson et al. 15 prices equally spaced in [1,2.1]",
+  "leader_action_representation": "admission_classes",
+  "leader_actions": 3,
+  "leader_seeds": [
+    801,
+    802,
+    803,
+    804,
+    805,
+    806,
+    807,
+    808,
+    809,
+    810,
+    811,
+    812,
+    813,
+    814,
+    815,
+    816,
+    817,
+    818,
+    819,
+    820,
+    821,
+    822,
+    823,
+    824,
+    825
+  ],
+  "m": 15,
+  "memory": 1,
+  "methods": [
+    "ppo_class_mean40"
+  ],
+  "mu": 0.25,
+  "outside_quality": 0.0,
+  "prices": [
+    1.0,
+    1.0785714285714285,
+    1.1571428571428573,
+    1.2357142857142858,
+    1.3142857142857143,
+    1.3928571428571428,
+    1.4714285714285715,
+    1.55,
+    1.6285714285714286,
+    1.7071428571428573,
+    1.7857142857142856,
+    1.8642857142857143,
+    1.942857142857143,
+    2.0214285714285714,
+    2.1
+  ],
+  "primary_endpoint": "All 25 final neural policies, each evaluated on 25 fresh seller seeds per cost.",
+  "prior": [
+    0.5,
+    0.5
+  ],
+  "provenance": "Unified-code rerun; scientific settings retained from the Johnson-grid paper study. This is a new cohort.",
+  "q_initialization": "no_intervention",
+  "qualities": [
+    2.0,
+    2.0
+  ],
+  "replication_seeds": [],
+  "report_budgets": [
+    20000
+  ],
+  "response_steps": 1000000000,
+  "rl_methods": {
+    "ppo_class_mean40": {
+      "algorithm": "ppo",
+      "batch_size": 64,
+      "clip_range": 0.2,
+      "ent_coef": 0.0,
+      "episodes_per_rollout": 40,
+      "learning_rate": 0.0003,
+      "learning_rate_schedule": "hold25_then_linear_to_zero",
+      "n_epochs": 10,
+      "normalize_advantage": true
+    }
+  },
+  "source_manifest_sha256": null,
+  "stability_required": 100000,
+  "title": "Normalized PPO on johnson 15-price grid",
+  "validation_seeds": [
+    6251010001,
+    6251010002,
+    6251010003,
+    6251010004,
+    6251010005
+  ],
+  "warmup_responses": 0,
+  "response_protocol": "on_demand_queries"
+}

@@ -1,0 +1,148 @@
+{
+  "schema_version": 2,
+  "manuscript": "StackelbergPOMDP.tex",
+  "manuscript_sha256": "8aa71e2a47805b8806e07fab47f5e85db625818eab84814b3a5c010d93870698",
+  "cohort": "October 1 completed training cohorts, 25 seeds per condition; October 5 single-pass random-search baseline",
+  "files": {
+    "figures/atari_e1_responses.pdf": "f4ef14cafb8688c51bc9a626f1101869f121fe5c6794cc30fd6b0ab3aaf7f809",
+    "figures/atari_meta_stackpomdp.pdf": "142e53e1500dd7bf9e33986c65c70085844894f891653e6e71b650bb1e6210f4",
+    "figures/atari_stackpomdp_architecture.tex": "dee20bfce07ab5431abd584dca8acd725e231ce2f6c6398f95de8f6d887feede",
+    "figures/fig_bots_leaderreward.pdf": "a07b6b32d0fb2191d20fa14258964bc7fe7191c4424bcf33fbae911672081f19",
+    "figures/fig_memory_pg.pdf": "4d496ca36cb0d0841786e81346f5476ab2addf49fdd0ccde02f77cfc643f9f72",
+    "figures/hidden_cost_learning.pdf": "aa0a1cbd1277f81f5967d5fa6dbff9a3ebef2db7eaa421a0ae85e3dee86c8af0",
+    "figures/hidden_cost_policy.pdf": "e2ebbef97a1a659c970ab5f51c6d3169ef2de95eda4f643936b82720435e4411",
+    "figures/pi_spm_vs_mspm_exact_eval_allseeds.pdf": "4a007525c0908b8cd92e11d013f7fa570cad824a4cd56730001a6e5d594c31bc",
+    "figures/response_credit_ablation.pdf": "0e2b5e1248dc31ab720df8443371b392106060f41f6df3db2c828e6f8751178a",
+    "figures/mspm_multitype_training.pdf": "e757a0d4dab09574e1bf3bc149abd8602abefdc3f9f82b76f40ffe689d9252b9"
+  },
+  "rendering": {
+    "command": "pdftoppm -png -singlefile -r 150",
+    "version": "pdftoppm version 25.04.0"
+  },
+  "rendered_sha256": {
+    "figures/atari_e1_responses.pdf": "b9fd00242eb142be7798d3d29ba1d8a6301efef043ef1f78fbd043a2d04846d6",
+    "figures/atari_meta_stackpomdp.pdf": "d9f7d68628bf3653070460be2a1652ff01800a9e45953e4635f46f93aa0a082c",
+    "figures/fig_bots_leaderreward.pdf": "e264e82cdc4c550995d437323712a74d1199f2fd55a14fffa00ccc437c803d1e",
+    "figures/fig_memory_pg.pdf": "5df6577ac0388e456f4964e1d66e2fef1b9162d8de1eaf26cafad0a2ac626b7e",
+    "figures/hidden_cost_learning.pdf": "0368206c1eda5018ca23b899ea8e22c12151e1c0952a0e3473e946e9ec57680e",
+    "figures/hidden_cost_policy.pdf": "89b12551b9dc699858a4d8c77acfc2a0e8ff4a970029ac16b155a43d9129cdaf",
+    "figures/pi_spm_vs_mspm_exact_eval_allseeds.pdf": "c4f859cb6ed654a86b14a1c6996eac34035412ef02048081d272fa51e5c1ed14",
+    "figures/response_credit_ablation.pdf": "e863c0f72936352a557dc7d0b3abbf54850556e8d5b73764ce46ceeb817d2396",
+    "figures/mspm_multitype_training.pdf": "f8c78f46960e7b76b6b048bf11a9ec6e8418b31e4cf6593d037e9418e7476cc5"
+  },
+  "figures": [
+    {
+      "figure": "figures/atari_e1_responses.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/atari_e1_responses.csv"
+    },
+    {
+      "figure": "figures/atari_meta_stackpomdp.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/atari_meta_stackpomdp.csv"
+    },
+    {
+      "figure": "figures/atari_stackpomdp_architecture.tex",
+      "kind": "source-native",
+      "script": "",
+      "data": ""
+    },
+    {
+      "figure": "figures/fig_bots_leaderreward.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/fig_bots_leaderreward.csv"
+    },
+    {
+      "figure": "figures/fig_memory_pg.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/fig_memory_pg.csv"
+    },
+    {
+      "figure": "figures/hidden_cost_learning.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/hidden_cost_learning.csv"
+    },
+    {
+      "figure": "figures/hidden_cost_policy.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/hidden_cost_policy.csv"
+    },
+    {
+      "figure": "figures/mspm_multitype_training.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/mspm_multitype_training.csv"
+    },
+    {
+      "figure": "figures/pi_spm_vs_mspm_exact_eval_allseeds.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/pi_spm_vs_mspm_exact_eval_allseeds.csv"
+    },
+    {
+      "figure": "figures/response_credit_ablation.pdf",
+      "kind": "data-driven",
+      "script": "plots/build_figures.py",
+      "data": "data/response_credit_ablation.csv"
+    }
+  ],
+  "generated_files": {
+    "tables/ablation_endpoints.csv": "4cca3acb2cd99cec7e23ed6e4b9f1cc7aa14e7f79df5c59d9df60eeb63ac0143",
+    "tables/atari_fresh_final.csv": "c90c3ce1411e8273c98d128ad8b35d26e72bbc961419fb469ba49799905dbac1",
+    "tables/atari_frozen_responses.csv": "bdf145d0bc6b1db6e7fe548b2a638bfa7e833018972c2cebd1946c51133e42a9",
+    "tables/atari_leader_curves.csv": "456f9d6aa646f720ccbbb9105cdb3e63995f8d788f5302e7fa8a7499f49f4cae",
+    "tables/collusion_consumer_surplus.csv": "93c145b456acc367eb5fd2d821534df13434b72cbf082eb1679967a8fc3d0f46",
+    "tables/mspm_welfare.csv": "d9a5d1c5faebf6c6cc2d75ebbac848bf579bab6c9dfa615433bab6f148c84e40",
+    "hidden_cost_numbers.tex": "cd9eea2810186b540c75eaf44925c78cc5be08d44c201d5921f3a658b60ec8df",
+    "paper_results.json": "fc52ef563f640c9f44d5def06629c0a3ad24676b2686b44a2504a6e65e710527",
+    "tables/statistical_comparisons.csv": "c25193827c1e647145d8e00631fcea1cda969e57503be66983d3b720810a35d2",
+    "statistical_comparisons.json": "6b09d1108be207152bc04370f635e0484ba1ac8450d172af90657f6d64190601",
+    "statistical_comparisons.tex": "9178effb6e2a187855d258b57808923823157482a7a5afda540960d015c1db5c"
+  },
+  "inputs": {
+    "data/atari_e1_responses.csv": "677d284d5d7248dd37563a11dd8488272c58232dacf28be21e40f934e158e900",
+    "data/atari_meta_stackpomdp.csv": "3bc91efb7baea9be47a546d644da418e1e34315abeb0404a22253fd9105be83e",
+    "data/fig_bots_leaderreward.csv": "1b6877227260b9b722e5f8d306074a390d18c7729fa308a454600e0fc3f77452",
+    "data/fig_memory_pg.csv": "47f8ee8f44f2661ce1e905dd3bf4631d1322b5237d4765b584c779c9da9f3784",
+    "data/hidden_cost_learning.csv": "220bc3fc6feb8938339e4f10121d5a2ff99f2b33fdb4a9514ed11eeb7906ca9e",
+    "data/hidden_cost_policy.csv": "7a06385e148071e2a6b9d74c320d7216ff11cbc553cfa08249f888038f4a5223",
+    "data/mspm_multitype_training.csv": "0764a4347605ebc213f84f8da8ed212000e5042282bdb6ca9e7b9c5b56cfadf1",
+    "data/pi_spm_vs_mspm_exact_eval_allseeds.csv": "339196b2381726377fba0666035c10a4d0212b247eb80c99d1caf51ca09ae8d1",
+    "data/response_credit_ablation.csv": "b4ad4887de59315cf08232cd9858b5f4c603f3b4e942ae6482d03456d2702be1",
+    "data/table_ablation_endpoints.csv": "20c2c72e4051e4dfd305f5c091f6a8a16fab0d38e8a2dee895543eae2942c363",
+    "data/table_atari_compute.csv": "e40ff518571efe8eb22f650943921f35ef87a301ed8e9d832929ee707eeddead",
+    "data/table_atari_fresh_final.csv": "c7d2fab5dfbcdbc9d94a94f4d941fefe8dc864a8580b7a3d744a1dc6007a2aec",
+    "data/table_mspm_welfare.csv": "2f8209cf7a118e8ece7e211c8f39f60be5b26b4cde7747ebea676aed97c2f6a3",
+    "data/table_platform_results.csv": "c6100b017ba82ad9fb710a5601dfb4999ce64cbf697070c90b2a2f08fd05f43f",
+    "plots/_support/statistical_protocol.json": "16decf2afa0bc50a46c2b1754d4caa0058f070ab5b2f97492c8c6ad30a56c7e9",
+    "data/platform_random_search_candidates.csv": "21c3f141787dcac42832ee6f7cb96697de94eeee1b0e824876e5400279d598a0",
+    "data/recorded_source_hashes.csv": "39ce298fa7bcce1ede3a416a02db5af543fa1f5da2c3cda911a432018eee518f",
+    "data/recorded_run_configurations.csv": "7737fe948ceecbe99a1e2760804898c7cb031644d025749e85b818bf71e77e8b",
+    "data/raw_ablation_final_evaluations.csv": "d88a4732a87a864393372d9066836baec2736ee65d60de0611bc1acce2f420d7",
+    "data/raw_atari_evaluations.csv": "bfdcd78ab603392bfed0c065c200da9cfd943fe43ff2be6bde60b9778d37f832",
+    "data/raw_platform_validation.csv": "796fb36096a7da43ffecda53a3fbc8a0a4abbbc0102b6fe994710356ebd32865",
+    "data/mspm_training_updates.csv": "87a1a367296deecc57ce448def34795d11c7e3a13d1fd6b5468a634a31ecadd6"
+  },
+  "scripts": {
+    "plots/_support/__init__.py": "7839f62521e84a05d8a33eec06ce7a9b4de2a2e24dcf79fd36332a2f5f4511bc",
+    "plots/_support/atari.py": "7c3652a5f3d2604872bd9a27a321eb6765f6082ef8405909e7e853e40cf11925",
+    "plots/_support/data.py": "896e00375a122e5d8719f63ee3a4784fee9c9caa329dc609d4dd0d540160b1c1",
+    "plots/_support/mspm.py": "0aa428aee05f660215c0093b760242513c6029d467cd39aa0e15199503f9f465",
+    "plots/_support/platform.py": "2eacd690dc60a57872948f6a85d170223bb32a890300786ea7fe00dc65023e0d",
+    "plots/_support/response_credit.py": "c4f8eec46d3bdd658c55fe308b860d3596958ae455fbf3c0bf855489722af827",
+    "plots/_support/style.py": "1be52dda0e0bb95f410ffa0a00a29d31f4ce3d23e925a33dcded70af7cb578eb",
+    "plots/build_figures.py": "60be1f47dba51fa5e55d336eb33132d06a8187bd9cfe3bd3914c4205876dcf91",
+    "plots/paper_results.py": "897872abc7af0ab596f123006214c2b8be41f038f837006ee752742136bc953b",
+    "plots/reproduce.py": "aad0733cd07e72c5a87f438a79ca0834a1aac401c9ad1129756875393b324f94",
+    "plots/statistical_comparisons.py": "2bbb4c0fb4abb11ab373dafa0cc347e5818b728b6f491223a31165b3d3c1737b",
+    "validation/__init__.py": "fb7c64bb3696991174c980fe5dcffdd62f87973aa439d6a5bc6c97647f382371",
+    "validation/check.py": "f0aab0a5f69e0297488ad2f24032afc10e02547da945fc27bab88fdc2980a571",
+    "validation/records.py": "941c19a505761dc35a8824e01118c96b3095261be5be52c844b913421f284092"
+  }
+}

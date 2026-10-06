@@ -1,0 +1,12 @@
+name: stackelberg-pomdp
+channels:
+  - defaults
+dependencies:
+  - python=3.9
+  - pip=23.3
+  - setuptools=65.5.1
+  - wheel=0.37.1
+  - pip:
+      - -r requirements.txt
+variables:
+  PYTHONNOUSERSITE: "1"

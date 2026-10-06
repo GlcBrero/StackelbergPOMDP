@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this artifact, please cite the accompanying manuscript and record the package version and archive SHA-256."
+title: "Stackelberg POMDP: JAIR Reproducibility Artifact"
+type: software
+version: "jair-2026-v1.0.0"
+date-released: "2026-10-06"
+repository-code: "https://github.com/GlcBrero/StackelbergPOMDP"
+url: "https://github.com/GlcBrero/StackelbergPOMDP/releases/tag/jair-2026-v1.0.0"
+license: MIT
+authors:
+  - family-names: Gerstgrasser
+    given-names: Matthias
+  - family-names: Brero
+    given-names: Gianluca
+  - family-names: Eden
+    given-names: Alon
+  - family-names: Chakrabarti
+    given-names: Darshan
+  - family-names: Lepore
+    given-names: Nicolas
+  - family-names: Li
+    given-names: Vincent
+  - family-names: Mibuari
+    given-names: Eric
+  - family-names: Greenwald
+    given-names: Amy
+  - family-names: Parkes
+    given-names: David C.

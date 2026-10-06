@@ -1,0 +1,854 @@
+{
+  "budgets": {
+    "2": {
+      "legacy_response_games": 100,
+      "reward_games": 4,
+      "setting": "PI"
+    },
+    "3": {
+      "legacy_response_games": 300,
+      "reward_games": 9,
+      "setting": "MSGSpace"
+    },
+    "4": {
+      "legacy_response_games": 532,
+      "reward_games": 16,
+      "setting": "MSGSpace"
+    },
+    "5": {
+      "legacy_response_games": 832,
+      "reward_games": 25,
+      "setting": "MSGSpace"
+    },
+    "6": {
+      "legacy_response_games": 1200,
+      "reward_games": 36,
+      "setting": "MSGSpace"
+    }
+  },
+  "created_at": "2026-09-29T03:37:35.541489+00:00",
+  "eval_every_episodes": 200,
+  "evidence": {
+    "prior_type2_validation_plan_sha256": "864d933dba802ef36ee85f81e734d91e66bff9b55fbb9dc14f9ef4033fc42e63",
+    "scientific_source_manifest_sha256": "9531194d3a7ac12fae33efea4855de6ea67b4d5f3f5f33aa27352718cb42316a",
+    "selection_note": "The author selected std 0.5 before validation seeds 96-120. The earlier 25-seed type-2 std-0.5 validation used 6000 episodes and 20-rollout batches, so this new uniform 10000/40 cohort is separate.",
+    "uniform_std1_pilot_plan_sha256": "03e9bf3c512854f8f8766eb1755686f9e47ddbd29cd870485e6c88d2fb9b7a41"
+  },
+  "late_window_start": 8000,
+  "parameters": {
+    "critic_obs": "full",
+    "deterministic_leader": true,
+    "ent_coef": 0.0,
+    "gae_lambda": 1.0,
+    "gamma": 1.0,
+    "initial_action_std": 0.5,
+    "learning_rate": 0.0003,
+    "learning_rate_final": 0.0,
+    "learning_rate_hold_episodes": 3000,
+    "mw_epsilon": 0.1,
+    "normalize_advantage": true,
+    "num_messages": 2,
+    "ppo_batch_size": 64,
+    "ppo_episodes_per_batch": 40,
+    "ppo_n_epochs": 10,
+    "response_bcce_threshold": 0.05,
+    "response_execution": "lazy_query",
+    "response_prefix_games": 0,
+    "response_stop_rule": "first_exact_bcce_certified_after_complete_mw_update"
+  },
+  "prerequisite_summary_job_id": "65015737",
+  "purpose": "Validate one author-selected uniform PPO configuration at initial std 0.5, entropy 0, and identical episode and rollout budgets across MSPM types 2-6 on 25 fresh seeds per type.",
+  "runs": [
+    {
+      "key": "uniform_std05_validation25.t2.s96",
+      "num_types": 2,
+      "seed": 96,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s97",
+      "num_types": 2,
+      "seed": 97,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s98",
+      "num_types": 2,
+      "seed": 98,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s99",
+      "num_types": 2,
+      "seed": 99,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s100",
+      "num_types": 2,
+      "seed": 100,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s101",
+      "num_types": 2,
+      "seed": 101,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s102",
+      "num_types": 2,
+      "seed": 102,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s103",
+      "num_types": 2,
+      "seed": 103,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s104",
+      "num_types": 2,
+      "seed": 104,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s105",
+      "num_types": 2,
+      "seed": 105,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s106",
+      "num_types": 2,
+      "seed": 106,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s107",
+      "num_types": 2,
+      "seed": 107,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s108",
+      "num_types": 2,
+      "seed": 108,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s109",
+      "num_types": 2,
+      "seed": 109,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s110",
+      "num_types": 2,
+      "seed": 110,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s111",
+      "num_types": 2,
+      "seed": 111,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s112",
+      "num_types": 2,
+      "seed": 112,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s113",
+      "num_types": 2,
+      "seed": 113,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s114",
+      "num_types": 2,
+      "seed": 114,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s115",
+      "num_types": 2,
+      "seed": 115,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s116",
+      "num_types": 2,
+      "seed": 116,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s117",
+      "num_types": 2,
+      "seed": 117,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s118",
+      "num_types": 2,
+      "seed": 118,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s119",
+      "num_types": 2,
+      "seed": 119,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t2.s120",
+      "num_types": 2,
+      "seed": 120,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s96",
+      "num_types": 3,
+      "seed": 96,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s97",
+      "num_types": 3,
+      "seed": 97,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s98",
+      "num_types": 3,
+      "seed": 98,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s99",
+      "num_types": 3,
+      "seed": 99,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s100",
+      "num_types": 3,
+      "seed": 100,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s101",
+      "num_types": 3,
+      "seed": 101,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s102",
+      "num_types": 3,
+      "seed": 102,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s103",
+      "num_types": 3,
+      "seed": 103,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s104",
+      "num_types": 3,
+      "seed": 104,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s105",
+      "num_types": 3,
+      "seed": 105,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s106",
+      "num_types": 3,
+      "seed": 106,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s107",
+      "num_types": 3,
+      "seed": 107,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s108",
+      "num_types": 3,
+      "seed": 108,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s109",
+      "num_types": 3,
+      "seed": 109,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s110",
+      "num_types": 3,
+      "seed": 110,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s111",
+      "num_types": 3,
+      "seed": 111,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s112",
+      "num_types": 3,
+      "seed": 112,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s113",
+      "num_types": 3,
+      "seed": 113,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s114",
+      "num_types": 3,
+      "seed": 114,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s115",
+      "num_types": 3,
+      "seed": 115,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s116",
+      "num_types": 3,
+      "seed": 116,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s117",
+      "num_types": 3,
+      "seed": 117,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s118",
+      "num_types": 3,
+      "seed": 118,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s119",
+      "num_types": 3,
+      "seed": 119,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t3.s120",
+      "num_types": 3,
+      "seed": 120,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s96",
+      "num_types": 4,
+      "seed": 96,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s97",
+      "num_types": 4,
+      "seed": 97,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s98",
+      "num_types": 4,
+      "seed": 98,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s99",
+      "num_types": 4,
+      "seed": 99,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s100",
+      "num_types": 4,
+      "seed": 100,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s101",
+      "num_types": 4,
+      "seed": 101,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s102",
+      "num_types": 4,
+      "seed": 102,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s103",
+      "num_types": 4,
+      "seed": 103,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s104",
+      "num_types": 4,
+      "seed": 104,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s105",
+      "num_types": 4,
+      "seed": 105,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s106",
+      "num_types": 4,
+      "seed": 106,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s107",
+      "num_types": 4,
+      "seed": 107,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s108",
+      "num_types": 4,
+      "seed": 108,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s109",
+      "num_types": 4,
+      "seed": 109,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s110",
+      "num_types": 4,
+      "seed": 110,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s111",
+      "num_types": 4,
+      "seed": 111,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s112",
+      "num_types": 4,
+      "seed": 112,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s113",
+      "num_types": 4,
+      "seed": 113,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s114",
+      "num_types": 4,
+      "seed": 114,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s115",
+      "num_types": 4,
+      "seed": 115,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s116",
+      "num_types": 4,
+      "seed": 116,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s117",
+      "num_types": 4,
+      "seed": 117,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s118",
+      "num_types": 4,
+      "seed": 118,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s119",
+      "num_types": 4,
+      "seed": 119,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t4.s120",
+      "num_types": 4,
+      "seed": 120,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s96",
+      "num_types": 5,
+      "seed": 96,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s97",
+      "num_types": 5,
+      "seed": 97,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s98",
+      "num_types": 5,
+      "seed": 98,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s99",
+      "num_types": 5,
+      "seed": 99,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s100",
+      "num_types": 5,
+      "seed": 100,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s101",
+      "num_types": 5,
+      "seed": 101,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s102",
+      "num_types": 5,
+      "seed": 102,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s103",
+      "num_types": 5,
+      "seed": 103,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s104",
+      "num_types": 5,
+      "seed": 104,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s105",
+      "num_types": 5,
+      "seed": 105,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s106",
+      "num_types": 5,
+      "seed": 106,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s107",
+      "num_types": 5,
+      "seed": 107,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s108",
+      "num_types": 5,
+      "seed": 108,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s109",
+      "num_types": 5,
+      "seed": 109,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s110",
+      "num_types": 5,
+      "seed": 110,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s111",
+      "num_types": 5,
+      "seed": 111,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s112",
+      "num_types": 5,
+      "seed": 112,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s113",
+      "num_types": 5,
+      "seed": 113,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s114",
+      "num_types": 5,
+      "seed": 114,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s115",
+      "num_types": 5,
+      "seed": 115,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s116",
+      "num_types": 5,
+      "seed": 116,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s117",
+      "num_types": 5,
+      "seed": 117,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s118",
+      "num_types": 5,
+      "seed": 118,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s119",
+      "num_types": 5,
+      "seed": 119,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t5.s120",
+      "num_types": 5,
+      "seed": 120,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s96",
+      "num_types": 6,
+      "seed": 96,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s97",
+      "num_types": 6,
+      "seed": 97,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s98",
+      "num_types": 6,
+      "seed": 98,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s99",
+      "num_types": 6,
+      "seed": 99,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s100",
+      "num_types": 6,
+      "seed": 100,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s101",
+      "num_types": 6,
+      "seed": 101,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s102",
+      "num_types": 6,
+      "seed": 102,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s103",
+      "num_types": 6,
+      "seed": 103,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s104",
+      "num_types": 6,
+      "seed": 104,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s105",
+      "num_types": 6,
+      "seed": 105,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s106",
+      "num_types": 6,
+      "seed": 106,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s107",
+      "num_types": 6,
+      "seed": 107,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s108",
+      "num_types": 6,
+      "seed": 108,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s109",
+      "num_types": 6,
+      "seed": 109,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s110",
+      "num_types": 6,
+      "seed": 110,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s111",
+      "num_types": 6,
+      "seed": 111,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s112",
+      "num_types": 6,
+      "seed": 112,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s113",
+      "num_types": 6,
+      "seed": 113,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s114",
+      "num_types": 6,
+      "seed": 114,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s115",
+      "num_types": 6,
+      "seed": 115,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s116",
+      "num_types": 6,
+      "seed": 116,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s117",
+      "num_types": 6,
+      "seed": 117,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s118",
+      "num_types": 6,
+      "seed": 118,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s119",
+      "num_types": 6,
+      "seed": 119,
+      "selected_variant": "uniform_std05_ent0"
+    },
+    {
+      "key": "uniform_std05_validation25.t6.s120",
+      "num_types": 6,
+      "seed": 120,
+      "selected_variant": "uniform_std05_ent0"
+    }
+  ],
+  "sampled_evaluation_repetitions": 20,
+  "selection_policy": "User chose std 0.5 after seeing older std-0.5 two-type evidence and partial std-1 uniform tuning. Freeze one identical PPO configuration for all types before any seed 96-120 outcome. Do not select seeds, checkpoints, or type-level replacements. Preserve all failures. Start only after the std-1 pilot summary job 65015737 completes successfully.",
+  "stage": "uniform_std05_validation25",
+  "success": "For each type, report all 25 untouched final outcomes, mean and sample SE, and strict exact-zero counts at every scheduled evaluation from 8000 through 10000 plus separate final evaluation. Exact-optimum qualification requires 25/25 strict successes; do not infer it from best checkpoints.",
+  "total_episodes": 10000,
+  "type_counts": [
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "validation_seeds": [
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120
+  ],
+  "validation_target_per_type": 25,
+  "zero_tolerance": 1e-08
+}
